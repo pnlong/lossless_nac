@@ -1,2 +1,2 @@
-# lossless_nac
+# LOGPOSE
 LOGPOSE: Lossless Optimized Generative Processing for Optimal Sound Encoding
