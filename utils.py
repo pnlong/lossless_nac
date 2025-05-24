@@ -150,16 +150,17 @@ DOTTED_SEPARATOR_LINE = "".join(("- " for _ in range(SEPARATOR_LINE_WIDTH // 2))
 
 class BitInputStream:
     """
-    Stream object for reading in bits and bytes from a file.
+    Stream object for reading in bits and bytes from a bytes stream.
     """
     
-    def __init__(self, path: str):
-        self.inp = open(path, mode = "rb")
+    def __init__(self, stream: bytes):
+        self.stream = stream
+        self.stream_iter = iter(stream)
         self.bit_buffer = None # the contents of the current byte
         self.bit_buffer_position = 0 # takes on values 0-7 (the place in the current byte)
         self.is_byte_aligned = True # no bytes have been read yet
 
-    def read_bit(self) -> bool:
+    def read_bit(self) -> int:
         """Read a single bit."""
         if self.bit_buffer_position == 0: # read the next byte if necessary
             _ = self.read_byte() # sets bit buffer to the current byte
@@ -169,13 +170,22 @@ class BitInputStream:
         self.bit_buffer_position = (self.bit_buffer_position + 1) % 8
         self.is_byte_aligned = (self.bit_buffer_position == 0)
         return current_bit
+    
+    def read_bits(self, n: int) -> int:
+        """Read `n` bits."""
+        value = 0
+        for _ in range(n):
+            value <<= 1
+            value |= self.read_bit()
+        return value
 
     def read_byte(self) -> int:
         """Read a single byte."""
         assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!" # ensure byte alignment
-        self.bit_buffer = self.inp.read(1)[0] # read in current byte
-        if not self.bit_buffer:
-            raise EOFError("End of file reached.")
+        try:
+            self.bit_buffer = next(self.stream_iter) # read in current byte
+        except StopIteration:
+            raise RuntimeError("End of stream reached.")
         return self.bit_buffer # return the current byte
 
     def read_uint(self) -> int:
@@ -204,26 +214,17 @@ class BitInputStream:
             self.is_byte_aligned = True
 
     def reset(self):
-        """Reset the cursor to the start of the file."""
-        _ = self.inp.seek(0)
-    
-    def close(self):
-        self.inp.close()
-    
-    def __enter__(self):
-        return self
-    
-    def __exit__(self, type, value, traceback):
-        self.close()
+        """Reset the cursor to the start of the stream."""
+        self.stream_iter = iter(self.stream)
 
 
 class BitOutputStream:
     """
-    Stream object for writing bits and bytes to a file.
+    Stream object for writing bits and bytes to a bytes stream.
     """
 
-    def __init__(self, path: str):
-        self.out = open(path, mode = "wb")
+    def __init__(self):
+        self.stream = []
         self.bit_buffer = 0 # buffer to accumulate bits
         self.bit_buffer_position = 0 # how many bits are currently in the buffer
         self.is_byte_aligned = True
@@ -237,10 +238,18 @@ class BitOutputStream:
         if self.bit_buffer_position == 8:
             self.flush_byte()
 
+    def write_bits(self, bits: int, n: int):
+        """Write `n` bits."""
+        for i in range(n): # iterate over n bits
+            bit = bits >> (n - i - 1) # shift relevant bit all the way to right
+            bit &= 1 # mask out all but rightmost bit
+            bit = bool(bit) # convert bit to boolean
+            self.write_bit(bit = bit) # write the bit
+
     def write_byte(self, byte: int):
         """Write a single byte."""
         assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!" # ensure byte alignment
-        self.out.write(bytes([byte]))
+        self.stream.append(byte)
 
     def write_uint(self, value: int):
         """Write an unsigned integer (4 bytes)."""
@@ -263,24 +272,14 @@ class BitOutputStream:
     def flush_byte(self):
         """Flush current buffer."""
         assert self.bit_buffer_position <= 8, "Bit buffer too large (must be <= 8 bits)!"
-        self.out.write(bytes([self.bit_buffer]))
+        self.stream.append(self.bit_buffer)
         self.bit_buffer = 0
         self.bit_buffer_position = 0
         self.is_byte_aligned = True
 
-    def flush(self):
-        """Flush stream contents."""
+    def flush(self) -> bytes:
+        """Flush stream contents, returning a bytes object."""
         self.align_to_byte()
-        self.out.flush()
-
-    def close(self):
-        self.flush()
-        self.out.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, type, value, traceback):
-        self.close()
+        return bytes(self.stream)
 
 ##################################################
