@@ -1,9 +1,9 @@
 # README
 # Phillip Long
-# May 11, 2025
+# May 24, 2025
 
-# Implementation of Free Lossless Audio Codec (FLAC) for use as a baseline.
-# See https://xiph.org/flac/documentation_format_overview.html for more.
+# Implementation of Lossless Descript Audio Codec, which uses the Descript Audio Codec 
+# to compress audio (see https://github.com/descriptinc/descript-audio-codec).
 
 # IMPORTS
 ##################################################
@@ -14,14 +14,21 @@ from math import ceil
 import librosa
 import scipy
 import argparse
+from audiotools import AudioSignal
+import torch
+from os.path import dirname, realpath
 
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
+sys.path.insert(0, f"{dirname(realpath(__file__))}/dac") # import dac package
 
 import utils
 import rice
+import dac
+
+DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # path to descript audio codec pretrained
 
 ##################################################
 
@@ -30,37 +37,47 @@ import rice
 ##################################################
 
 def encode_block(
-        block: np.array, # block of integers of shape (n_samples_in_block,)
-        order: int = utils.LPC_ORDER, # order for linear predictive coding
+        block: AudioSignal, # AudioSignal object for block of shape (batch_size = 1, n_channels = 1, n_samples_in_block)
+        descript_audio_codec: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
     ) -> Tuple[np.array, bytes, int]: # returns tuple of compressed material, rice encoded residuals, and the number of samples in the block
-    """FLAC encoder helper function that encodes blocks."""
+    """LDAC encoder helper function that encodes blocks."""
 
-    # convert block to float
-    block_float = block.astype(np.float32)
+    # get bottleneck
+    block = block.to(descript_audio_codec.device) # ensure on correct device
+    block_array = block.audio_data.squeeze(dim = (0, 1)).cpu().numpy() # get version of block that is 1d array
+    n_samples_in_block = len(block_array)
+    x = descript_audio_codec.preprocess(audio_data = block.audio_data, sample_rate = block.sample_rate)
+    _, codes, _, _, _ = descript_audio_codec.encode(audio_data = x.float())
 
-    # fit linear prediction coefficients, then quantize
-    linear_prediction_coefficients = librosa.lpc(y = block_float, order = order)
-    linear_prediction_coefficients = np.round(linear_prediction_coefficients).astype(utils.LPC_DTYPE)
+    # approximate block
+    z = descript_audio_codec.quantizer.from_codes(codes = codes)[0].detach() # get z from codes
+    approximate_block = descript_audio_codec.decode(z = z)
+    approximate_block = approximate_block.squeeze(dim = (0, 1)).detach().cpu().numpy() # get rid of unnecessary dimensions
+    approximate_block = approximate_block[:n_samples_in_block] # truncate to correct length
+    approximate_block = np.round(approximate_block).astype(block_array.dtype) # ensure approximate waveform is integer values
     
-    # autoregressive prediction using linear prediction coefficients
-    approximate_block = scipy.signal.lfilter(b = np.concatenate(([0], -linear_prediction_coefficients), axis = 0, dtype = utils.LPC_DTYPE), a = [1], x = block_float)
-    approximate_block = np.round(approximate_block).astype(block.dtype) # ensure approximate waveform is integer values
-    
+    # remove batch_size dimension from codes
+    codes = codes.squeeze(dim = 0)
+
     # compute residual and encode with rice coding
-    residuals = block - approximate_block
+    residuals = block_array - approximate_block
     residuals_rice = rice.encode(nums = residuals) # rice encoding
     
+    # free up gpu memory immediately
+    del block, block_array, x, z, approximate_block, residuals
+    
     # return compressed materials, rice encoded residuals, and number of samples in block
-    return linear_prediction_coefficients, residuals_rice, len(block)
+    return codes, residuals_rice, n_samples_in_block
 
 
 def encode(
         waveform: np.array, # waveform of integers of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
+        sample_rate: int = utils.SAMPLE_RATE, # default sample rate, needed for audiotools
+        descript_audio_codec: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         block_size: int = utils.BLOCK_SIZE, # block size
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # use interchannel decorrelation
-        order: int = utils.LPC_ORDER, # order for linear predictive coding
     ) -> Tuple[List[Union[Tuple[np.array, bytes, int], List[Tuple[np.array, bytes, int]]]], type]: # returns tuple of blocks and data type of original data
-    """Naive FLAC encoder."""
+    """Naive LDAC encoder."""
 
     # ensure waveform is correct type
     waveform_dtype = waveform.dtype
@@ -76,16 +93,19 @@ def encode(
         side = left - right # side channel
         waveform = np.stack(arrays = (center, side), axis = -1)
         del left, right, center, side
-    
+
+    # convert waveform to audio signal for DAC
+    waveform = AudioSignal(audio_path_or_array = waveform if is_mono else waveform.T, sample_rate = sample_rate) # we should really be supplying a sample rate argument, but it doesn't matter here
+
     # go through blocks and encode them each
-    n_samples, n_channels = waveform.shape
+    _, n_channels, n_samples = waveform.shape
     n_blocks = ceil(n_samples / block_size)
     blocks = [[None] * n_blocks for _ in range(n_channels)]
     for channel_index in range(n_channels):
         for i in range(n_blocks):
             start_index = i * block_size
             end_index = (start_index + block_size) if (i < (n_blocks - 1)) else n_samples
-            blocks[channel_index][i] = encode_block(block = waveform[start_index:end_index, channel_index], order = order)
+            blocks[channel_index][i] = encode_block(block = waveform[:, channel_index, start_index:end_index], descript_audio_codec = descript_audio_codec)
 
     # don't have multiple channels if mono
     if is_mono:
@@ -102,21 +122,30 @@ def encode(
 
 def decode_block(
         block: np.array, # block tuple with elements (bottleneck, residuals_rice, n_samples_in_block)
+        descript_audio_codec: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
     ) -> np.array:
-    """FLAC decoder helper function that decodes blocks."""
+    """LDAC decoder helper function that decodes blocks."""
 
     # split block
-    linear_prediction_coefficients, residuals_rice, n_samples_in_block = block # lpc_order = len(linear_prediction_coefficients) - 1
+    codes, residuals_rice, n_samples_in_block = block # lpc_order = len(linear_prediction_coefficients) - 1
+    codes = codes.to(descript_audio_codec.device) # ensure on correct device
+    codes = codes.unsqueeze(dim = 0) # add batch_size dimension
+
+    # reconstruct the approximate waveform
+    z = descript_audio_codec.quantizer.from_codes(codes = codes)[0].detach() # get z from codes
+    approximate_block = descript_audio_codec.decode(z = z)
+    approximate_block = approximate_block.squeeze(dim = (0, 1)).detach().cpu().numpy() # convert from AudioSignal to numpy array
+    approximate_block = approximate_block[:n_samples_in_block] # truncate to correct length
+    approximate_block = np.round(approximate_block) # quantize approximate waveform to pseudo-integer values
+
+    # free up gpu memory immediately
+    del codes, z
 
     # get residuals
-    residuals = rice.decode(stream = residuals_rice, n = n_samples_in_block)
-    residuals = residuals.astype(np.float32) # ensure residuals are correct data type for waveform reconstruction
+    residuals = rice.decode(stream = residuals_rice, n = n_samples_in_block).astype(approximate_block.dtype)
 
-    # reconstruct the waveform for the block
-    block = scipy.signal.lfilter(b = [1], a = np.concatenate(([1], linear_prediction_coefficients), axis = 0), x = residuals)
-
-    # quantize reconstructed block
-    block = np.round(block)
+    # reconstruct the exact waveform
+    block = approximate_block + residuals
 
     # return reconstructed waveform for block
     return block
@@ -124,9 +153,10 @@ def decode_block(
 
 def decode(
         bottleneck: Tuple[List[Union[Tuple[np.array, bytes, int], List[Tuple[np.array, bytes, int]]]], type], # tuple of blocks and the datatype of the original waveform
+        descript_audio_codec: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # was interchannel decorrelation used
     ) -> np.array: # returns the reconstructed waveform of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
-    """Naive FLAC decoder."""
+    """Naive LDAC decoder."""
 
     # split bottleneck
     blocks, waveform_dtype = bottleneck
@@ -141,7 +171,7 @@ def decode(
     waveform = [[None] * n_blocks for _ in range(n_channels)]
     for channel_index in range(n_channels):
         for i in range(n_blocks):
-            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i])
+            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], descript_audio_codec = descript_audio_codec)
             waveform[channel_index][i] = waveform[channel_index][i].astype(utils.INTERCHANNEL_DECORRELATE_DTYPE if interchannel_decorrelate else waveform_dtype)
 
     # reconstruct final waveform
@@ -173,9 +203,11 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-FLAC Implementation on a Test File") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LDAC Implementation on a Test File") # create argument parser
         parser.add_argument("-p", "--path", type = str, default = f"{dirname(realpath(__file__))}/test.wav", help = "Absolute filepath to the WAV file.")
+        parser.add_argument("-mp", "--model_path", type = str, default = DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
+        parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         return args # return parsed arguments
     args = parse_args()
@@ -183,22 +215,48 @@ if __name__ == "__main__":
     # load in wav file
     sample_rate, waveform = scipy.io.wavfile.read(filename = args.path)
 
-    # force to mono if necessary
-    if args.mono and waveform.ndim == 2:
-        waveform = np.mean(a = waveform, axis = -1)
-
     # print statistics about waveform
     print(f"Waveform Shape: {tuple(waveform.shape)}")
     print(f"Waveform Sample Rate: {sample_rate:,} Hz")
     print(f"Waveform Data Type: {waveform.dtype}")
-    
-    # encode
-    print("Encoding...")
-    bottleneck = encode(waveform = waveform)
+    waveform_reshaped = False
 
-    # decode
-    print("Decoding...")
-    round_trip = decode(bottleneck = bottleneck)
+    # force to mono if necessary
+    if args.mono and waveform.ndim == 2:
+        print(f"Forcing waveform to mono!")
+        waveform = np.mean(a = waveform, axis = -1)
+        waveform_reshaped = True
+
+    # load descript audio codec
+    device = torch.device(f"cuda:{abs(args.gpu)}" if torch.cuda.is_available() and args.gpu != -1 else "cpu")
+    model = dac.DAC.load(location = args.model_path).to(device)
+
+    # resample if necessary
+    if sample_rate != model.sample_rate:
+        print(f"Resampling waveform from {sample_rate:,} Hz to {model.sample_rate:,} Hz to match the sample rate required by the Descript Audio Codec.")
+        waveform_absmax = np.abs(waveform).max() # maximum value of waveform
+        waveform = (librosa.resample(y = waveform / waveform_absmax, orig_sr = sample_rate, target_sr = model.sample_rate, axis = 0) * waveform_absmax).astype(waveform.dtype)
+        waveform_reshaped = True
+        sample_rate = model.sample_rate
+        del waveform_absmax
+
+    # print new waveform shape if necessary
+    if waveform_reshaped:
+        print(f"New Waveform Shape: {tuple(waveform.shape)}")
+        print(f"New Waveform Sample Rate: {sample_rate:,} Hz")
+        print(f"New Waveform Data Type: {waveform.dtype}")
+
+    # turn off gradients, since the model is pretrained
+    model.eval()
+    with torch.no_grad():
+
+        # encode
+        print("Encoding...")
+        bottleneck = encode(waveform = waveform, sample_rate = sample_rate, descript_audio_codec = model)
+
+        # decode
+        print("Decoding...")
+        round_trip = decode(bottleneck = bottleneck, descript_audio_codec = model)
 
     # verify losslessness
     assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match!"

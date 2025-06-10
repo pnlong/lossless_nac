@@ -21,8 +21,33 @@ import numpy as np
 # CONSTANTS
 ##################################################
 
+# valid audio data types
+VALID_AUDIO_DTYPES = {np.int8, np.int16, np.int32, np.int64} # signed integers
 
+# default sample rate
+SAMPLE_RATE = 44100 # 44.1 kHz
 
+# number of samples in a block
+BLOCK_SIZE = 4096 # see https://xiph.org/flac/documentation_format_overview.html#:~:text=flac%20defaults%20to%20a%20block%20size%20of%204096
+
+# use interchannel decorrelation
+INTERCHANNEL_DECORRELATE = True
+INTERCHANNEL_DECORRELATE_DTYPE = np.int64 # using interchannel decorrelation can cause bugs with overflow, so we must use the proper data type
+
+# linear predictive coding
+LPC_ORDER = 9 # order (see https://xiph.org/flac/documentation_format_overview.html#:~:text=Also%2C%20at%20some%20point%20(usually%20around%20order%209))
+LPC_DTYPE = np.int16 # data type of linear prediction coefficients
+
+# filepaths
+BASE_DIR = "/deepfreeze/pnlong/lnac"
+EVAL_DIR = f"{BASE_DIR}/eval"
+TEST_DATA_DIR = f"{BASE_DIR}/test_data"
+MUSDB18_DIR = f"{TEST_DATA_DIR}/musdb18"
+MUSDB18_PREPROCESSED_DIR = f"{TEST_DATA_DIR}/musdb18_preprocessed"
+
+# column names
+INPUT_COLUMN_NAMES = ["path", "sample_rate"]
+STEMS_TO_AUDIO_COLUMN_NAMES = INPUT_COLUMN_NAMES + ["original_path", "original_index"] # column names for input audio data derived from stems
 
 ##################################################
 
@@ -141,6 +166,17 @@ SEPARATOR_LINE_WIDTH = get_terminal_size().columns
 MAJOR_SEPARATOR_LINE = "".join(("=" for _ in range(SEPARATOR_LINE_WIDTH)))
 MINOR_SEPARATOR_LINE = "".join(("-" for _ in range(SEPARATOR_LINE_WIDTH)))
 DOTTED_SEPARATOR_LINE = "".join(("- " for _ in range(SEPARATOR_LINE_WIDTH // 2)))
+
+##################################################
+
+
+# MISCELLANEOUS HELPER FUNCTIONS
+##################################################
+
+# convert duration measured with time.perf_counter() calls into a speed
+def convert_duration_to_speed(duration: float) -> float:
+    """Convert duration measured with time.perf_counter() calls into a speed (the greater the value, the greater the speed)"""
+    return 1000 / duration
 
 ##################################################
 
