@@ -20,7 +20,7 @@ import torch
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
-sys.path.insert(0, dirname(dirname(realpath(__file__))))
+sys.path.insert(0, f"{dirname(realpath(__file__))}/dac") # import dac package
 
 import utils
 import ldac
@@ -32,7 +32,7 @@ import dac
 # CONSTANTS
 ##################################################
 
-OUTPUT_COLUMNS = ["path", "block_size", "interchannel_decorrelate", "size_original", "size_compressed", "compression_rate", "compression_speed"] # where size_ columns are the size of the data in bytes and compression rate is simply size_compressed / size_original
+OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size", "interchannel_decorrelate"]
 
 ##################################################
 
@@ -50,7 +50,7 @@ if __name__ == "__main__":
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-FLAC Implementation") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
-        parser.add_argument("--output_filepath", type = str, default = f"{utils.EVAL_DIR}/test_flac.csv", help = "Absolute filepath to the output table.")
+        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/ldac", help = "Absolute filepath to the output directory.")
         parser.add_argument("-mp", "--model_path", type = str, default = ldac.DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
@@ -66,17 +66,17 @@ if __name__ == "__main__":
     if not exists(args.input_filepath):
         raise RuntimeError(f"--input_filepath argument does not exist: {args.input_filepath}")
     
-    # create output_filepath directory if necessary
-    output_dir = dirname(args.output_filepath)
-    if not exists(output_dir):
-        makedirs(output_dir, exist_ok = True)
+    # create output directory if necessary
+    if not exists(args.output_dir):
+        makedirs(args.output_dir, exist_ok = True)
+    output_filepath = f"{args.output_dir}/test.csv"
     
     # write output columns if necessary
-    if not exists(args.output_filepath) or args.reset: # write column names
-        pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = args.output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
+    if not exists(output_filepath) or args.reset: # write column names
+        pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
         already_completed_paths = set() # no paths have been already completed
     else: # determine already completed paths
-        already_completed_paths = set(pd.read_csv(filepath_or_buffer = args.output_filepath, sep = ",", header = 0, index_col = False, usecols = ["path"])["path"]) # read in already completed paths
+        already_completed_paths = set(pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False, usecols = ["path"])["path"]) # read in already completed paths
 
     # load descript audio codec
     using_gpu = torch.cuda.is_available() and args.gpu != -1
@@ -115,7 +115,7 @@ if __name__ == "__main__":
         assert waveform.ndim <= 2, f"Input audio must be of shape (n_samples, n_channels) for multi-channel audio or (n_samples,) for mono audio, but {path} has shape {tuple(waveform.shape)}."
         if waveform.ndim == 2:
             assert waveform.shape[-1] <= 2, f"Multichannel-audio must have either one or two channels, but {path} has {waveform.shape[-1]} channels."
-        assert waveform.dtype in utils.VALID_AUDIO_DTYPES, f"Audio must be stored as a numpy signed integer data type, but found {waveform.dtype}."
+        assert any(waveform.dtype == dtype for dtype in utils.VALID_AUDIO_DTYPES), f"Audio must be stored as a numpy signed integer data type, but found {waveform.dtype}."
 
         # encode and decode
         with torch.no_grad():
@@ -134,14 +134,14 @@ if __name__ == "__main__":
 
         # compute other final statistics
         compression_rate = compressed_size / original_size
-        compression_speed = utils.convert_duration_to_speed(duration = compression_duration) # speed is inversely related to duration
+        compression_speed = utils.convert_duration_to_speed(encoding_duration = compression_duration, audio_duration = len(waveform) / sample_rate) # speed is inversely related to duration
         del compression_duration # free up memory
 
         # output
         pd.DataFrame(data = [dict(zip(
             OUTPUT_COLUMNS, 
-            (path, args.block_size, args.interchannel_decorrelate, original_size, compressed_size, compression_rate, compression_speed)
-        ))]).to_csv(path_or_buf = args.output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
+            (path, original_size, compressed_size, compression_rate, compression_speed, args.block_size, args.interchannel_decorrelate)
+        ))]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
         # return nothing
         return
@@ -176,7 +176,7 @@ if __name__ == "__main__":
     ##################################################
 
     # read in results (just the compression rate column, we don't really care about anything else)
-    results = pd.read_csv(filepath_or_buffer = args.output_filepath, sep = ",", header = 0, index_col = False)
+    results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()
 

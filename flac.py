@@ -11,7 +11,7 @@
 import numpy as np
 from typing import List, Tuple, Union
 from math import ceil
-import librosa
+# import librosa
 import scipy
 import argparse
 import time
@@ -20,7 +20,6 @@ import warnings
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
-sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 import utils
 import rice
@@ -304,7 +303,7 @@ if __name__ == "__main__":
     print("Encoding...")
     start_time = time.perf_counter()
     bottleneck = encode(waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order)
-    compression_speed = utils.convert_duration_to_speed(duration = time.perf_counter() - start_time)
+    compression_speed = utils.convert_duration_to_speed(encoding_duration = time.perf_counter() - start_time, audio_duration = len(waveform) / sample_rate)
     del start_time # free up memory
     bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
     print(f"Bottleneck Size: {bottleneck_size:,} bytes")
