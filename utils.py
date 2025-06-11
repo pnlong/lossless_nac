@@ -11,6 +11,7 @@ from typing import Union, List, Tuple, Iterable, Any
 from os.path import exists
 from os import makedirs, get_terminal_size
 from shutil import rmtree
+from math import log2, ceil
 import json
 import pickle
 import numpy as np
@@ -29,6 +30,8 @@ SAMPLE_RATE = 44100 # 44.1 kHz
 
 # number of samples in a block
 BLOCK_SIZE = 4096 # see https://xiph.org/flac/documentation_format_overview.html#:~:text=flac%20defaults%20to%20a%20block%20size%20of%204096
+MAXIMUM_BLOCK_SIZE_ASSUMPTION = (2 ** 16) - 1 # maximum block size value (we expect the block size to be this value or lesser)
+MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES = ceil(log2(MAXIMUM_BLOCK_SIZE_ASSUMPTION + 1) / 8) # convert into number of bytes
 
 # use interchannel decorrelation
 INTERCHANNEL_DECORRELATE = True
@@ -36,7 +39,7 @@ INTERCHANNEL_DECORRELATE_DTYPE = np.int64 # using interchannel decorrelation can
 
 # linear predictive coding
 LPC_ORDER = 9 # order (see https://xiph.org/flac/documentation_format_overview.html#:~:text=Also%2C%20at%20some%20point%20(usually%20around%20order%209))
-LPC_DTYPE = np.int16 # data type of linear prediction coefficients
+LPC_DTYPE = np.int8 # data type of linear prediction coefficients
 
 # filepaths
 BASE_DIR = "/deepfreeze/pnlong/lnac"
@@ -175,8 +178,22 @@ DOTTED_SEPARATOR_LINE = "".join(("- " for _ in range(SEPARATOR_LINE_WIDTH // 2))
 
 # convert duration measured with time.perf_counter() calls into a speed
 def convert_duration_to_speed(duration: float) -> float:
-    """Convert duration measured with time.perf_counter() calls into a speed (the greater the value, the greater the speed)"""
-    return 1000 / duration
+    """
+    Convert duration (in seconds) into a speed (the greater the value, the greater the speed).
+    Interpreted as if an action takes time `duration` (in seconds) to complete, then the action can be completed `speed` times per second 
+    """
+    return 1 / duration
+
+# calculate waveform size in bytes
+def get_waveform_size(waveform: np.array) -> int:
+    """
+    Returns the size of the given waveform in bytes.
+    """
+    size = waveform.nbytes # get size in bytes
+    size += 1 # the first bit tells us if mono or stereo, the next 7 bytes are redundant filler (first byte)
+    if waveform.ndim == 2: # if multiple channels, the second byte tells us the number of channels (in a single-byte unsigned integer)
+        size += 1
+    return size
 
 ##################################################
 

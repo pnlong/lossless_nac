@@ -14,6 +14,7 @@
 
 import numpy as np
 from typing import Union, List
+import warnings
 
 from os.path import dirname, realpath
 import sys
@@ -28,7 +29,7 @@ import utils
 # CONSTANTS
 ##################################################
 
-K = 16
+K = 12 # Golomb coding equivalent M is calculated as M = 2 ** K, so probably want to use a small value for K
 
 ##################################################
 
@@ -101,6 +102,7 @@ def encode(nums: Union[List[int], np.array], k: int = K) -> bytes:
         r = x & ((1 << k) - 1) # remainder = n % 2^k
 
         # encode the quotient with unary coding (q ones followed by a zero)
+        # out.write_bits(bits = (((1 << q) - 1) << 1), n = q + 1)
         for _ in range(q):
             out.write_bit(bit = True)
         out.write_bit(bit = False)

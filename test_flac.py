@@ -2,7 +2,7 @@
 # Phillip Long
 # June 9, 2025
 
-# Test compression rate of naive-FLAC encoder/decoder. We use the MusDB18 dataset as a testbed.
+# Test compression rate of naive-FLAC encoder. We use the MusDB18 dataset as a testbed.
 
 # IMPORTS
 ##################################################
@@ -87,7 +87,7 @@ if __name__ == "__main__":
     paths = list(sample_rate_by_path.keys()) # get paths to NPY audio files
 
     # helper function for determining compression rate
-    def determine_compression_rate(path: str):
+    def evaluate(path: str):
         """
         Determine compression rate given the absolute filepath to an input audio file (stored as a pickled numpy object, NPY).
         Expects the input audio to be of shape (n_samples, n_channels) for multi-channel audio or (n_samples,) for mono audio.
@@ -117,10 +117,10 @@ if __name__ == "__main__":
         del round_trip, start_time # free up memory
 
         # compute size in bytes of original waveform
-        original_size = 
+        original_size = utils.get_waveform_size(waveform = waveform)
 
         # compute size in bytes of compressed bottleneck
-        compressed_size = 
+        compressed_size = flac.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
         compression_rate = compressed_size / original_size
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     # use multiprocessing
     with multiprocessing.Pool(processes = args.jobs) as pool:
         _ = list(tqdm(iterable = pool.imap_unordered(
-                func = determine_compression_rate,
+                func = evaluate,
                 iterable = paths,
                 chunksize = utils.CHUNK_SIZE,
             ),

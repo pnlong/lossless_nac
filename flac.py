@@ -14,6 +14,8 @@ from math import ceil
 import librosa
 import scipy
 import argparse
+import time
+import warnings
 
 from os.path import dirname, realpath
 import sys
@@ -26,32 +28,98 @@ import rice
 ##################################################
 
 
+# HELPER FUNCTION FOR COMPUTING LINEAR PREDICTION COEFFICIENTS USING THE AUTOCOVARIANCE/AUTOCORRELATION METHOD
+##################################################
+
+def levinson_durbin(r: np.array, order: int = utils.LPC_ORDER) -> Tuple[np.array, float, np.array]:
+    """
+    Levinson-Durbin recursion to solve Toeplitz systems for linear predictive coding.
+
+    Parameters
+    ----------
+    r : np.array
+        autocorrelation sequence of length >= order + 1
+    order : int, default: `utils.LPC_ORDER`
+        desired linear predictive coding order
+        
+    Returns
+    -------
+    a : np.array
+        linear predictive coding coefficients of shape (order + 1,)
+    e : float
+        prediction error (residual energy)
+    k : np.array
+        reflection coefficients (for optional analysis)
+    """
+    a = np.zeros(shape = order + 1, dtype = np.float64)
+    e = r[0]
+    
+    if e == 0:
+        return a, e, np.zeros(shape = order)
+    
+    a[0] = 1.0
+    k = np.zeros(shape = order, dtype = np.float64)
+    
+    for i in range(1, order + 1):
+        acc = r[i]
+        acc += np.dot(a[1:i], np.flip(r[1:i]))
+        for j in range(1, i):
+            acc += a[j] * r[i - j]
+        
+        k_i = -acc / e
+        k[i - 1] = k_i
+        
+        a[1:(i + 1)] += k_i * np.flip(a[1:(i + 1)])
+        
+        e *= (1 - (k_i ** 2))
+        if e <= 0 or not np.isfinite(e): # numerical issues fallback
+            break
+    
+    return a, e, k
+
+def lpc_autocorrelation_method(y: np.array, order: int = utils.LPC_ORDER) -> np.array:
+    """
+    Compute linear prediction coefficients using autocorrelation method for guaranteed stability.
+    See https://speechprocessingbook.aalto.fi/Representations/Linear_prediction.html#:~:text=A%20benefit%20of,signal%20with%20prediction.
+    """
+    y = y.astype(np.float64)
+    r = np.correlate(a = y, v = y, mode = "full")
+    r = r[(len(y) - 1):(len(y) - 1 + order + 1)] # take autocorrelations from lag 0 to lag order
+    a, e, k = levinson_durbin(r = r, order = order)
+    return a
+
+##################################################
+
+
 # ENCODE
 ##################################################
 
 def encode_block(
         block: np.array, # block of integers of shape (n_samples_in_block,)
         order: int = utils.LPC_ORDER, # order for linear predictive coding
-    ) -> Tuple[np.array, bytes, int]: # returns tuple of compressed material, rice encoded residuals, and the number of samples in the block
+    ) -> Tuple[int, np.array, bytes]: # returns tuple of number of samples in the block, compressed material, and rice encoded residuals
     """FLAC encoder helper function that encodes blocks."""
 
     # convert block to float
     block_float = block.astype(np.float32)
 
     # fit linear prediction coefficients, then quantize
-    linear_prediction_coefficients = librosa.lpc(y = block_float, order = order)
+    # linear_prediction_coefficients = librosa.lpc(y = block_float, order = order) # does not guarantee numerical stability
+    linear_prediction_coefficients = lpc_autocorrelation_method(y = block_float, order = order)
     linear_prediction_coefficients = np.round(linear_prediction_coefficients).astype(utils.LPC_DTYPE)
+    if not np.all(np.abs(np.roots(linear_prediction_coefficients) < 1)): # ensure lpc coefficients are stable
+        warnings.warn(message = "Linear prediction coefficients are unstable!", category = RuntimeWarning)
     
     # autoregressive prediction using linear prediction coefficients
-    approximate_block = scipy.signal.lfilter(b = np.concatenate(([0], -linear_prediction_coefficients), axis = 0, dtype = utils.LPC_DTYPE), a = [1], x = block_float)
+    approximate_block = scipy.signal.lfilter(b = np.concatenate(([0], -linear_prediction_coefficients), axis = 0, dtype = linear_prediction_coefficients.dtype), a = [1], x = block_float)
     approximate_block = np.round(approximate_block).astype(block.dtype) # ensure approximate waveform is integer values
     
     # compute residual and encode with rice coding
     residuals = block - approximate_block
     residuals_rice = rice.encode(nums = residuals) # rice encoding
     
-    # return compressed materials, rice encoded residuals, and number of samples in block
-    return linear_prediction_coefficients, residuals_rice, len(block)
+    # return number of samples in block, compressed materials, and rice encoded residuals
+    return len(block), linear_prediction_coefficients, residuals_rice
 
 
 def encode(
@@ -59,7 +127,7 @@ def encode(
         block_size: int = utils.BLOCK_SIZE, # block size
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # use interchannel decorrelation
         order: int = utils.LPC_ORDER, # order for linear predictive coding
-    ) -> Tuple[List[Union[Tuple[np.array, bytes, int], List[Tuple[np.array, bytes, int]]]], type]: # returns tuple of blocks and data type of original data
+    ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
     """Naive FLAC encoder."""
 
     # ensure waveform is correct type
@@ -101,12 +169,12 @@ def encode(
 ##################################################
 
 def decode_block(
-        block: np.array, # block tuple with elements (bottleneck, residuals_rice, n_samples_in_block)
+        block: Tuple[int, np.array, bytes], # block tuple with elements (n_samples_in_block, bottleneck, residuals_rice)
     ) -> np.array:
     """FLAC decoder helper function that decodes blocks."""
 
     # split block
-    linear_prediction_coefficients, residuals_rice, n_samples_in_block = block # lpc_order = len(linear_prediction_coefficients) - 1
+    n_samples_in_block, linear_prediction_coefficients, residuals_rice = block # lpc_order = len(linear_prediction_coefficients) - 1; len(linear_prediction_coefficients) = lpc_order + 1
 
     # get residuals
     residuals = rice.decode(stream = residuals_rice, n = n_samples_in_block)
@@ -123,7 +191,7 @@ def decode_block(
 
 
 def decode(
-        bottleneck: Tuple[List[Union[Tuple[np.array, bytes, int], List[Tuple[np.array, bytes, int]]]], type], # tuple of blocks and the datatype of the original waveform
+        bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type], # tuple of blocks and the datatype of the original waveform
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # was interchannel decorrelation used
     ) -> np.array: # returns the reconstructed waveform of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
     """Naive FLAC decoder."""
@@ -165,6 +233,40 @@ def decode(
 ##################################################
 
 
+# HELPER FUNCTION TO GET THE SIZE IN BYTES OF THE BOTTLENECK
+##################################################
+
+def get_bottleneck_size(
+    bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type],
+) -> int:
+    """Returns the size of the given bottleneck in bytes."""
+
+    # tally of the size in bytes of the bottleneck
+    size = 0
+
+    # split bottleneck
+    blocks, waveform_dtype = bottleneck
+    # size += 1 # use a single byte to encode the data type of the original waveform, but assume the effect of waveform_dtype is negligible on the total size in bytes
+
+    # determine if mono
+    is_mono = type(blocks[0]) is not list
+    if is_mono:
+        blocks = [blocks] # add multiple channels if mono
+
+    # iterate through blocks
+    for channel in blocks:
+        for block in channel:
+            block_length, linear_prediction_coefficients, residuals_rice = block
+            size += utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES # we assume the block length can be encoded as an unsigned integer in 2-bytes (np.int16); in other words, block_length must be strictly less than (2 ** 16 = 65536)
+            size += linear_prediction_coefficients.nbytes # the size of the linear_prediction_coefficients is easily known from the LPC order, which is a fixed hyperparameter
+            size += len(residuals_rice) # rice residuals can be easily decoded since we know the block_length
+    
+    # return the size in bytes
+    return size
+
+##################################################
+
+
 # MAIN METHOD
 ##################################################
 
@@ -176,7 +278,11 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-FLAC Implementation on a Test File") # create argument parser
         parser.add_argument("-p", "--path", type = str, default = f"{dirname(realpath(__file__))}/test.wav", help = "Absolute filepath to the WAV file.")
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
+        parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
+        parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
+        parser.add_argument("--lpc_order", type = int, default = utils.LPC_ORDER, help = "Order for linear predictive coding.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
+        args.interchannel_decorrelate = not args.no_interchannel_decorrelate # infer interchannel decorrelation
         return args # return parsed arguments
     args = parse_args()
 
@@ -191,14 +297,23 @@ if __name__ == "__main__":
     print(f"Waveform Shape: {tuple(waveform.shape)}")
     print(f"Waveform Sample Rate: {sample_rate:,} Hz")
     print(f"Waveform Data Type: {waveform.dtype}")
+    waveform_size = utils.get_waveform_size(waveform = waveform)
+    print(f"Waveform Size: {waveform_size:,} bytes")
     
     # encode
     print("Encoding...")
-    bottleneck = encode(waveform = waveform)
+    start_time = time.perf_counter()
+    bottleneck = encode(waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order)
+    compression_speed = utils.convert_duration_to_speed(duration = time.perf_counter() - start_time)
+    del start_time # free up memory
+    bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
+    print(f"Bottleneck Size: {bottleneck_size:,} bytes")
+    print(f"Compression Rate: {100 * (bottleneck_size / waveform_size):.4f}%")
+    print(f"Compression Speed: {compression_speed:.4f}")
 
     # decode
     print("Decoding...")
-    round_trip = decode(bottleneck = bottleneck)
+    round_trip = decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate)
 
     # verify losslessness
     assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match!"

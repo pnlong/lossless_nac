@@ -42,7 +42,8 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(prog = "Preprocess", description = "Preprocess the MusDB18 Dataset as pickled numpy (NPY) files.") # create argument parser
         parser.add_argument("--musdb18_dir", type = str, default = utils.MUSDB18_DIR, help = "Absolute filepath to the MusDB18 directory.")
         parser.add_argument("--output_dir", type = str, default = utils.MUSDB18_PREPROCESSED_DIR, help = "Absolute filepath to the output directory.")
-        parser.add_argument("--reset", action = "store_true", help = "Repreprocess MusDB18.")
+        parser.add_argument("--bit_depth", type = int, default = 16, choices = (16, 24, 32), help = "Fixed-point bit depth of audio.")
+        parser.add_argument("--reset", action = "store_true", help = "Re-preprocess MusDB18.")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         return args # return parsed arguments
@@ -69,6 +70,10 @@ if __name__ == "__main__":
     else: # determine already completed paths
         already_completed_paths = set(pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False, usecols = ["original_path"])["original_path"]) # read in already completed paths
 
+    # determine bit depth
+    floating_to_fixed_point_conversion_constant = (1 << (args.bit_depth - 1)) - 1 # convert floating point [-1, 1] to fixed point
+    audio_data_type = np.int16 if args.bit_depth == 16 else np.int32
+
     ##################################################
 
 
@@ -88,6 +93,10 @@ if __name__ == "__main__":
         # load in mp4
         stems, sample_rate = stempeg.read_stems(filename = path)
         n_stems = len(stems)
+
+        # convert audio from floating to fixed point
+        stems *= floating_to_fixed_point_conversion_constant
+        stems = np.round(stems).astype(audio_data_type)
 
         # determine stem output paths
         stem_paths = [output_dir + "/" + basename(path)[:-len("mp4")] + f"{i}.npy" for i in range(n_stems)]

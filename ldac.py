@@ -17,6 +17,7 @@ import argparse
 from audiotools import AudioSignal
 import torch
 from os.path import dirname, realpath
+import time
 
 from os.path import dirname, realpath
 import sys
@@ -39,7 +40,7 @@ DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # pa
 def encode_block(
         block: AudioSignal, # AudioSignal object for block of shape (batch_size = 1, n_channels = 1, n_samples_in_block)
         descript_audio_codec: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
-    ) -> Tuple[np.array, bytes, int]: # returns tuple of compressed material, rice encoded residuals, and the number of samples in the block
+    ) -> Tuple[int, np.array, bytes]: # returns tuple of number of samples in the block, compressed material, and rice encoded residuals
     """LDAC encoder helper function that encodes blocks."""
 
     # get bottleneck
@@ -66,8 +67,8 @@ def encode_block(
     # free up gpu memory immediately
     del block, block_array, x, z, approximate_block, residuals
     
-    # return compressed materials, rice encoded residuals, and number of samples in block
-    return codes, residuals_rice, n_samples_in_block
+    # return number of samples in block, compressed materials, and rice encoded residuals
+    return n_samples_in_block, codes, residuals_rice
 
 
 def encode(
@@ -76,7 +77,7 @@ def encode(
         descript_audio_codec: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         block_size: int = utils.BLOCK_SIZE, # block size
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # use interchannel decorrelation
-    ) -> Tuple[List[Union[Tuple[np.array, bytes, int], List[Tuple[np.array, bytes, int]]]], type]: # returns tuple of blocks and data type of original data
+    ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
     """Naive LDAC encoder."""
 
     # ensure waveform is correct type
@@ -121,13 +122,13 @@ def encode(
 ##################################################
 
 def decode_block(
-        block: np.array, # block tuple with elements (bottleneck, residuals_rice, n_samples_in_block)
+        block: Tuple[int, np.array, bytes], # block tuple with elements (n_samples_in_block, bottleneck, residuals_rice)
         descript_audio_codec: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
     ) -> np.array:
     """LDAC decoder helper function that decodes blocks."""
 
     # split block
-    codes, residuals_rice, n_samples_in_block = block # lpc_order = len(linear_prediction_coefficients) - 1
+    n_samples_in_block, codes, residuals_rice = block
     codes = codes.to(descript_audio_codec.device) # ensure on correct device
     codes = codes.unsqueeze(dim = 0) # add batch_size dimension
 
@@ -152,7 +153,7 @@ def decode_block(
 
 
 def decode(
-        bottleneck: Tuple[List[Union[Tuple[np.array, bytes, int], List[Tuple[np.array, bytes, int]]]], type], # tuple of blocks and the datatype of the original waveform
+        bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type], # tuple of blocks and the datatype of the original waveform
         descript_audio_codec: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # was interchannel decorrelation used
     ) -> np.array: # returns the reconstructed waveform of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
@@ -195,6 +196,40 @@ def decode(
 ##################################################
 
 
+# HELPER FUNCTION TO GET THE SIZE IN BYTES OF THE BOTTLENECK
+##################################################
+
+def get_bottleneck_size(
+    bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type],
+) -> int:
+    """Returns the size of the given bottleneck in bytes."""
+
+    # tally of the size in bytes of the bottleneck
+    size = 0
+
+    # split bottleneck
+    blocks, waveform_dtype = bottleneck
+    # size += 1 # use a single byte to encode the data type of the original waveform, but assume the effect of waveform_dtype is negligible on the total size in bytes
+
+    # determine if mono
+    is_mono = type(blocks[0]) is not list
+    if is_mono:
+        blocks = [blocks] # add multiple channels if mono
+
+    # iterate through blocks
+    for channel in blocks:
+        for block in channel:
+            block_length, codes, residuals_rice = block
+            size += utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES # we assume the block length can be encoded as an unsigned integer in 2-bytes (np.int16); in other words, block_length must be strictly less than (2 ** 16 = 65536)
+            size += codes.nbytes # the size of codes is constant from the DAC model, which is a fixed hyperparameter
+            size += len(residuals_rice) # rice residuals can be easily decoded since we know the block_length
+    
+    # return the size in bytes
+    return size
+
+##################################################
+
+
 # MAIN METHOD
 ##################################################
 
@@ -207,8 +242,11 @@ if __name__ == "__main__":
         parser.add_argument("-p", "--path", type = str, default = f"{dirname(realpath(__file__))}/test.wav", help = "Absolute filepath to the WAV file.")
         parser.add_argument("-mp", "--model_path", type = str, default = DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
+        parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
+        parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
         parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
+        args.interchannel_decorrelate = not args.no_interchannel_decorrelate # infer interchannel decorrelation
         return args # return parsed arguments
     args = parse_args()
 
@@ -219,6 +257,8 @@ if __name__ == "__main__":
     print(f"Waveform Shape: {tuple(waveform.shape)}")
     print(f"Waveform Sample Rate: {sample_rate:,} Hz")
     print(f"Waveform Data Type: {waveform.dtype}")
+    waveform_size = utils.get_waveform_size(waveform = waveform)
+    print(f"Waveform Size: {waveform_size:,} bytes")
     waveform_reshaped = False
 
     # force to mono if necessary
@@ -245,6 +285,8 @@ if __name__ == "__main__":
         print(f"New Waveform Shape: {tuple(waveform.shape)}")
         print(f"New Waveform Sample Rate: {sample_rate:,} Hz")
         print(f"New Waveform Data Type: {waveform.dtype}")
+        waveform_size = utils.get_waveform_size(waveform = waveform)
+        print(f"New Waveform Size: {waveform_size:,} bytes")
 
     # turn off gradients, since the model is pretrained
     model.eval()
@@ -252,11 +294,18 @@ if __name__ == "__main__":
 
         # encode
         print("Encoding...")
-        bottleneck = encode(waveform = waveform, sample_rate = sample_rate, descript_audio_codec = model)
+        start_time = time.perf_counter()
+        bottleneck = encode(waveform = waveform, sample_rate = sample_rate, descript_audio_codec = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate)
+        compression_speed = utils.convert_duration_to_speed(duration = time.perf_counter() - start_time)
+        del start_time # free up memory
+        bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
+        print(f"Bottleneck Size: {bottleneck_size:,} bytes")
+        print(f"Compression Rate: {100 * (bottleneck_size / waveform_size):.4f}%")
+        print(f"Compression Speed: {compression_speed:.4f}")
 
         # decode
         print("Decoding...")
-        round_trip = decode(bottleneck = bottleneck, descript_audio_codec = model)
+        round_trip = decode(bottleneck = bottleneck, descript_audio_codec = model, interchannel_decorrelate = args.interchannel_decorrelate)
 
     # verify losslessness
     assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match!"
