@@ -16,6 +16,7 @@ from os.path import exists, dirname
 from os import makedirs
 import time
 import torch
+import warnings
 
 from os.path import dirname, realpath
 import sys
@@ -26,13 +27,16 @@ import utils
 import ldac
 import dac
 
+# ignore deprecation warning from pytorch
+warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm")
+
 ##################################################
 
 
 # CONSTANTS
 ##################################################
 
-OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size", "interchannel_decorrelate"]
+OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size", "interchannel_decorrelate", "gpu"]
 
 ##################################################
 
@@ -48,7 +52,7 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-FLAC Implementation") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LDAC Implementation") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
         parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/ldac", help = "Absolute filepath to the output directory.")
         parser.add_argument("-mp", "--model_path", type = str, default = ldac.DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
@@ -70,19 +74,21 @@ if __name__ == "__main__":
     if not exists(args.output_dir):
         makedirs(args.output_dir, exist_ok = True)
     output_filepath = f"{args.output_dir}/test.csv"
-    
-    # write output columns if necessary
-    if not exists(output_filepath) or args.reset: # write column names
-        pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
-        already_completed_paths = set() # no paths have been already completed
-    else: # determine already completed paths
-        already_completed_paths = set(pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False, usecols = ["path"])["path"]) # read in already completed paths
 
     # load descript audio codec
     using_gpu = torch.cuda.is_available() and args.gpu != -1
     device = torch.device(f"cuda:{abs(args.gpu)}" if using_gpu else "cpu")
     descript_audio_codec = dac.DAC.load(location = args.model_path).to(device)
     descript_audio_codec.eval() # turn on evaluate mode
+    
+    # write output columns if necessary
+    if not exists(output_filepath) or args.reset: # write column names
+        pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
+        already_completed_paths = set() # no paths have been already completed
+    else: # determine already completed paths
+        already_completed_paths = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
+        already_completed_paths = already_completed_paths[(already_completed_paths["block_size"] == args.block_size) & (already_completed_paths["interchannel_decorrelate"] == args.interchannel_decorrelate) & (already_completed_paths["gpu"] == using_gpu)]
+        already_completed_paths = set(already_completed_paths["path"])
 
     ##################################################
 
@@ -121,37 +127,39 @@ if __name__ == "__main__":
         with torch.no_grad():
             start_time = time.perf_counter()
             bottleneck = ldac.encode(waveform = waveform, sample_rate = sample_rate, descript_audio_codec = descript_audio_codec, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate) # compute compressed bottleneck
-            compression_duration = time.perf_counter() - start_time # measure speed of compression
+            duration_encoding = time.perf_counter() - start_time # measure speed of compression
             round_trip = ldac.decode(bottleneck = bottleneck, descript_audio_codec = descript_audio_codec, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
             assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
             del round_trip, start_time # free up memory
 
         # compute size in bytes of original waveform
-        original_size = utils.get_waveform_size(waveform = waveform)
+        size_original = utils.get_waveform_size(waveform = waveform)
 
         # compute size in bytes of compressed bottleneck
-        compressed_size = ldac.get_bottleneck_size(bottleneck = bottleneck)
+        size_compressed = ldac.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
-        compression_rate = compressed_size / original_size
-        compression_speed = utils.convert_duration_to_speed(encoding_duration = compression_duration, audio_duration = len(waveform) / sample_rate) # speed is inversely related to duration
-        del compression_duration # free up memory
+        compression_rate = size_compressed / size_original
+        duration_audio = len(waveform) / sample_rate
+        compression_speed = utils.convert_duration_to_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
 
         # output
         pd.DataFrame(data = [dict(zip(
             OUTPUT_COLUMNS, 
-            (path, original_size, compressed_size, compression_rate, compression_speed, args.block_size, args.interchannel_decorrelate)
+            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed, args.block_size, args.interchannel_decorrelate, using_gpu)
         ))]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
         # return nothing
         return
 
     # evaluate over testbed
+    postfix = {
+        "Block Size": f"{args.block_size}",
+        "Interchannel Decorrelate": str(args.interchannel_decorrelate),
+        "Using GPU": str(using_gpu),
+    }
     if using_gpu: # cannot use multiprocessing with GPU
-        for path in tqdm(iterable = paths, desc = "Evaluating", total = len(paths), postfix = {
-            "Block Size": f"{args.block_size}",
-            "Interchannel Decorrelate": str(args.interchannel_decorrelate),
-        }):
+        for path in tqdm(iterable = paths, desc = "Evaluating", total = len(paths), postfix = postfix):
             _ = evaluate(path = path)
     else: # we can use multiprocessing if not using GPU
         with multiprocessing.Pool(processes = args.jobs) as pool:
@@ -162,13 +170,10 @@ if __name__ == "__main__":
                 ),
                 desc = "Evaluating",
                 total = len(paths),
-                postfix = {
-                    "Block Size": f"{args.block_size}",
-                    "Interchannel Decorrelate": str(args.interchannel_decorrelate),
-                }))
+                postfix = postfix))
         
     # free up memory
-    del already_completed_paths, paths, sample_rate_by_path, using_gpu
+    del already_completed_paths, paths, sample_rate_by_path, using_gpu, postfix
         
     ##################################################
         

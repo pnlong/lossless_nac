@@ -18,6 +18,7 @@ from audiotools import AudioSignal
 import torch
 from os.path import dirname, realpath
 import time
+import warnings
 
 from os.path import dirname, realpath
 import sys
@@ -29,6 +30,9 @@ import rice
 import dac
 
 DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # path to descript audio codec pretrained
+
+# ignore deprecation warning from pytorch
+warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm")
 
 ##################################################
 
@@ -81,7 +85,7 @@ def encode(
 
     # ensure waveform is correct type
     waveform_dtype = waveform.dtype
-    assert waveform_dtype in (np.int16, np.int32)
+    assert any(waveform.dtype == dtype for dtype in utils.VALID_AUDIO_DTYPES)
 
     # deal with different size inputs
     is_mono = waveform.ndim == 1
@@ -295,7 +299,7 @@ if __name__ == "__main__":
         print("Encoding...")
         start_time = time.perf_counter()
         bottleneck = encode(waveform = waveform, sample_rate = sample_rate, descript_audio_codec = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate)
-        compression_speed = utils.convert_duration_to_speed(encoding_duration = time.perf_counter() - start_time, audio_duration = len(waveform) / sample_rate)
+        compression_speed = utils.convert_duration_to_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
         del start_time # free up memory
         bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
         print(f"Bottleneck Size: {bottleneck_size:,} bytes")

@@ -72,7 +72,9 @@ if __name__ == "__main__":
         pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
         already_completed_paths = set() # no paths have been already completed
     else: # determine already completed paths
-        already_completed_paths = set(pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False, usecols = ["path"])["path"]) # read in already completed paths
+        already_completed_paths = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
+        already_completed_paths = already_completed_paths[(already_completed_paths["block_size"] == args.block_size) & (already_completed_paths["interchannel_decorrelate"] == args.interchannel_decorrelate) & (already_completed_paths["lpc_order"] == args.lpc_order)]
+        already_completed_paths = set(already_completed_paths["path"])
 
     ##################################################
 
@@ -110,32 +112,37 @@ if __name__ == "__main__":
         # encode and decode
         start_time = time.perf_counter()
         bottleneck = flac.encode(waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order) # compute compressed bottleneck
-        compression_duration = time.perf_counter() - start_time # measure speed of compression
+        duration_encoding = time.perf_counter() - start_time # measure speed of compression
         round_trip = flac.decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
         assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
         del round_trip, start_time # free up memory
 
         # compute size in bytes of original waveform
-        original_size = utils.get_waveform_size(waveform = waveform)
+        size_original = utils.get_waveform_size(waveform = waveform)
 
         # compute size in bytes of compressed bottleneck
-        compressed_size = flac.get_bottleneck_size(bottleneck = bottleneck)
+        size_compressed = flac.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
-        compression_rate = compressed_size / original_size
-        compression_speed = utils.convert_duration_to_speed(encoding_duration = compression_duration, audio_duration = len(waveform) / sample_rate) # speed is inversely related to duration
-        del compression_duration # free up memory
+        compression_rate = size_compressed / size_original
+        duration_audio = len(waveform) / sample_rate
+        compression_speed = utils.convert_duration_to_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
 
         # output
         pd.DataFrame(data = [dict(zip(
             OUTPUT_COLUMNS, 
-            (path, original_size, compressed_size, compression_rate, compression_speed, args.block_size, args.interchannel_decorrelate, args.lpc_order)
+            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed, args.block_size, args.interchannel_decorrelate, args.lpc_order)
         ))]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
         # return nothing
         return
 
     # use multiprocessing
+    postfix = {
+        "Block Size": f"{args.block_size}",
+        "Interchannel Decorrelate": str(args.interchannel_decorrelate),
+        "LPC Order": f"{args.lpc_order}",
+    }
     with multiprocessing.Pool(processes = args.jobs) as pool:
         _ = list(tqdm(iterable = pool.imap_unordered(
                 func = evaluate,
@@ -144,14 +151,10 @@ if __name__ == "__main__":
             ),
             desc = "Evaluating",
             total = len(paths),
-            postfix = {
-                "Block Size": f"{args.block_size}",
-                "Interchannel Decorrelate": str(args.interchannel_decorrelate),
-                "LPC Order": f"{args.lpc_order}",
-            }))
+            postfix = postfix))
         
     # free up memory
-    del already_completed_paths, paths, sample_rate_by_path
+    del already_completed_paths, paths, sample_rate_by_path, postfix
         
     ##################################################
         

@@ -51,7 +51,7 @@ MUSDB18_PREPROCESSED_DIR = f"{TEST_DATA_DIR}/musdb18_preprocessed"
 # column names
 INPUT_COLUMN_NAMES = ["path", "sample_rate"]
 STEMS_TO_AUDIO_COLUMN_NAMES = INPUT_COLUMN_NAMES + ["original_path", "original_index"] # column names for input audio data derived from stems
-TEST_COMPRESSION_COLUMN_NAMES = ["path", "size_original", "size_compressed", "compression_rate", "compression_speed"] # where size_ columns are the size of the data in bytes and compression rate is simply size_compressed / size_original
+TEST_COMPRESSION_COLUMN_NAMES = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed"] # where size_ columns are the size of the data in bytes and compression rate is simply size_compressed / size_original
 
 ##################################################
 
@@ -181,12 +181,12 @@ FIGURE_DPI = 200 # dots per inch for figures
 ##################################################
 
 # convert duration measured with time.perf_counter() calls into a speed
-def convert_duration_to_speed(encoding_duration: float, audio_duration: float) -> float:
+def convert_duration_to_speed(duration_audio: float, duration_encoding: float) -> float:
     """
-    Given the encoding duration (in seconds) and the sample duration (length of the audio sample, in seconds), convert to 
-    a speed: amount of time it takes to encode one second of audio.
+    Given the sample duration (length of the audio sample, in seconds) and encoding duration (also in seconds), 
+    convert to a speed: seconds of audio encoded per second.
     """
-    return encoding_duration / audio_duration
+    return duration_audio / duration_encoding
 
 # calculate waveform size in bytes
 def get_waveform_size(waveform: np.array) -> int:
