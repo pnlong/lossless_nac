@@ -28,6 +28,7 @@ sys.path.insert(0, f"{dirname(realpath(__file__))}/dac") # import dac package
 import utils
 import rice
 import dac
+import logging_for_zach
 
 DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # path to descript audio codec pretrained
 
@@ -81,6 +82,7 @@ def encode(
         model: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         block_size: int = utils.BLOCK_SIZE, # block size
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # use interchannel decorrelation
+        log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
     ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
     """Naive LDAC encoder."""
 
@@ -111,6 +113,17 @@ def encode(
             start_index = i * block_size
             end_index = (start_index + block_size) if (i < (n_blocks - 1)) else n_samples
             blocks[channel_index][i] = encode_block(block = waveform[:, channel_index, start_index:end_index], model = model)
+
+    # log for zach
+    if log_for_zach_kwargs is not None:
+        residuals = np.stack([np.concatenate([rice.decode(stream = block[-1], n = block[0]) for block in channel], axis = 0) for channel in blocks], axis = -1)
+        if is_mono:
+            residuals = residuals.squeeze(dim = -1)
+        residuals_rice = rice.encode(nums = residuals.flatten())
+        logging_for_zach.log_for_zach(
+            residuals = residuals,
+            residuals_rice = residuals_rice,
+            **log_for_zach_kwargs)
 
     # don't have multiple channels if mono
     if is_mono:

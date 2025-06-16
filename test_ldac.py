@@ -125,8 +125,12 @@ if __name__ == "__main__":
 
         # encode and decode
         with torch.no_grad():
+            duration_audio = len(waveform) / sample_rate
             start_time = time.perf_counter()
-            bottleneck = ldac.encode(waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate) # compute compressed bottleneck
+            bottleneck = ldac.encode(
+                waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate,
+                log_for_zach_kwargs = {"duration": duration_audio, "lossy_estimator": "flac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "gpu": using_gpu}, "path": path}, # arguments to log for zach
+            ) # compute compressed bottleneck
             duration_encoding = time.perf_counter() - start_time # measure speed of compression
             round_trip = ldac.decode(bottleneck = bottleneck, model = model, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
             assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
@@ -140,7 +144,6 @@ if __name__ == "__main__":
 
         # compute other final statistics
         compression_rate = size_compressed / size_original
-        duration_audio = len(waveform) / sample_rate
         compression_speed = utils.convert_duration_to_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
 
         # output

@@ -55,7 +55,7 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LEC Implementation") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-48000/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
         parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/lec", help = "Absolute filepath to the output directory.")
-        parser.add_argument("--target_bandwidth", type = float, choices = utils.POSSIBLE_ENCODEC_TARGET_BANDWIDTHS, default = utils.TARGET_BANDWIDTH, help = "Target bandwidth for EnCodec model. The number of codebooks used will be determined by the bandwidth selected (see https://github.com/facebookresearch/encodec#:~:text=The%20number%20of%20codebooks%20used%20will%20be%20determined%20bythe%20bandwidth%20selected.).")
+        parser.add_argument("--target_bandwidth", type = float, default = utils.TARGET_BANDWIDTH, choices = utils.POSSIBLE_ENCODEC_TARGET_BANDWIDTHS, help = "Target bandwidth for EnCodec model. The number of codebooks used will be determined by the bandwidth selected (see https://github.com/facebookresearch/encodec#:~:text=The%20number%20of%20codebooks%20used%20will%20be%20determined%20bythe%20bandwidth%20selected.).")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.") # int(model.sample_rate * 0.99) # the 48 kHz encodec model processes audio in one-second chunks with 1% overlap
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
@@ -124,8 +124,12 @@ if __name__ == "__main__":
 
         # encode and decode
         with torch.no_grad():
+            duration_audio = len(waveform) / sample_rate
             start_time = time.perf_counter()
-            bottleneck = lec.encode(waveform = waveform, sample_rate = sample_rate, model = model, device = device, block_size = args.block_size) # compute compressed bottleneck
+            bottleneck = lec.encode(
+                waveform = waveform, sample_rate = sample_rate, model = model, device = device, block_size = args.block_size,
+                log_for_zach_kwargs = {"duration": duration_audio, "lossy_estimator": "flac", "parameters": {"block_size": args.block_size, "target_bandwidth": args.target_bandwidth, "gpu": using_gpu}, "path": path}, # arguments to log for zach
+            ) # compute compressed bottleneck
             duration_encoding = time.perf_counter() - start_time # measure speed of compression
             round_trip = lec.decode(bottleneck = bottleneck, model = model, device = device) # reconstruct waveform from bottleneck to ensure losslessness
             assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
@@ -139,7 +143,6 @@ if __name__ == "__main__":
 
         # compute other final statistics
         compression_rate = size_compressed / size_original
-        duration_audio = len(waveform) / sample_rate
         compression_speed = utils.convert_duration_to_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
 
         # output

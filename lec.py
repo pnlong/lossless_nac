@@ -27,6 +27,7 @@ sys.path.insert(0, f"{dirname(realpath(__file__))}/encodec") # import encodec pa
 import utils
 import rice
 import encodec
+import logging_for_zach
 
 # ignore deprecation warning from pytorch
 warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm")
@@ -90,6 +91,7 @@ def encode(
         model: encodec.model.EncodecModel = encodec.EncodecModel.encodec_model_48khz(), # encodec model
         device: torch.device = torch.device("cpu"), # device the model is on
         block_size: int = utils.BLOCK_SIZE, # block size
+        log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
     ) -> Tuple[List[Tuple[int, int, np.array, bytes]], type, bool]: # returns tuple of blocks, data type of original data, and whether the original data was mono
     """Naive LEC encoder."""
 
@@ -110,6 +112,16 @@ def encode(
         start_index = i * block_size
         end_index = (start_index + block_size) if (i < (n_blocks - 1)) else n_samples
         blocks[i] = encode_block(block = waveform[start_index:end_index], model = model, device = device, sample_rate = sample_rate)
+    
+    # log for zach
+    if log_for_zach_kwargs is not None:
+        residuals = [(rice.decode(stream = block[-1], n = block[0] * (1 if is_mono else 2)), block[0]) for block in blocks]
+        residuals = np.concatenate([block if is_mono else block.reshape(n_samples_in_block, -1) for block, n_samples_in_block in residuals], axis = 0)
+        residuals_rice = rice.encode(nums = residuals.flatten())
+        logging_for_zach.log_for_zach(
+            residuals = residuals,
+            residuals_rice = residuals_rice,
+            **log_for_zach_kwargs)
     
     # return blocks, waveform data type, and whether the original waveform was mono
     return blocks, waveform_dtype, is_mono

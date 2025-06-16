@@ -110,8 +110,12 @@ if __name__ == "__main__":
         assert any(waveform.dtype == dtype for dtype in utils.VALID_AUDIO_DTYPES), f"Audio must be stored as a numpy signed integer data type, but found {waveform.dtype}."
 
         # encode and decode
+        duration_audio = len(waveform) / sample_rate
         start_time = time.perf_counter()
-        bottleneck = flac.encode(waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order) # compute compressed bottleneck
+        bottleneck = flac.encode(
+            waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order,
+            log_for_zach_kwargs = {"duration": duration_audio, "lossy_estimator": "flac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "lpc_order": args.lpc_order}, "path": path}, # arguments to log for zach
+        ) # compute compressed bottleneck
         duration_encoding = time.perf_counter() - start_time # measure speed of compression
         round_trip = flac.decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
         assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
@@ -125,7 +129,6 @@ if __name__ == "__main__":
 
         # compute other final statistics
         compression_rate = size_compressed / size_original
-        duration_audio = len(waveform) / sample_rate
         compression_speed = utils.convert_duration_to_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
 
         # output

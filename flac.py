@@ -23,6 +23,7 @@ sys.path.insert(0, dirname(realpath(__file__)))
 
 import utils
 import rice
+import logging_for_zach
 
 ##################################################
 
@@ -126,6 +127,7 @@ def encode(
         block_size: int = utils.BLOCK_SIZE, # block size
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # use interchannel decorrelation
         order: int = utils.LPC_ORDER, # order for linear predictive coding
+        log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
     ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
     """Naive FLAC encoder."""
 
@@ -153,6 +155,17 @@ def encode(
             start_index = i * block_size
             end_index = (start_index + block_size) if (i < (n_blocks - 1)) else n_samples
             blocks[channel_index][i] = encode_block(block = waveform[start_index:end_index, channel_index], order = order)
+
+    # log for zach
+    if log_for_zach_kwargs is not None:
+        residuals = np.stack([np.concatenate([rice.decode(stream = block[-1], n = block[0]) for block in channel], axis = 0) for channel in blocks], axis = -1)
+        if is_mono:
+            residuals = residuals.squeeze(dim = -1)
+        residuals_rice = rice.encode(nums = residuals.flatten())
+        logging_for_zach.log_for_zach(
+            residuals = residuals,
+            residuals_rice = residuals_rice,
+            **log_for_zach_kwargs)
 
     # don't have multiple channels if mono
     if is_mono:

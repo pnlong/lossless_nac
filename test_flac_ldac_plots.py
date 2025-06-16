@@ -26,14 +26,6 @@ import utils
 ##################################################
 
 
-# CONSTANTS
-##################################################
-
-
-
-##################################################
-
-
 # HELPER FUNCTIONS
 ##################################################
 
@@ -159,32 +151,33 @@ def plot_comparison(dfs: Dict[str, pd.DataFrame], output_dir: str):
 
     # set up the matplotlib figure
     fig, (ax_rate, ax_speed) = plt.subplots(nrows = 2, ncols = 1, figsize = (8, 10), sharex = True, constrained_layout = True)
+    fig.suptitle("Comparing Lossy Estimators")
 
     # enable seaborn style
     sns.set_theme(style = "whitegrid")
 
     # construct data frame with percentiles data
-    data = pd.DataFrame(columns = ["percentile", "compression_rate", "compression_speed", "method"])
-    for method, df in dfs.items():
-        grouped = df.groupby(by = facet_columns[method])
+    data = pd.DataFrame(columns = ["percentile", "compression_rate", "compression_speed", "lossy_estimator"])
+    for lossy_estimator, df in dfs.items():
+        grouped = df.groupby(by = facet_columns[lossy_estimator])
         for _, group in grouped:
             data = pd.concat((data, pd.DataFrame(data = {
                 "percentile": percentiles,
                 "compression_rate": np.percentile(a = group["compression_rate"], q = percentiles), # percentile values for compression rate
                 "compression_speed": np.percentile(a = group["compression_speed"], q = percentiles), # percentile values for compression rate
-                "method": utils.rep(x = method, times = len(percentiles))
+                "lossy_estimator": utils.rep(x = lossy_estimator.upper(), times = len(percentiles))
             })), axis = 0, ignore_index = True)
         del grouped
 
-    # get average across different facets for each method
-    averaged_data = data.groupby(by = ["percentile", "method"]).mean().reset_index(drop = False)
+    # get average across different facets for each lossy estimator
+    averaged_data = data.groupby(by = ["percentile", "lossy_estimator"]).mean().reset_index(drop = False)
 
     # plot data
     dots_alpha = 0.4
-    sns.scatterplot(ax = ax_rate, data = data, x = "percentile", y = "compression_rate", hue = "method", legend = False, alpha = dots_alpha)
-    sns.lineplot(ax = ax_rate, data = averaged_data, x = "percentile", y = "compression_rate", hue = "method", legend = "auto")
-    sns.scatterplot(ax = ax_speed, data = data, x = "percentile", y = "compression_speed", hue = "method", legend = False, alpha = dots_alpha)
-    sns.lineplot(ax = ax_speed, data = averaged_data, x = "percentile", y = "compression_speed", hue = "method", legend = False)
+    sns.scatterplot(ax = ax_rate, data = data, x = "percentile", y = "compression_rate", hue = "lossy_estimator", legend = False, alpha = dots_alpha)
+    sns.lineplot(ax = ax_rate, data = averaged_data, x = "percentile", y = "compression_rate", hue = "lossy_estimator", legend = "auto")
+    sns.scatterplot(ax = ax_speed, data = data, x = "percentile", y = "compression_speed", hue = "lossy_estimator", legend = False, alpha = dots_alpha)
+    sns.lineplot(ax = ax_speed, data = averaged_data, x = "percentile", y = "compression_speed", hue = "lossy_estimator", legend = False)
 
     # styling the plots
     ax_rate.set_title("Compression Rate")
@@ -192,7 +185,7 @@ def plot_comparison(dfs: Dict[str, pd.DataFrame], output_dir: str):
     ax_speed.set_title("Encoding Speed")
     ax_speed.set_ylabel("Encoding Speed (seconds of computation per second of audio)")
     ax_speed.set_xlabel("Percentile")
-    ax_rate.legend(fontsize = "small", title_fontsize = "small")
+    ax_rate.legend(title = "Lossy Estimator", fontsize = "small", title_fontsize = "small")
     # ax_speed.legend().remove() # remove legend from bottom panel
     ax_rate.grid(True)
     ax_speed.grid(True)

@@ -23,8 +23,8 @@ import numpy as np
 ##################################################
 
 # valid audio data types
-VALID_AUDIO_DTYPES = {np.int8, np.int16, np.int32, np.int64} # signed integers
-DEFAULT_AUDIO_DTYPE = np.int32
+VALID_AUDIO_DTYPES = (np.int8, np.int16, np.int32, np.int64) # signed integers
+DEFAULT_AUDIO_DTYPE = VALID_AUDIO_DTYPES[2]
 
 # default sample rate
 SAMPLE_RATE = 44100 # 44.1 kHz
@@ -52,11 +52,14 @@ EVAL_DIR = f"{BASE_DIR}/eval"
 TEST_DATA_DIR = f"{BASE_DIR}/test_data"
 MUSDB18_DIR = f"{TEST_DATA_DIR}/musdb18"
 MUSDB18_PREPROCESSED_DIR = f"{TEST_DATA_DIR}/musdb18_preprocessed"
+LOGGING_FOR_ZACH_DIR = f"/deepfreeze/user_shares/pnlong/lnac/logging_for_zach"
+LOGGING_FOR_ZACH_FILEPATH = f"{LOGGING_FOR_ZACH_DIR}/log.csv"
 
 # column names
 INPUT_COLUMN_NAMES = ["path", "sample_rate"]
 STEMS_TO_AUDIO_COLUMN_NAMES = INPUT_COLUMN_NAMES + ["original_path", "original_index"] # column names for input audio data derived from stems
 TEST_COMPRESSION_COLUMN_NAMES = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed"] # where size_ columns are the size of the data in bytes and compression rate is simply size_compressed / size_original
+LOGGING_FOR_ZACH_COLUMN_NAMES = ["lossy_estimator", "parameters", "parameters_hash", "residuals_path", "original_path", "reconstruction_error", "compression_ratio", "bits_per_second", "rice_parameter"] # columns for logging residuals information for zach
 
 ##################################################
 
