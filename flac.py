@@ -131,7 +131,7 @@ def encode(
 
     # ensure waveform is correct type
     waveform_dtype = waveform.dtype
-    assert any(waveform.dtype == dtype for dtype in utils.VALID_AUDIO_DTYPES)
+    assert any(waveform_dtype == dtype for dtype in utils.VALID_AUDIO_DTYPES)
 
     # deal with different size inputs
     is_mono = waveform.ndim == 1

@@ -53,7 +53,7 @@ if __name__ == "__main__":
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LDAC Implementation") # create argument parser
-        parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
+        parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-44100/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
         parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/ldac", help = "Absolute filepath to the output directory.")
         parser.add_argument("-mp", "--model_path", type = str, default = ldac.DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
@@ -78,8 +78,8 @@ if __name__ == "__main__":
     # load descript audio codec
     using_gpu = torch.cuda.is_available() and args.gpu != -1
     device = torch.device(f"cuda:{abs(args.gpu)}" if using_gpu else "cpu")
-    descript_audio_codec = dac.DAC.load(location = args.model_path).to(device)
-    descript_audio_codec.eval() # turn on evaluate mode
+    model = dac.DAC.load(location = args.model_path).to(device)
+    model.eval() # turn on evaluate mode
     
     # write output columns if necessary
     if not exists(output_filepath) or args.reset: # write column names
@@ -117,7 +117,7 @@ if __name__ == "__main__":
         sample_rate = sample_rate_by_path[path]
         
         # assertions
-        assert sample_rate == descript_audio_codec.sample_rate, f"{path} audio has a sample rate of {sample_rate:,} Hz, but must have a sample rate of {descript_audio_codec.sample_rate:,} Hz to be compatible with the Descript Audio Codec." # ensure sample rate is correct
+        assert sample_rate == model.sample_rate, f"{path} audio has a sample rate of {sample_rate:,} Hz, but must have a sample rate of {model.sample_rate:,} Hz to be compatible with the Descript Audio Codec." # ensure sample rate is correct
         assert waveform.ndim <= 2, f"Input audio must be of shape (n_samples, n_channels) for multi-channel audio or (n_samples,) for mono audio, but {path} has shape {tuple(waveform.shape)}."
         if waveform.ndim == 2:
             assert waveform.shape[-1] <= 2, f"Multichannel-audio must have either one or two channels, but {path} has {waveform.shape[-1]} channels."
@@ -126,9 +126,9 @@ if __name__ == "__main__":
         # encode and decode
         with torch.no_grad():
             start_time = time.perf_counter()
-            bottleneck = ldac.encode(waveform = waveform, sample_rate = sample_rate, descript_audio_codec = descript_audio_codec, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate) # compute compressed bottleneck
+            bottleneck = ldac.encode(waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate) # compute compressed bottleneck
             duration_encoding = time.perf_counter() - start_time # measure speed of compression
-            round_trip = ldac.decode(bottleneck = bottleneck, descript_audio_codec = descript_audio_codec, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
+            round_trip = ldac.decode(bottleneck = bottleneck, model = model, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
             assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
             del round_trip, start_time # free up memory
 

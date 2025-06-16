@@ -24,6 +24,7 @@ import numpy as np
 
 # valid audio data types
 VALID_AUDIO_DTYPES = {np.int8, np.int16, np.int32, np.int64} # signed integers
+DEFAULT_AUDIO_DTYPE = np.int32
 
 # default sample rate
 SAMPLE_RATE = 44100 # 44.1 kHz
@@ -40,6 +41,10 @@ INTERCHANNEL_DECORRELATE_DTYPE = np.int64 # using interchannel decorrelation can
 # linear predictive coding
 LPC_ORDER = 9 # order (see https://xiph.org/flac/documentation_format_overview.html#:~:text=Also%2C%20at%20some%20point%20(usually%20around%20order%209))
 LPC_DTYPE = np.int8 # data type of linear prediction coefficients
+
+# encodec target bandwidth
+POSSIBLE_ENCODEC_TARGET_BANDWIDTHS = (3.0, 6.0, 12.0, 24.0)
+TARGET_BANDWIDTH = POSSIBLE_ENCODEC_TARGET_BANDWIDTHS[1]
 
 # filepaths
 BASE_DIR = "/deepfreeze/pnlong/lnac"
@@ -198,6 +203,48 @@ def get_waveform_size(waveform: np.array) -> int:
     if waveform.ndim == 2: # if multiple channels, the second byte tells us the number of channels (in a single-byte unsigned integer)
         size += 1
     return size
+
+# convert fixed-point waveform (signed integer data type) to floating-point
+def convert_waveform_fixed_to_floating(waveform: np.array, output_dtype: type = np.float32) -> np.array:
+    """
+    Converts a fixed-point waveform (signed integer data type) to floating-point.
+    """
+
+    # ensure correct types
+    assert any(waveform.dtype == dtype for dtype in VALID_AUDIO_DTYPES), "Input waveform must be a signed-integer data type." # ensure input waveform is the correct type
+    assert any(output_dtype == dtype for dtype in {np.float16, np.float32, np.float64}), "Output data type must be floating-point." # ensure output data type is correct
+
+    # get scaling factor (denominator is the maximum positive integer representable by dtype)
+    scaling_factor = np.iinfo(waveform.dtype).max + 1  # to map [-dtype_max - 1, dtype_max] → [-1.0, 1.0)
+
+    # convert to floating point and scale
+    waveform = waveform.astype(output_dtype) / scaling_factor
+
+    # return floating-point waveform
+    return waveform
+
+# convert floating-point waveform to fixed-point (signed integer data type)
+def convert_waveform_floating_to_fixed(waveform: np.array, output_dtype: type = np.int32) -> np.array:
+    """
+    Converts a floating-point waveform to fixed-point (signed integer data type).
+    """
+
+    # ensure correct types
+    assert any(waveform.dtype == dtype for dtype in {np.float16, np.float32, np.float64}), "Input waveform must be floating-point." # ensure input waveform is the correct type
+    assert any(output_dtype == dtype for dtype in VALID_AUDIO_DTYPES), "Output data type must be a signed-integer data type." # ensure output data type is correct
+
+    # get scaling factor
+    scaling_factor = np.iinfo(output_dtype).max + 1  # inverse of the factor used in fixed- to floating-point conversion
+
+    # scale and round to nearest integer
+    waveform = np.clip(a = waveform, a_min = -1.0, a_max = 1.0 - np.finfo(waveform.dtype).eps) # prevent overflow
+    waveform = np.round(waveform * scaling_factor)
+
+    # cast to fixed-point type
+    waveform = waveform.astype(output_dtype)
+
+    # return fixed-point waveform
+    return waveform
 
 ##################################################
 
