@@ -26,6 +26,15 @@ import utils
 ##################################################
 
 
+# CONSTANTS
+##################################################
+
+# lossy estimators to include in plots
+LOSSY_ESTIMATORS = ["flac", "ldac", "lec"]
+
+##################################################
+
+
 # HELPER FUNCTIONS
 ##################################################
 
@@ -221,22 +230,20 @@ if __name__ == "__main__":
     args = parse_args()
 
     # infer other directories
-    flac_dir = f"{args.input_dir}/flac"
-    ldac_dir = f"{args.input_dir}/ldac"
+    lossy_estimator_dirs = [f"{args.input_dir}/{lossy_estimator}" for lossy_estimator in LOSSY_ESTIMATORS]
 
     ##################################################
 
 
-    # PLOT STATISTICS FOR FLAC AND LDAC
+    # PLOT STATISTICS
     ##################################################
 
-    # flac
-    flac_results = pd.read_csv(filepath_or_buffer = f"{flac_dir}/test.csv", sep = ",", header = 0, index_col = False)
-    plot_compression_statistics(df = flac_results, output_dir = flac_dir)
-
-    # ldac
-    ldac_results = pd.read_csv(filepath_or_buffer = f"{ldac_dir}/test.csv", sep = ",", header = 0, index_col = False)
-    plot_compression_statistics(df = ldac_results, output_dir = ldac_dir)
+    # plot statistics for different lossy estimators
+    dfs = dict()
+    for lossy_estimator in LOSSY_ESTIMATORS:
+        directory = f"{args.input_dir}/{lossy_estimator}"
+        dfs[lossy_estimator] = pd.read_csv(filepath_or_buffer = f"{directory}/test.csv", sep = ",", header = 0, index_col = False)
+        plot_compression_statistics(df = dfs[lossy_estimator], output_dir = directory)
 
     ##################################################
 
@@ -244,10 +251,13 @@ if __name__ == "__main__":
     # PLOT COMPARISON PLOT
     ##################################################
 
+    # create plots directory
     plots_dir = f"{args.input_dir}/plots"
     if not exists(plots_dir):
         mkdir(plots_dir)
-    plot_comparison(dfs = {"flac": flac_results, "ldac": ldac_results}, output_dir = plots_dir)
+
+    # plot comparison plot
+    plot_comparison(dfs = dfs, output_dir = plots_dir)
 
     ##################################################
 
