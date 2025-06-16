@@ -2,7 +2,7 @@
 # Phillip Long
 # June 10, 2025
 
-# Generate plots to compare naive-FLAC and naive-LDAC encoding methods.
+# Generate plots to compare different lossy estimators.
 
 # IMPORTS
 ##################################################
@@ -223,7 +223,7 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Plots", description = "Create Plots to Compare Naive-FLAC and Naive-LDAC Implementations") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Plots", description = "Create Plots to Compare Lossy Estimators") # create argument parser
         parser.add_argument("--input_dir", type = str, default = utils.EVAL_DIR, help = "Absolute filepath to the input evaluation directory.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         return args # return parsed arguments

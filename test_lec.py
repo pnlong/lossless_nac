@@ -128,7 +128,7 @@ if __name__ == "__main__":
             start_time = time.perf_counter()
             bottleneck = lec.encode(
                 waveform = waveform, sample_rate = sample_rate, model = model, device = device, block_size = args.block_size,
-                log_for_zach_kwargs = {"duration": duration_audio, "lossy_estimator": "flac", "parameters": {"block_size": args.block_size, "target_bandwidth": args.target_bandwidth, "gpu": using_gpu}, "path": path}, # arguments to log for zach
+                log_for_zach_kwargs = {"duration": duration_audio, "lossy_estimator": "lec", "parameters": {"block_size": args.block_size, "target_bandwidth": args.target_bandwidth, "gpu": using_gpu}, "path": path}, # arguments to log for zach
             ) # compute compressed bottleneck
             duration_encoding = time.perf_counter() - start_time # measure speed of compression
             round_trip = lec.decode(bottleneck = bottleneck, model = model, device = device) # reconstruct waveform from bottleneck to ensure losslessness

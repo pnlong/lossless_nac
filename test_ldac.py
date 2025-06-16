@@ -129,7 +129,7 @@ if __name__ == "__main__":
             start_time = time.perf_counter()
             bottleneck = ldac.encode(
                 waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate,
-                log_for_zach_kwargs = {"duration": duration_audio, "lossy_estimator": "flac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "gpu": using_gpu}, "path": path}, # arguments to log for zach
+                log_for_zach_kwargs = {"duration": duration_audio, "lossy_estimator": "ldac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "gpu": using_gpu}, "path": path}, # arguments to log for zach
             ) # compute compressed bottleneck
             duration_encoding = time.perf_counter() - start_time # measure speed of compression
             round_trip = ldac.decode(bottleneck = bottleneck, model = model, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
