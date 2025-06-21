@@ -2,7 +2,7 @@
 # Phillip Long
 # June 10, 2025
 
-# Generate plots to compare different lossy estimators.
+# Generate plots to compare different lossless compressors.
 
 # IMPORTS
 ##################################################
@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
 from typing import Any, Dict
-from os import mkdir
-from os.path import exists
+from os import mkdir, listdir
+from os.path import exists, dirname, realpath
 import warnings
 
 from os.path import dirname, realpath
@@ -22,15 +22,6 @@ import sys
 sys.path.insert(0, dirname(realpath(__file__)))
 
 import utils
-
-##################################################
-
-
-# CONSTANTS
-##################################################
-
-# lossy estimators to include in plots
-LOSSY_ESTIMATORS = ["flac", "ldac", "lec"]
 
 ##################################################
 
@@ -116,7 +107,7 @@ def plot_compression_statistics(df: pd.DataFrame, output_dir: str):
 
     # styling the plots
     ax_rate.set_title("Compression Rate")
-    ax_rate.set_ylabel("Compression Rate")
+    ax_rate.set_ylabel("Compression Rate (%)")
     ax_speed.set_title("Encoding Speed")
     ax_speed.set_ylabel("Encoding Speed (seconds of computation per second of audio)")
     ax_speed.set_xlabel("Percentile")
@@ -160,41 +151,41 @@ def plot_comparison(dfs: Dict[str, pd.DataFrame], output_dir: str):
 
     # set up the matplotlib figure
     fig, (ax_rate, ax_speed) = plt.subplots(nrows = 2, ncols = 1, figsize = (8, 10), sharex = True, constrained_layout = True)
-    fig.suptitle("Comparing Lossy Estimators")
+    fig.suptitle("Comparing Lossless Compressors")
 
     # enable seaborn style
     sns.set_theme(style = "whitegrid")
 
     # construct data frame with percentiles data
-    data = pd.DataFrame(columns = ["percentile", "compression_rate", "compression_speed", "lossy_estimator"])
-    for lossy_estimator, df in dfs.items():
-        grouped = df.groupby(by = facet_columns[lossy_estimator])
+    data = pd.DataFrame(columns = ["percentile", "compression_rate", "compression_speed", "lossless_compressor"])
+    for lossless_compressor, df in dfs.items():
+        grouped = df.groupby(by = facet_columns[lossless_compressor])
         for _, group in grouped:
             data = pd.concat((data, pd.DataFrame(data = {
                 "percentile": percentiles,
                 "compression_rate": np.percentile(a = group["compression_rate"], q = percentiles), # percentile values for compression rate
                 "compression_speed": np.percentile(a = group["compression_speed"], q = percentiles), # percentile values for compression rate
-                "lossy_estimator": utils.rep(x = lossy_estimator.upper(), times = len(percentiles))
+                "lossless_compressor": utils.rep(x = lossless_compressor.upper(), times = len(percentiles))
             })), axis = 0, ignore_index = True)
         del grouped
 
-    # get average across different facets for each lossy estimator
-    averaged_data = data.groupby(by = ["percentile", "lossy_estimator"]).mean().reset_index(drop = False)
+    # get average across different facets for each lossless compressor
+    averaged_data = data.groupby(by = ["percentile", "lossless_compressor"]).mean().reset_index(drop = False)
 
     # plot data
     dots_alpha = 0.4
-    sns.scatterplot(ax = ax_rate, data = data, x = "percentile", y = "compression_rate", hue = "lossy_estimator", legend = False, alpha = dots_alpha)
-    sns.lineplot(ax = ax_rate, data = averaged_data, x = "percentile", y = "compression_rate", hue = "lossy_estimator", legend = "auto")
-    sns.scatterplot(ax = ax_speed, data = data, x = "percentile", y = "compression_speed", hue = "lossy_estimator", legend = False, alpha = dots_alpha)
-    sns.lineplot(ax = ax_speed, data = averaged_data, x = "percentile", y = "compression_speed", hue = "lossy_estimator", legend = False)
+    sns.scatterplot(ax = ax_rate, data = data, x = "percentile", y = "compression_rate", hue = "lossless_compressor", legend = False, alpha = dots_alpha)
+    sns.lineplot(ax = ax_rate, data = averaged_data, x = "percentile", y = "compression_rate", hue = "lossless_compressor", legend = "auto")
+    sns.scatterplot(ax = ax_speed, data = data, x = "percentile", y = "compression_speed", hue = "lossless_compressor", legend = False, alpha = dots_alpha)
+    sns.lineplot(ax = ax_speed, data = averaged_data, x = "percentile", y = "compression_speed", hue = "lossless_compressor", legend = False)
 
     # styling the plots
     ax_rate.set_title("Compression Rate")
-    ax_rate.set_ylabel("Compression Rate")
+    ax_rate.set_ylabel("Compression Rate (%)")
     ax_speed.set_title("Encoding Speed")
     ax_speed.set_ylabel("Encoding Speed (seconds of computation per second of audio)")
     ax_speed.set_xlabel("Percentile")
-    ax_rate.legend(title = "Lossy Estimator", fontsize = "small", title_fontsize = "small")
+    ax_rate.legend(title = "Lossless Compressor", fontsize = "small", title_fontsize = "small")
     # ax_speed.legend().remove() # remove legend from bottom panel
     ax_rate.grid(True)
     ax_speed.grid(True)
@@ -223,14 +214,17 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Plots", description = "Create Plots to Compare Lossy Estimators") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Plots", description = "Create Plots to Compare Lossless Compressors") # create argument parser
         parser.add_argument("--input_dir", type = str, default = utils.EVAL_DIR, help = "Absolute filepath to the input evaluation directory.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         return args # return parsed arguments
     args = parse_args()
 
+    # get lossless compressors
+    lossless_compressors = [test_path.split(".")[0] for test_path in listdir(f"{dirname(realpath(__file__))}/lossless_compressors")]
+
     # infer other directories
-    lossy_estimator_dirs = [f"{args.input_dir}/{lossy_estimator}" for lossy_estimator in LOSSY_ESTIMATORS]
+    lossless_compressor_dirs = [f"{args.input_dir}/{lossless_compressor}" for lossless_compressor in lossless_compressors]
 
     ##################################################
 
@@ -238,12 +232,12 @@ if __name__ == "__main__":
     # PLOT STATISTICS
     ##################################################
 
-    # plot statistics for different lossy estimators
+    # plot statistics for different lossless compressors
     dfs = dict()
-    for lossy_estimator in LOSSY_ESTIMATORS:
-        directory = f"{args.input_dir}/{lossy_estimator}"
-        dfs[lossy_estimator] = pd.read_csv(filepath_or_buffer = f"{directory}/test.csv", sep = ",", header = 0, index_col = False)
-        plot_compression_statistics(df = dfs[lossy_estimator], output_dir = directory)
+    for lossless_compressor in lossless_compressors:
+        directory = f"{args.input_dir}/{lossless_compressor}"
+        dfs[lossless_compressor] = pd.read_csv(filepath_or_buffer = f"{directory}/test.csv", sep = ",", header = 0, index_col = False)
+        plot_compression_statistics(df = dfs[lossless_compressor], output_dir = directory)
 
     ##################################################
 

@@ -22,7 +22,8 @@ import warnings
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
-sys.path.insert(0, f"{dirname(realpath(__file__))}/encodec") # import encodec package
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
+sys.path.insert(0, f"{dirname(dirname(realpath(__file__)))}/encodec") # import encodec package
 
 import utils
 import rice

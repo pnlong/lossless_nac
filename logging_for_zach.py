@@ -2,7 +2,7 @@
 # Phillip Long
 # June 15, 2025
 
-# Log information about residuals using different lossy estimators.
+# Log information about residuals using different lossless compressors.
 
 # IMPORTS
 ##################################################
@@ -40,12 +40,12 @@ def log_for_zach(
         residuals: np.array, # the residuals between the original and approximated waveform
         residuals_rice: bytes, # the residuals post-rice-encoding as a bytes object
         duration: float, # duration of original waveform
-        lossy_estimator: str, # the lossy estimator used (LPC, DAC, etc.)
-        parameters: Dict[str, Any], # parameters for lossy estimator
+        lossless_compressor: str, # the lossless compressor used (LPC, DAC, etc.)
+        parameters: Dict[str, Any], # parameters for lossless compressor
         path: str = None, # path to original waveform numpy pickle file, and if not supplied, then no statistics are logged
     ):
     """
-    Log data on residuals for different lossy estimators.
+    Log data on residuals for different lossless compressors.
     """
 
     # reference ALREADY_LOGGED_OUTPUT_FILEPATHS
@@ -71,7 +71,7 @@ def log_for_zach(
         parameters_string_hash = hashlib.sha256(parameters_string.encode("utf-8")).hexdigest() # get hash of parameters string
 
         # create output directory
-        output_dir = f"{utils.LOGGING_FOR_ZACH_DIR}/{lossy_estimator}_{parameters_string_hash}"
+        output_dir = f"{utils.LOGGING_FOR_ZACH_DIR}/{lossless_compressor}_{parameters_string_hash}"
         if not exists(output_dir):
             mkdir(output_dir)
 
@@ -83,7 +83,7 @@ def log_for_zach(
 
         # write data
         pd.DataFrame(data = [{
-            "lossy_estimator": lossy_estimator,
+            "lossless_compressor": lossless_compressor,
             "parameters": parameters_string,
             "parameters_hash": parameters_string_hash,
             "residuals_path": output_filepath,
@@ -113,7 +113,7 @@ if __name__ == "__main__":
 
     # write column names by passing certain arguments
     log_for_zach(
-        residuals = None, residuals_rice = None, duration = None, lossy_estimator = None, parameters = None,
+        residuals = None, residuals_rice = None, duration = None, lossless_compressor = None, parameters = None,
         path = None, # will just write the column names
     )
 

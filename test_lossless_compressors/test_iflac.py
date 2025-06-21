@@ -1,8 +1,8 @@
 # README
 # Phillip Long
-# June 9, 2025
+# June 21, 2025
 
-# Test compression rate of naive-FLAC encoder. We use the MusDB18 dataset as a testbed.
+# Test compression rate of IFLAC encoder. We use the MusDB18 dataset as a testbed.
 
 # IMPORTS
 ##################################################
@@ -19,9 +19,10 @@ import time
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 import utils
-import flac
+from lossless_compressors import iflac
 
 ##################################################
 
@@ -114,7 +115,7 @@ if __name__ == "__main__":
         start_time = time.perf_counter()
         bottleneck = flac.encode(
             waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order,
-            log_for_zach_kwargs = {"duration": duration_audio, "lossy_estimator": "flac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "lpc_order": args.lpc_order}, "path": path}, # arguments to log for zach
+            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "flac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "lpc_order": args.lpc_order}, "path": path}, # arguments to log for zach
         ) # compute compressed bottleneck
         duration_encoding = time.perf_counter() - start_time # measure speed of compression
         round_trip = flac.decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness

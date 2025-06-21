@@ -1,8 +1,8 @@
 # README
 # Phillip Long
-# June 9, 2025
+# June 12, 2025
 
-# Test compression rate of naive-LDAC encoder. We use the MusDB18 dataset as a testbed.
+# Test compression rate of naive-LEC encoder. We use the MusDB18 dataset as a testbed.
 
 # IMPORTS
 ##################################################
@@ -21,11 +21,12 @@ import warnings
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
-sys.path.insert(0, f"{dirname(realpath(__file__))}/dac") # import dac package
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
+sys.path.insert(0, f"{dirname(dirname(realpath(__file__)))}/encodec") # import encodec package
 
 import utils
-import ldac
-import dac
+from lossless_compressors import lec
+import encodec
 
 # ignore deprecation warning from pytorch
 warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm")
@@ -36,7 +37,7 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 # CONSTANTS
 ##################################################
 
-OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size", "interchannel_decorrelate", "gpu"]
+OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size", "target_bandwidth", "gpu"]
 
 ##################################################
 
@@ -52,17 +53,15 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LDAC Implementation") # create argument parser
-        parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-44100/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
-        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/ldac", help = "Absolute filepath to the output directory.")
-        parser.add_argument("-mp", "--model_path", type = str, default = ldac.DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
-        parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
-        parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
+        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LEC Implementation") # create argument parser
+        parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-48000/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
+        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/lec", help = "Absolute filepath to the output directory.")
+        parser.add_argument("--target_bandwidth", type = float, default = utils.TARGET_BANDWIDTH, choices = utils.POSSIBLE_ENCODEC_TARGET_BANDWIDTHS, help = "Target bandwidth for EnCodec model. The number of codebooks used will be determined by the bandwidth selected (see https://github.com/facebookresearch/encodec#:~:text=The%20number%20of%20codebooks%20used%20will%20be%20determined%20bythe%20bandwidth%20selected.).")
+        parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.") # int(model.sample_rate * 0.99) # the 48 kHz encodec model processes audio in one-second chunks with 1% overlap
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
-        args.interchannel_decorrelate = not args.no_interchannel_decorrelate # infer interchannel decorrelation
         return args # return parsed arguments
     args = parse_args()
 
@@ -78,7 +77,8 @@ if __name__ == "__main__":
     # load descript audio codec
     using_gpu = torch.cuda.is_available() and args.gpu != -1
     device = torch.device(f"cuda:{abs(args.gpu)}" if using_gpu else "cpu")
-    model = dac.DAC.load(location = args.model_path).to(device)
+    model = encodec.EncodecModel.encodec_model_48khz().to(device)
+    model.set_target_bandwidth(bandwidth = args.target_bandwidth)
     model.eval() # turn on evaluate mode
     
     # write output columns if necessary
@@ -87,7 +87,7 @@ if __name__ == "__main__":
         already_completed_paths = set() # no paths have been already completed
     else: # determine already completed paths
         already_completed_paths = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-        already_completed_paths = already_completed_paths[(already_completed_paths["block_size"] == args.block_size) & (already_completed_paths["interchannel_decorrelate"] == args.interchannel_decorrelate) & (already_completed_paths["gpu"] == using_gpu)]
+        already_completed_paths = already_completed_paths[(already_completed_paths["block_size"] == args.block_size) & (already_completed_paths["target_bandwidth"] == args.target_bandwidth) & (already_completed_paths["gpu"] == using_gpu)]
         already_completed_paths = set(already_completed_paths["path"])
 
     ##################################################
@@ -120,19 +120,19 @@ if __name__ == "__main__":
         assert sample_rate == model.sample_rate, f"{path} audio has a sample rate of {sample_rate:,} Hz, but must have a sample rate of {model.sample_rate:,} Hz to be compatible with the Descript Audio Codec." # ensure sample rate is correct
         assert waveform.ndim <= 2, f"Input audio must be of shape (n_samples, n_channels) for multi-channel audio or (n_samples,) for mono audio, but {path} has shape {tuple(waveform.shape)}."
         if waveform.ndim == 2:
-            assert waveform.shape[-1] <= 2, f"Multichannel-audio must have either one or two channels, but {path} has {waveform.shape[-1]} channels."
+            assert waveform.shape[-1] == 2, f"Multichannel-audio must have two channels, but {path} has {waveform.shape[-1]} channels."
         assert any(waveform.dtype == dtype for dtype in utils.VALID_AUDIO_DTYPES), f"Audio must be stored as a numpy signed integer data type, but found {waveform.dtype}."
 
         # encode and decode
         with torch.no_grad():
             duration_audio = len(waveform) / sample_rate
             start_time = time.perf_counter()
-            bottleneck = ldac.encode(
-                waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate,
-                log_for_zach_kwargs = {"duration": duration_audio, "lossy_estimator": "ldac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "gpu": using_gpu}, "path": path}, # arguments to log for zach
+            bottleneck = lec.encode(
+                waveform = waveform, sample_rate = sample_rate, model = model, device = device, block_size = args.block_size,
+                log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "lec", "parameters": {"block_size": args.block_size, "target_bandwidth": args.target_bandwidth, "gpu": using_gpu}, "path": path}, # arguments to log for zach
             ) # compute compressed bottleneck
             duration_encoding = time.perf_counter() - start_time # measure speed of compression
-            round_trip = ldac.decode(bottleneck = bottleneck, model = model, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
+            round_trip = lec.decode(bottleneck = bottleneck, model = model, device = device) # reconstruct waveform from bottleneck to ensure losslessness
             assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
             del round_trip, start_time # free up memory
 
@@ -140,7 +140,7 @@ if __name__ == "__main__":
         size_original = utils.get_waveform_size(waveform = waveform)
 
         # compute size in bytes of compressed bottleneck
-        size_compressed = ldac.get_bottleneck_size(bottleneck = bottleneck)
+        size_compressed = lec.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
         compression_rate = size_compressed / size_original
@@ -149,7 +149,7 @@ if __name__ == "__main__":
         # output
         pd.DataFrame(data = [dict(zip(
             OUTPUT_COLUMNS, 
-            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed, args.block_size, args.interchannel_decorrelate, using_gpu)
+            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed, args.block_size, args.target_bandwidth, using_gpu)
         ))]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
         # return nothing
@@ -158,7 +158,7 @@ if __name__ == "__main__":
     # evaluate over testbed
     postfix = {
         "Block Size": f"{args.block_size}",
-        "Interchannel Decorrelate": str(args.interchannel_decorrelate),
+        "Target Bandwidth": f"{args.target_bandwidth}",
         "Using GPU": str(using_gpu),
     }
     if using_gpu: # cannot use multiprocessing with GPU
@@ -185,7 +185,7 @@ if __name__ == "__main__":
 
     # read in results (just the compression rate column, we don't really care about anything else)
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-    results = results[(results["block_size"] == args.block_size) & (results["interchannel_decorrelate"] == args.interchannel_decorrelate) & (results["gpu"] == using_gpu)]
+    results = results[(results["block_size"] == args.block_size) & (results["target_bandwidth"] == args.target_bandwidth) & (results["gpu"] == using_gpu)]
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()
 
