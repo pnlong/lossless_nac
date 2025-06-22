@@ -343,7 +343,6 @@ if __name__ == "__main__":
 
     # get lossless compressors
     lossless_compressors = [test_path.split(".")[0] for test_path in listdir(f"{dirname(realpath(__file__))}/lossless_compressors")]
-    lossless_compressors.remove("iflac")
 
     # infer other directories
     lossless_compressor_dirs = [f"{args.input_dir}/{lossless_compressor}" for lossless_compressor in lossless_compressors]
@@ -362,7 +361,10 @@ if __name__ == "__main__":
 
         # read in data frame
         directory = f"{args.input_dir}/{lossless_compressor}"
-        dfs[lossless_compressor] = pd.read_csv(filepath_or_buffer = f"{directory}/test.csv", sep = ",", header = 0, index_col = False)
+        df_filepath = f"{directory}/test.csv"
+        if not exists(df_filepath): # skip if doesn't exist yet
+            continue
+        dfs[lossless_compressor] = pd.read_csv(filepath_or_buffer = df_filepath, sep = ",", header = 0, index_col = False)
         facet_columns[lossless_compressor] = list(filter(lambda column: column not in utils.TEST_COMPRESSION_COLUMN_NAMES, dfs[lossless_compressor].columns))
 
         # pretty print the data frame
