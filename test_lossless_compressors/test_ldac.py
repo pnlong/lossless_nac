@@ -144,8 +144,8 @@ if __name__ == "__main__":
         size_compressed = ldac.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
-        compression_rate = size_compressed / size_original
-        compression_speed = utils.convert_duration_to_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
+        compression_rate = utils.get_compression_rate(size_original = size_original, size_compressed = size_compressed)
+        compression_speed = utils.get_compression_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
 
         # output
         pd.DataFrame(data = [dict(zip(

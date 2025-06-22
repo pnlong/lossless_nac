@@ -29,10 +29,20 @@ import logging_for_zach
 ##################################################
 
 
+# CONSTANTS
+##################################################
+
+# linear predictive coding
+LPC_ORDER = 9 # order (see https://xiph.org/flac/documentation_format_overview.html#:~:text=Also%2C%20at%20some%20point%20(usually%20around%20order%209))
+LPC_DTYPE = np.int8 # data type of linear prediction coefficients
+
+##################################################
+
+
 # HELPER FUNCTION FOR COMPUTING LINEAR PREDICTION COEFFICIENTS USING THE AUTOCOVARIANCE/AUTOCORRELATION METHOD
 ##################################################
 
-def levinson_durbin(r: np.array, order: int = utils.LPC_ORDER) -> Tuple[np.array, float, np.array]:
+def levinson_durbin(r: np.array, order: int = LPC_ORDER) -> Tuple[np.array, float, np.array]:
     """
     Levinson-Durbin recursion to solve Toeplitz systems for linear predictive coding.
 
@@ -40,7 +50,7 @@ def levinson_durbin(r: np.array, order: int = utils.LPC_ORDER) -> Tuple[np.array
     ----------
     r : np.array
         autocorrelation sequence of length >= order + 1
-    order : int, default: `utils.LPC_ORDER`
+    order : int, default: `LPC_ORDER`
         desired linear predictive coding order
         
     Returns
@@ -78,7 +88,7 @@ def levinson_durbin(r: np.array, order: int = utils.LPC_ORDER) -> Tuple[np.array
     
     return a, e, k
 
-def lpc_autocorrelation_method(y: np.array, order: int = utils.LPC_ORDER) -> np.array:
+def lpc_autocorrelation_method(y: np.array, order: int = LPC_ORDER) -> np.array:
     """
     Compute linear prediction coefficients using autocorrelation method for guaranteed stability.
     See https://speechprocessingbook.aalto.fi/Representations/Linear_prediction.html#:~:text=A%20benefit%20of,signal%20with%20prediction.
@@ -97,7 +107,7 @@ def lpc_autocorrelation_method(y: np.array, order: int = utils.LPC_ORDER) -> np.
 
 def encode_block(
         block: np.array, # block of integers of shape (n_samples_in_block,)
-        order: int = utils.LPC_ORDER, # order for linear predictive coding
+        order: int = LPC_ORDER, # order for linear predictive coding
     ) -> Tuple[int, np.array, bytes]: # returns tuple of number of samples in the block, compressed material, and rice encoded residuals
     """FLAC encoder helper function that encodes blocks."""
 
@@ -107,7 +117,7 @@ def encode_block(
     # fit linear prediction coefficients, then quantize
     # linear_prediction_coefficients = librosa.lpc(y = block_float, order = order) # does not guarantee numerical stability
     linear_prediction_coefficients = lpc_autocorrelation_method(y = block_float, order = order)
-    linear_prediction_coefficients = np.round(linear_prediction_coefficients).astype(utils.LPC_DTYPE)
+    linear_prediction_coefficients = np.round(linear_prediction_coefficients).astype(LPC_DTYPE)
     if not np.all(np.abs(np.roots(linear_prediction_coefficients) < 1)): # ensure lpc coefficients are stable
         warnings.warn(message = "Linear prediction coefficients are unstable!", category = RuntimeWarning)
     
@@ -127,7 +137,7 @@ def encode(
         waveform: np.array, # waveform of integers of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
         block_size: int = utils.BLOCK_SIZE, # block size
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # use interchannel decorrelation
-        order: int = utils.LPC_ORDER, # order for linear predictive coding
+        order: int = LPC_ORDER, # order for linear predictive coding
         log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
     ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
     """Naive FLAC encoder."""
@@ -293,7 +303,7 @@ if __name__ == "__main__":
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
-        parser.add_argument("--lpc_order", type = int, default = utils.LPC_ORDER, help = "Order for linear predictive coding.")
+        parser.add_argument("--lpc_order", type = int, default = LPC_ORDER, help = "Order for linear predictive coding.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         args.interchannel_decorrelate = not args.no_interchannel_decorrelate # infer interchannel decorrelation
         return args # return parsed arguments
@@ -317,11 +327,11 @@ if __name__ == "__main__":
     print("Encoding...")
     start_time = time.perf_counter()
     bottleneck = encode(waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order)
-    compression_speed = utils.convert_duration_to_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
+    compression_speed = utils.get_compression_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
     del start_time # free up memory
     bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
     print(f"Bottleneck Size: {bottleneck_size:,} bytes")
-    print(f"Compression Rate: {100 * (bottleneck_size / waveform_size):.4f}%")
+    print(f"Compression Rate: {100 * utils.get_compression_rate(size_original = waveform_size, size_compressed = bottleneck_size):.4f}%")
     print(f"Compression Speed: {compression_speed:.4f}")
 
     # decode

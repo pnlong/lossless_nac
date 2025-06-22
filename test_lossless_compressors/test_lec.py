@@ -56,7 +56,7 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LEC Implementation") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-48000/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
         parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/lec", help = "Absolute filepath to the output directory.")
-        parser.add_argument("--target_bandwidth", type = float, default = utils.TARGET_BANDWIDTH, choices = utils.POSSIBLE_ENCODEC_TARGET_BANDWIDTHS, help = "Target bandwidth for EnCodec model. The number of codebooks used will be determined by the bandwidth selected (see https://github.com/facebookresearch/encodec#:~:text=The%20number%20of%20codebooks%20used%20will%20be%20determined%20bythe%20bandwidth%20selected.).")
+        parser.add_argument("--target_bandwidth", type = float, default = lec.TARGET_BANDWIDTH, choices = lec.POSSIBLE_ENCODEC_TARGET_BANDWIDTHS, help = "Target bandwidth for EnCodec model. The number of codebooks used will be determined by the bandwidth selected (see https://github.com/facebookresearch/encodec#:~:text=The%20number%20of%20codebooks%20used%20will%20be%20determined%20bythe%20bandwidth%20selected.).")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.") # int(model.sample_rate * 0.99) # the 48 kHz encodec model processes audio in one-second chunks with 1% overlap
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
@@ -143,8 +143,8 @@ if __name__ == "__main__":
         size_compressed = lec.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
-        compression_rate = size_compressed / size_original
-        compression_speed = utils.convert_duration_to_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
+        compression_rate = utils.get_compression_rate(size_original = size_original, size_compressed = size_compressed)
+        compression_speed = utils.get_compression_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
 
         # output
         pd.DataFrame(data = [dict(zip(

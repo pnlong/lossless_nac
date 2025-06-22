@@ -51,7 +51,7 @@ if __name__ == "__main__":
         parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/flac", help = "Absolute filepath to the output directory.")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
-        parser.add_argument("--lpc_order", type = int, default = utils.LPC_ORDER, help = "Order for linear predictive coding.")
+        parser.add_argument("--lpc_order", type = int, default = flac.LPC_ORDER, help = "Order for linear predictive coding.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
@@ -129,8 +129,8 @@ if __name__ == "__main__":
         size_compressed = flac.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
-        compression_rate = size_compressed / size_original
-        compression_speed = utils.convert_duration_to_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
+        compression_rate = utils.get_compression_rate(size_original = size_original, size_compressed = size_compressed)
+        compression_speed = utils.get_compression_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
 
         # output
         pd.DataFrame(data = [dict(zip(

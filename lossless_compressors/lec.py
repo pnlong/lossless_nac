@@ -36,6 +36,16 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 ##################################################
 
 
+# CONSTANTS
+##################################################
+
+# encodec target bandwidth
+POSSIBLE_ENCODEC_TARGET_BANDWIDTHS = (3.0, 6.0, 12.0, 24.0)
+TARGET_BANDWIDTH = POSSIBLE_ENCODEC_TARGET_BANDWIDTHS[1]
+
+##################################################
+
+
 # ENCODE
 ##################################################
 
@@ -238,7 +248,7 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LEC Implementation on a Test File") # create argument parser
         parser.add_argument("-p", "--path", type = str, default = f"{dirname(realpath(__file__))}/test.wav", help = "Absolute filepath to the WAV file.")
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
-        parser.add_argument("--target_bandwidth", type = float, choices = utils.POSSIBLE_ENCODEC_TARGET_BANDWIDTHS, default = utils.TARGET_BANDWIDTH, help = "Target bandwidth for EnCodec model. The number of codebooks used will be determined by the bandwidth selected (see https://github.com/facebookresearch/encodec#:~:text=The%20number%20of%20codebooks%20used%20will%20be%20determined%20bythe%20bandwidth%20selected.).")
+        parser.add_argument("--target_bandwidth", type = float, choices = POSSIBLE_ENCODEC_TARGET_BANDWIDTHS, default = TARGET_BANDWIDTH, help = "Target bandwidth for EnCodec model. The number of codebooks used will be determined by the bandwidth selected (see https://github.com/facebookresearch/encodec#:~:text=The%20number%20of%20codebooks%20used%20will%20be%20determined%20bythe%20bandwidth%20selected.).")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.") # int(model.sample_rate * 0.99) # the 48 kHz encodec model processes audio in one-second chunks with 1% overlap
         parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
@@ -292,11 +302,11 @@ if __name__ == "__main__":
         print("Encoding...")
         start_time = time.perf_counter()
         bottleneck = encode(waveform = waveform, sample_rate = sample_rate, model = model, device = device, block_size = args.block_size)
-        compression_speed = utils.convert_duration_to_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
+        compression_speed = utils.get_compression_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
         del start_time # free up memory
         bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
         print(f"Bottleneck Size: {bottleneck_size:,} bytes")
-        print(f"Compression Rate: {100 * (bottleneck_size / waveform_size):.4f}%")
+        print(f"Compression Rate: {100 * utils.get_compression_rate(size_original = waveform_size, size_compressed = bottleneck_size):.4f}%")
         print(f"Compression Speed: {compression_speed:.4f}")
 
         # decode

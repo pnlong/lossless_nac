@@ -30,7 +30,7 @@ from lossless_compressors import iflac
 # CONSTANTS
 ##################################################
 
-OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size", "interchannel_decorrelate", "lpc_order"]
+OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size", "interchannel_decorrelate"]
 
 ##################################################
 
@@ -46,12 +46,11 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-FLAC Implementation") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate IFLAC Implementation") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-44100/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
-        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/flac", help = "Absolute filepath to the output directory.")
+        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/iflac", help = "Absolute filepath to the output directory.")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
-        parser.add_argument("--lpc_order", type = int, default = utils.LPC_ORDER, help = "Order for linear predictive coding.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
@@ -74,7 +73,7 @@ if __name__ == "__main__":
         already_completed_paths = set() # no paths have been already completed
     else: # determine already completed paths
         already_completed_paths = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-        already_completed_paths = already_completed_paths[(already_completed_paths["block_size"] == args.block_size) & (already_completed_paths["interchannel_decorrelate"] == args.interchannel_decorrelate) & (already_completed_paths["lpc_order"] == args.lpc_order)]
+        already_completed_paths = already_completed_paths[(already_completed_paths["block_size"] == args.block_size) & (already_completed_paths["interchannel_decorrelate"] == args.interchannel_decorrelate)]
         already_completed_paths = set(already_completed_paths["path"])
 
     ##################################################
@@ -113,12 +112,12 @@ if __name__ == "__main__":
         # encode and decode
         duration_audio = len(waveform) / sample_rate
         start_time = time.perf_counter()
-        bottleneck = flac.encode(
-            waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order,
-            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "flac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "lpc_order": args.lpc_order}, "path": path}, # arguments to log for zach
+        bottleneck = iflac.encode(
+            waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate,
+            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "flac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate}, "path": path}, # arguments to log for zach
         ) # compute compressed bottleneck
         duration_encoding = time.perf_counter() - start_time # measure speed of compression
-        round_trip = flac.decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
+        round_trip = iflac.decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
         assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
         del round_trip, start_time # free up memory
 
@@ -126,16 +125,16 @@ if __name__ == "__main__":
         size_original = utils.get_waveform_size(waveform = waveform)
 
         # compute size in bytes of compressed bottleneck
-        size_compressed = flac.get_bottleneck_size(bottleneck = bottleneck)
+        size_compressed = iflac.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
-        compression_rate = size_compressed / size_original
-        compression_speed = utils.convert_duration_to_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
+        compression_rate = utils.get_compression_rate(size_original = size_original, size_compressed = size_compressed)
+        compression_speed = utils.get_compression_speed(duration_audio = duration_audio, duration_encoding = duration_encoding) # speed is inversely related to duration
 
         # output
         pd.DataFrame(data = [dict(zip(
             OUTPUT_COLUMNS, 
-            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed, args.block_size, args.interchannel_decorrelate, args.lpc_order)
+            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed, args.block_size, args.interchannel_decorrelate)
         ))]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
         # return nothing
@@ -145,7 +144,6 @@ if __name__ == "__main__":
     postfix = {
         "Block Size": f"{args.block_size}",
         "Interchannel Decorrelate": str(args.interchannel_decorrelate),
-        "LPC Order": f"{args.lpc_order}",
     }
     with multiprocessing.Pool(processes = args.jobs) as pool:
         _ = list(tqdm(iterable = pool.imap_unordered(
@@ -167,7 +165,7 @@ if __name__ == "__main__":
 
     # read in results (just the compression rate column, we don't really care about anything else)
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-    results = results[(results["block_size"] == args.block_size) & (results["interchannel_decorrelate"] == args.interchannel_decorrelate) & (results["lpc_order"] == args.lpc_order)]
+    results = results[(results["block_size"] == args.block_size) & (results["interchannel_decorrelate"] == args.interchannel_decorrelate)]
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()
 

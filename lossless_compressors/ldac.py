@@ -31,10 +31,17 @@ import rice
 import dac
 import logging_for_zach
 
-DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # path to descript audio codec pretrained
-
 # ignore deprecation warning from pytorch
 warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm")
+
+##################################################
+
+
+# CONSTANTS
+##################################################
+
+# path to descript audio codec
+DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # path to descript audio codec pretrained
 
 ##################################################
 
@@ -314,11 +321,11 @@ if __name__ == "__main__":
         print("Encoding...")
         start_time = time.perf_counter()
         bottleneck = encode(waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate)
-        compression_speed = utils.convert_duration_to_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
+        compression_speed = utils.get_compression_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
         del start_time # free up memory
         bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
         print(f"Bottleneck Size: {bottleneck_size:,} bytes")
-        print(f"Compression Rate: {100 * (bottleneck_size / waveform_size):.4f}%")
+        print(f"Compression Rate: {100 * utils.get_compression_rate(size_original = waveform_size, size_compressed = bottleneck_size):.4f}%")
         print(f"Compression Speed: {compression_speed:.4f}")
 
         # decode

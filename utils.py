@@ -15,6 +15,7 @@ from math import log2, ceil
 import json
 import pickle
 import numpy as np
+import pandas as pd
 
 ##################################################
 
@@ -37,14 +38,6 @@ MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES = ceil(log2(MAXIMUM_BLOCK_SIZE_ASSUMPTION + 
 # use interchannel decorrelation
 INTERCHANNEL_DECORRELATE = True
 INTERCHANNEL_DECORRELATE_DTYPE = np.int64 # using interchannel decorrelation can cause bugs with overflow, so we must use the proper data type
-
-# linear predictive coding
-LPC_ORDER = 9 # order (see https://xiph.org/flac/documentation_format_overview.html#:~:text=Also%2C%20at%20some%20point%20(usually%20around%20order%209))
-LPC_DTYPE = np.int8 # data type of linear prediction coefficients
-
-# encodec target bandwidth
-POSSIBLE_ENCODEC_TARGET_BANDWIDTHS = (3.0, 6.0, 12.0, 24.0)
-TARGET_BANDWIDTH = POSSIBLE_ENCODEC_TARGET_BANDWIDTHS[1]
 
 # filepaths
 BASE_DIR = "/deepfreeze/pnlong/lnac"
@@ -89,6 +82,106 @@ def unique(l: Iterable) -> list:
 def transpose(l: Union[List, Tuple]) -> list:
     """Tranpose a 2-dimension list."""
     return list(map(list, zip(*l)))
+
+def pretty_dataframe_string(
+        df: pd.DataFrame,
+        max_rows: int = None,
+        max_cols: int = None, 
+        max_colwidth: int = 50,
+        float_format: str = "{:.3f}",
+        border_style: str = "grid",
+    ) -> str:
+    """
+    Return a pretty string representation of a pandas DataFrame for command line output.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The DataFrame to format
+    max_rows : int, optional
+        Maximum number of rows to display. If None, uses pandas default.
+    max_cols : int, optional
+        Maximum number of columns to display. If None, uses pandas default.
+    max_colwidth : int, default 50
+        Maximum width of each column in characters
+    float_format : str, default "{:.3f}"
+        Format string for floating point numbers
+    border_style : str, default "grid"
+        Style of borders. Options: "grid", "simple", "plain", "minimal"
+        
+    Returns:
+    --------
+    str
+        Formatted string representation of the DataFrame
+    """
+    
+    # store original pandas options
+    original_options = {
+        "display.max_rows": pd.get_option("display.max_rows"),
+        "display.max_columns": pd.get_option("display.max_columns"),
+        "display.max_colwidth": pd.get_option("display.max_colwidth"),
+        "display.width": pd.get_option("display.width"),
+        "display.float_format": pd.get_option("display.float_format"),
+    }
+    
+    try:
+        # set temporary display options
+        if max_rows is not None:
+            pd.set_option("display.max_rows", max_rows)
+        if max_cols is not None:
+            pd.set_option("display.max_columns", max_cols)
+        
+        pd.set_option("display.max_colwidth", max_colwidth)
+        pd.set_option("display.width", None) # auto-detect terminal width
+        
+        # set float format if DataFrame contains numeric data
+        if df.select_dtypes(include = [np.number]).shape[1] > 0:
+            pd.set_option("display.float_format", lambda x: float_format.format(x) if pd.notnull(x) else str(x))
+        
+        # get the basic string representation
+        df_string = str(df)
+        
+        # apply border styling
+        if border_style == "grid": # default pandas style with grid lines
+            pass # df_string is already in grid format
+            
+        # simple borders with just horizontal lines
+        elif border_style == "simple":
+            lines = df_string.split("\n")
+            if len(lines) > 2: # add horizontal line after header
+                header_line = lines[0] # usually the column names line
+                separator = "-" * len(header_line)
+                lines.insert(1, separator)
+                df_string = "\n".join(lines)
+        
+        # plain style removes all border characters
+        elif border_style == "plain":
+            lines = df_string.split("\n")
+            cleaned_lines = []
+            for line in lines:
+                cleaned_line = line.strip() # remove leading/trailing whitespace and border characters
+                if cleaned_line and not all(c in " |-+" for c in cleaned_line):
+                    cleaned_lines.append(cleaned_line)
+            df_string = "\n".join(cleaned_lines)
+            
+        # just column headers and data, no borders
+        elif border_style == "minimal":
+            lines = df_string.split("\n")
+            data_lines = [line for line in lines if line.strip() and not all(c in " |-+" for c in line.strip())] # keep only lines that contain actual data (not just separators)
+            df_string = "\n".join(data_lines)
+        
+        # return string
+        return df_string
+        
+    finally: # restore original pandas options
+        for option, value in original_options.items():
+            pd.set_option(option, value)
+
+def pretty_df(df: pd.DataFrame) -> str:
+    """
+    Simple version of pretty data frame printing that returns a nicely formatted DataFrame string.
+    """
+    return pretty_dataframe_string(df = df, max_rows = 20, max_cols = 10, max_colwidth = 30, border_style = "simple")
 
 ##################################################
 
@@ -181,15 +274,23 @@ DOTTED_SEPARATOR_LINE = "".join(("- " for _ in range(SEPARATOR_LINE_WIDTH // 2))
 
 # for figures
 FIGURE_DPI = 200 # dots per inch for figures
+GRID_ALPHA = 0.3
 
 ##################################################
 
 
-# MISCELLANEOUS HELPER FUNCTIONS
+# HELPER FUNCTIONS FOR PROJECT
 ##################################################
+
+# get compression rate
+def get_compression_rate(size_original: int, size_compressed: int) -> float:
+    """
+    Given the original size (in bytes) and compressed size (in bytes), return the compression rate.
+    """
+    return size_original / size_compressed
 
 # convert duration measured with time.perf_counter() calls into a speed
-def convert_duration_to_speed(duration_audio: float, duration_encoding: float) -> float:
+def get_compression_speed(duration_audio: float, duration_encoding: float) -> float:
     """
     Given the sample duration (length of the audio sample, in seconds) and encoding duration (also in seconds), 
     convert to a speed: seconds of audio encoded per second.
