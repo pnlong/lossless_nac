@@ -55,13 +55,11 @@ if __name__ == "__main__":
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         args.interchannel_decorrelate = not args.no_interchannel_decorrelate # infer interchannel decorrelation
+        if not exists(args.input_filepath): # ensure input_filepath exists
+            raise RuntimeError(f"--input_filepath argument does not exist: {args.input_filepath}")
         return args # return parsed arguments
     args = parse_args()
 
-    # ensure input_filepath exists
-    if not exists(args.input_filepath):
-        raise RuntimeError(f"--input_filepath argument does not exist: {args.input_filepath}")
-    
     # create output directory if necessary
     if not exists(args.output_dir):
         makedirs(args.output_dir, exist_ok = True)
@@ -72,9 +70,10 @@ if __name__ == "__main__":
         pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
         already_completed_paths = set() # no paths have been already completed
     else: # determine already completed paths
-        already_completed_paths = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-        already_completed_paths = already_completed_paths[(already_completed_paths["block_size"] == args.block_size) & (already_completed_paths["interchannel_decorrelate"] == args.interchannel_decorrelate)]
-        already_completed_paths = set(already_completed_paths["path"])
+        results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
+        results = results[(results["block_size"] == args.block_size) & (results["interchannel_decorrelate"] == args.interchannel_decorrelate)]
+        already_completed_paths = set(results["path"])
+        del results # free up memory
 
     ##################################################
 

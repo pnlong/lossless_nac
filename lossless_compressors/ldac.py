@@ -10,7 +10,6 @@
 
 import numpy as np
 from typing import List, Tuple, Union
-from math import ceil
 import librosa
 import scipy
 import argparse
@@ -43,6 +42,10 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 # path to descript audio codec
 DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # path to descript audio codec pretrained
 
+# number of codebooks for descript audio codec model
+POSSIBLE_DAC_N_CODEBOOKS = tuple(range(1, 10)) # upper-bounded by the number of codebooks for the pretrained descript audio codec model, 9
+N_CODEBOOKS = POSSIBLE_DAC_N_CODEBOOKS[-1] # use the upper bound as the default
+
 ##################################################
 
 
@@ -52,6 +55,8 @@ DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # pa
 def encode_block(
         block: AudioSignal, # AudioSignal object for block of shape (batch_size = 1, n_channels = 1, n_samples_in_block)
         model: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
+        n_codebooks: int = N_CODEBOOKS, # number of codbeooks to use for descript audio codec model
+        k: int = rice.K, # rice parameter
     ) -> Tuple[int, np.array, bytes]: # returns tuple of number of samples in the block, compressed material, and rice encoded residuals
     """LDAC encoder helper function that encodes blocks."""
 
@@ -61,6 +66,7 @@ def encode_block(
     n_samples_in_block = len(block_array)
     x = model.preprocess(audio_data = block.audio_data, sample_rate = block.sample_rate)
     _, codes, _, _, _ = model.encode(audio_data = x.float())
+    codes = codes[:, :n_codebooks, :] # truncate codes to desired number of codebooks
 
     # approximate block
     z = model.quantizer.from_codes(codes = codes)[0].detach() # get z from codes
@@ -75,7 +81,7 @@ def encode_block(
 
     # compute residual and encode with rice coding
     residuals = block_array - approximate_block
-    residuals_rice = rice.encode(nums = residuals) # rice encoding
+    residuals_rice = rice.encode(nums = residuals, k = k) # rice encoding
     
     # free up gpu memory immediately
     del block, block_array, x, z, approximate_block, residuals
@@ -90,6 +96,9 @@ def encode(
         model: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         block_size: int = utils.BLOCK_SIZE, # block size
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # use interchannel decorrelation
+        n_codebooks: int = N_CODEBOOKS, # number of codbeooks to use for descript audio codec model
+        k: int = rice.K, # rice parameter
+        overlap: float = utils.OVERLAP, # block overlap (as a percentage in range [0, 100))
         log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
     ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
     """Naive LDAC encoder."""
@@ -114,20 +123,22 @@ def encode(
 
     # go through blocks and encode them each
     _, n_channels, n_samples = waveform.shape
-    n_blocks = ceil(n_samples / block_size)
-    blocks = [[None] * n_blocks for _ in range(n_channels)]
+    samples_overlap = int(block_size * (overlap / 100))
+    blocks = [[] for _ in range(n_channels)]
     for channel_index in range(n_channels):
-        for i in range(n_blocks):
-            start_index = i * block_size
-            end_index = (start_index + block_size) if (i < (n_blocks - 1)) else n_samples
-            blocks[channel_index][i] = encode_block(block = waveform[:, channel_index, start_index:end_index], model = model)
+        i = 0
+        while (start_index := (i * (block_size - samples_overlap))) < n_samples:
+            end_index = min(start_index + block_size, n_samples)
+            block = encode_block(block = waveform[:, channel_index, start_index:end_index], model = model, n_codebooks = n_codebooks, k = k)
+            blocks[channel_index].append(block)
+            i += 1
 
     # log for zach
     if log_for_zach_kwargs is not None:
-        residuals = np.stack([np.concatenate([rice.decode(stream = block[-1], n = block[0]) for block in channel], axis = 0) for channel in blocks], axis = -1)
+        residuals = np.stack([np.concatenate([rice.decode(stream = block[-1], n = block[0], k = k) for block in channel], axis = 0) for channel in blocks], axis = -1)
         if is_mono:
             residuals = residuals.squeeze(dim = -1)
-        residuals_rice = rice.encode(nums = residuals.flatten())
+        residuals_rice = rice.encode(nums = residuals.flatten(), k = k)
         logging_for_zach.log_for_zach(
             residuals = residuals,
             residuals_rice = residuals_rice,
@@ -149,6 +160,7 @@ def encode(
 def decode_block(
         block: Tuple[int, np.array, bytes], # block tuple with elements (n_samples_in_block, bottleneck, residuals_rice)
         model: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
+        k: int = rice.K, # rice parameter
     ) -> np.array:
     """LDAC decoder helper function that decodes blocks."""
 
@@ -168,7 +180,8 @@ def decode_block(
     del codes, z
 
     # get residuals
-    residuals = rice.decode(stream = residuals_rice, n = n_samples_in_block).astype(approximate_block.dtype)
+    residuals = rice.decode(stream = residuals_rice, n = n_samples_in_block, k = k)
+    residuals = residuals.astype(approximate_block.dtype)
 
     # reconstruct the exact waveform
     block = approximate_block + residuals
@@ -181,6 +194,8 @@ def decode(
         bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type], # tuple of blocks and the datatype of the original waveform
         model: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # was interchannel decorrelation used
+        k: int = rice.K, # rice parameter
+        overlap: float = utils.OVERLAP, # block overlap (as a percentage in range [0, 100))
     ) -> np.array: # returns the reconstructed waveform of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
     """Naive LDAC decoder."""
 
@@ -197,7 +212,7 @@ def decode(
     waveform = [[None] * n_blocks for _ in range(n_channels)]
     for channel_index in range(n_channels):
         for i in range(n_blocks):
-            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], model = model)
+            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], model = model, k = k)
             waveform[channel_index][i] = waveform[channel_index][i].astype(utils.INTERCHANNEL_DECORRELATE_DTYPE if interchannel_decorrelate else waveform_dtype)
 
     # reconstruct final waveform
@@ -246,7 +261,7 @@ def get_bottleneck_size(
         for block in channel:
             block_length, codes, residuals_rice = block
             size += utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES # we assume the block length can be encoded as an unsigned integer in 2-bytes (np.int16); in other words, block_length must be strictly less than (2 ** 16 = 65536)
-            size += codes.nbytes # the size of codes is constant from the DAC model, which is a fixed hyperparameter
+            size += codes.nbytes # the size of codes is constant from the descript audio codec model, which is a fixed hyperparameter
             size += len(residuals_rice) # rice residuals can be easily decoded since we know the block_length
     
     # return the size in bytes
@@ -264,14 +279,19 @@ if __name__ == "__main__":
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LDAC Implementation on a Test File") # create argument parser
-        parser.add_argument("-p", "--path", type = str, default = f"{dirname(realpath(__file__))}/test.wav", help = "Absolute filepath to the WAV file.")
+        parser.add_argument("-p", "--path", type = str, default = f"{dirname(dirname(realpath(__file__)))}/test.wav", help = "Absolute filepath to the WAV file.")
         parser.add_argument("-mp", "--model_path", type = str, default = DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
+        parser.add_argument("--n_codebooks", type = int, choices = POSSIBLE_DAC_N_CODEBOOKS, default = N_CODEBOOKS, help = "Number of codebooks for DAC model.")
+        parser.add_argument("--rice_parameter", type = int, default = rice.K, help = "Rice coding parameter.")
+        parser.add_argument("--overlap", type = float, default = utils.OVERLAP, help = "Block overlap (as a percentage 0-100).")
         parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         args.interchannel_decorrelate = not args.no_interchannel_decorrelate # infer interchannel decorrelation
+        if args.overlap < 0 or args.overlap >= 100: # ensure overlap is valid
+            raise RuntimeError(f"Overlap must be in range [0, 100), but received {args.overlap}!")
         return args # return parsed arguments
     args = parse_args()
 
@@ -320,7 +340,7 @@ if __name__ == "__main__":
         # encode
         print("Encoding...")
         start_time = time.perf_counter()
-        bottleneck = encode(waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate)
+        bottleneck = encode(waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, n_codebooks = args.n_codebooks, k = args.rice_parameter, overlap = args.overlap)
         compression_speed = utils.get_compression_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
         del start_time # free up memory
         bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
@@ -330,7 +350,7 @@ if __name__ == "__main__":
 
         # decode
         print("Decoding...")
-        round_trip = decode(bottleneck = bottleneck, model = model, interchannel_decorrelate = args.interchannel_decorrelate)
+        round_trip = decode(bottleneck = bottleneck, model = model, interchannel_decorrelate = args.interchannel_decorrelate, k = args.rice_parameter, overlap = args.overlap)
 
     # verify losslessness
     assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match!"

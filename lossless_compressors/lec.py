@@ -10,7 +10,6 @@
 
 import numpy as np
 from typing import List, Tuple
-from math import ceil
 import librosa
 import scipy
 import argparse
@@ -41,7 +40,8 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 
 # encodec target bandwidth
 POSSIBLE_ENCODEC_TARGET_BANDWIDTHS = (3.0, 6.0, 12.0, 24.0)
-TARGET_BANDWIDTH = POSSIBLE_ENCODEC_TARGET_BANDWIDTHS[1]
+POSSIBLE_ENCODEC_N_CODEBOOKS = tuple((int(target_bandwidth / 1.5) for target_bandwidth in POSSIBLE_ENCODEC_TARGET_BANDWIDTHS))
+N_CODEBOOKS = POSSIBLE_ENCODEC_N_CODEBOOKS[1]
 
 ##################################################
 
@@ -54,6 +54,7 @@ def encode_block(
         model: encodec.model.EncodecModel = encodec.EncodecModel.encodec_model_48khz(), # encodec model
         device: torch.device = torch.device("cpu"), # device the model is on
         sample_rate: int = utils.SAMPLE_RATE, # sample rate of waveform
+        k: int = rice.K, # rice parameter
     ) -> Tuple[int, int, np.array, bytes]: # returns tuple of the number of samples in the block, the size of the last dimension of codes, compressed material, and rice encoded residuals
     """LEC encoder helper function that encodes blocks."""
 
@@ -87,7 +88,7 @@ def encode_block(
     # compute residual and encode with rice coding
     residuals = block_array - approximate_block # compute residual
     residuals = residuals.flatten() # flatten residuals
-    residuals_rice = rice.encode(nums = residuals) # rice encoding
+    residuals_rice = rice.encode(nums = residuals, k = k) # rice encoding
     
     # free up gpu memory immediately
     del block, block_array, encoded_frames, approximate_block, residuals
@@ -102,6 +103,8 @@ def encode(
         model: encodec.model.EncodecModel = encodec.EncodecModel.encodec_model_48khz(), # encodec model
         device: torch.device = torch.device("cpu"), # device the model is on
         block_size: int = utils.BLOCK_SIZE, # block size
+        k: int = rice.K, # rice parameter
+        overlap: float = utils.OVERLAP, # block overlap (as a percentage in range [0, 100))
         log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
     ) -> Tuple[List[Tuple[int, int, np.array, bytes]], type, bool]: # returns tuple of blocks, data type of original data, and whether the original data was mono
     """Naive LEC encoder."""
@@ -117,18 +120,20 @@ def encode(
 
     # go through blocks and encode them each
     n_samples = len(waveform)
-    n_blocks = ceil(n_samples / block_size)
-    blocks = utils.rep(x = None, times = n_blocks)
-    for i in range(n_blocks):
-        start_index = i * block_size
-        end_index = (start_index + block_size) if (i < (n_blocks - 1)) else n_samples
-        blocks[i] = encode_block(block = waveform[start_index:end_index], model = model, device = device, sample_rate = sample_rate)
-    
+    samples_overlap = int(block_size * (overlap / 100))
+    blocks = []
+    i = 0
+    while (start_index := (i * (block_size - samples_overlap))) < n_samples:
+        end_index = min(start_index + block_size, n_samples)
+        block = encode_block(block = waveform[start_index:end_index], model = model, device = device, sample_rate = sample_rate)
+        blocks.append(block)
+        i += 1
+        
     # log for zach
     if log_for_zach_kwargs is not None:
-        residuals = [(rice.decode(stream = block[-1], n = block[0] * (1 if is_mono else 2)), block[0]) for block in blocks]
+        residuals = [(rice.decode(stream = block[-1], n = block[0] * (1 if is_mono else 2), k = k), block[0]) for block in blocks]
         residuals = np.concatenate([block if is_mono else block.reshape(n_samples_in_block, -1) for block, n_samples_in_block in residuals], axis = 0)
-        residuals_rice = rice.encode(nums = residuals.flatten())
+        residuals_rice = rice.encode(nums = residuals.flatten(), k = k)
         logging_for_zach.log_for_zach(
             residuals = residuals,
             residuals_rice = residuals_rice,
@@ -149,6 +154,7 @@ def decode_block(
         device: torch.device = torch.device("cpu"), # device the model is on
         waveform_dtype: type = utils.DEFAULT_AUDIO_DTYPE, # the data type of the original data
         is_mono: bool = False, # whether the original waveform was mono
+        k: int = rice.K, # rice parameter
     ) -> np.array:
     """LEC decoder helper function that decodes blocks."""
 
@@ -168,7 +174,7 @@ def decode_block(
     del codes, codes_T_dimension_size
 
     # get residuals
-    residuals = rice.decode(stream = residuals_rice, n = n_samples_in_block * (1 if is_mono else 2)) # shape is (n_samples * (1 if is_mono else 2), )
+    residuals = rice.decode(stream = residuals_rice, n = n_samples_in_block * (1 if is_mono else 2), k = k) # shape is (n_samples * (1 if is_mono else 2), )
     residuals = residuals.astype(approximate_block.dtype) # ensure correct data type
     if not is_mono: # reshape to stereo if not mono
         residuals = residuals.reshape(n_samples_in_block, -1) # shape to (n_samples, 2) if stereo, otherwise (n_samples,)
@@ -187,6 +193,8 @@ def decode(
         bottleneck: Tuple[List[Tuple[int, int, np.array, bytes]], type, bool], # tuple of blocks, the datatype of the original waveform, and whether the original data was mono
         model: encodec.model.EncodecModel = encodec.EncodecModel.encodec_model_48khz(), # encodec model
         device: torch.device = torch.device("cpu"), # device the model is on
+        k: int = rice.K, # rice parameter
+        overlap: float = utils.OVERLAP, # block overlap (as a percentage in range [0, 100))
     ) -> np.array: # returns the reconstructed waveform of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
     """Naive LEC decoder."""
 
@@ -197,7 +205,7 @@ def decode(
     n_blocks = len(blocks)
     waveform = utils.rep(x = None, times = n_blocks)
     for i in range(n_blocks):
-        waveform[i] = decode_block(block = blocks[i], model = model, device = device, waveform_dtype = waveform_dtype, is_mono = is_mono)
+        waveform[i] = decode_block(block = blocks[i], model = model, device = device, waveform_dtype = waveform_dtype, is_mono = is_mono, k = k)
 
     # reconstruct final waveform
     waveform = np.concatenate(waveform, axis = 0) # concatenate blocks into single waveform
@@ -246,12 +254,16 @@ if __name__ == "__main__":
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-LEC Implementation on a Test File") # create argument parser
-        parser.add_argument("-p", "--path", type = str, default = f"{dirname(realpath(__file__))}/test.wav", help = "Absolute filepath to the WAV file.")
+        parser.add_argument("-p", "--path", type = str, default = f"{dirname(dirname(realpath(__file__)))}/test.wav", help = "Absolute filepath to the WAV file.")
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
-        parser.add_argument("--target_bandwidth", type = float, choices = POSSIBLE_ENCODEC_TARGET_BANDWIDTHS, default = TARGET_BANDWIDTH, help = "Target bandwidth for EnCodec model. The number of codebooks used will be determined by the bandwidth selected (see https://github.com/facebookresearch/encodec#:~:text=The%20number%20of%20codebooks%20used%20will%20be%20determined%20bythe%20bandwidth%20selected.).")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.") # int(model.sample_rate * 0.99) # the 48 kHz encodec model processes audio in one-second chunks with 1% overlap
+        parser.add_argument("--n_codebooks", type = int, choices = POSSIBLE_ENCODEC_N_CODEBOOKS, default = N_CODEBOOKS, help = "Number of codebooks for EnCodec model.")
+        parser.add_argument("--rice_parameter", type = int, default = rice.K, help = "Rice coding parameter.")
+        parser.add_argument("--overlap", type = float, default = utils.OVERLAP, help = "Block overlap (as a percentage 0-100).")
         parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
+        if args.overlap < 0 or args.overlap >= 100: # ensure overlap is valid
+            raise RuntimeError(f"Overlap must be in range [0, 100), but received {args.overlap}!")
         return args # return parsed arguments
     args = parse_args()
 
@@ -275,7 +287,7 @@ if __name__ == "__main__":
     # load encodec
     device = torch.device(f"cuda:{abs(args.gpu)}" if torch.cuda.is_available() and args.gpu != -1 else "cpu")
     model = encodec.EncodecModel.encodec_model_48khz().to(device)
-    model.set_target_bandwidth(bandwidth = args.target_bandwidth)
+    model.set_target_bandwidth(bandwidth = args.n_codebooks * 1.5)
 
     # resample if necessary
     if sample_rate != model.sample_rate:
@@ -301,7 +313,7 @@ if __name__ == "__main__":
         # encode
         print("Encoding...")
         start_time = time.perf_counter()
-        bottleneck = encode(waveform = waveform, sample_rate = sample_rate, model = model, device = device, block_size = args.block_size)
+        bottleneck = encode(waveform = waveform, sample_rate = sample_rate, model = model, device = device, block_size = args.block_size, k = args.rice_parameter, overlap = args.overlap)
         compression_speed = utils.get_compression_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
         del start_time # free up memory
         bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
@@ -311,7 +323,7 @@ if __name__ == "__main__":
 
         # decode
         print("Decoding...")
-        round_trip = decode(bottleneck = bottleneck, model = model, device = device)
+        round_trip = decode(bottleneck = bottleneck, model = model, device = device, k = args.rice_parameter, overlap = args.overlap)
 
     # verify losslessness
     assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match!"

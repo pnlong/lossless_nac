@@ -108,6 +108,7 @@ def lpc_autocorrelation_method(y: np.array, order: int = LPC_ORDER) -> np.array:
 def encode_block(
         block: np.array, # block of integers of shape (n_samples_in_block,)
         order: int = LPC_ORDER, # order for linear predictive coding
+        k: int = rice.K, # rice parameter
     ) -> Tuple[int, np.array, bytes]: # returns tuple of number of samples in the block, compressed material, and rice encoded residuals
     """FLAC encoder helper function that encodes blocks."""
 
@@ -127,7 +128,7 @@ def encode_block(
     
     # compute residual and encode with rice coding
     residuals = block - approximate_block
-    residuals_rice = rice.encode(nums = residuals) # rice encoding
+    residuals_rice = rice.encode(nums = residuals, k = k) # rice encoding
     
     # return number of samples in block, compressed materials, and rice encoded residuals
     return len(block), linear_prediction_coefficients, residuals_rice
@@ -138,6 +139,7 @@ def encode(
         block_size: int = utils.BLOCK_SIZE, # block size
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # use interchannel decorrelation
         order: int = LPC_ORDER, # order for linear predictive coding
+        k: int = rice.K, # rice parameter
         log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
     ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
     """Naive FLAC encoder."""
@@ -165,14 +167,14 @@ def encode(
         for i in range(n_blocks):
             start_index = i * block_size
             end_index = (start_index + block_size) if (i < (n_blocks - 1)) else n_samples
-            blocks[channel_index][i] = encode_block(block = waveform[start_index:end_index, channel_index], order = order)
+            blocks[channel_index][i] = encode_block(block = waveform[start_index:end_index, channel_index], order = order, k = k)
 
     # log for zach
     if log_for_zach_kwargs is not None:
-        residuals = np.stack([np.concatenate([rice.decode(stream = block[-1], n = block[0]) for block in channel], axis = 0) for channel in blocks], axis = -1)
+        residuals = np.stack([np.concatenate([rice.decode(stream = block[-1], n = block[0], k = k) for block in channel], axis = 0) for channel in blocks], axis = -1)
         if is_mono:
             residuals = residuals.squeeze(dim = -1)
-        residuals_rice = rice.encode(nums = residuals.flatten())
+        residuals_rice = rice.encode(nums = residuals.flatten(), k = k)
         logging_for_zach.log_for_zach(
             residuals = residuals,
             residuals_rice = residuals_rice,
@@ -193,6 +195,7 @@ def encode(
 
 def decode_block(
         block: Tuple[int, np.array, bytes], # block tuple with elements (n_samples_in_block, bottleneck, residuals_rice)
+        k: int = rice.K, # rice parameter
     ) -> np.array:
     """FLAC decoder helper function that decodes blocks."""
 
@@ -200,7 +203,7 @@ def decode_block(
     n_samples_in_block, linear_prediction_coefficients, residuals_rice = block # lpc_order = len(linear_prediction_coefficients) - 1; len(linear_prediction_coefficients) = lpc_order + 1
 
     # get residuals
-    residuals = rice.decode(stream = residuals_rice, n = n_samples_in_block)
+    residuals = rice.decode(stream = residuals_rice, n = n_samples_in_block, k = k)
     residuals = residuals.astype(np.float32) # ensure residuals are correct data type for waveform reconstruction
 
     # reconstruct the waveform for the block
@@ -216,6 +219,7 @@ def decode_block(
 def decode(
         bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type], # tuple of blocks and the datatype of the original waveform
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # was interchannel decorrelation used
+        k: int = rice.K, # rice parameter
     ) -> np.array: # returns the reconstructed waveform of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
     """Naive FLAC decoder."""
 
@@ -232,7 +236,7 @@ def decode(
     waveform = [[None] * n_blocks for _ in range(n_channels)]
     for channel_index in range(n_channels):
         for i in range(n_blocks):
-            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i])
+            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], k = k)
             waveform[channel_index][i] = waveform[channel_index][i].astype(utils.INTERCHANNEL_DECORRELATE_DTYPE if interchannel_decorrelate else waveform_dtype)
 
     # reconstruct final waveform
@@ -299,11 +303,12 @@ if __name__ == "__main__":
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-FLAC Implementation on a Test File") # create argument parser
-        parser.add_argument("-p", "--path", type = str, default = f"{dirname(realpath(__file__))}/test.wav", help = "Absolute filepath to the WAV file.")
+        parser.add_argument("-p", "--path", type = str, default = f"{dirname(dirname(realpath(__file__)))}/test.wav", help = "Absolute filepath to the WAV file.")
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
         parser.add_argument("--lpc_order", type = int, default = LPC_ORDER, help = "Order for linear predictive coding.")
+        parser.add_argument("--rice_parameter", type = int, default = rice.K, help = "Rice coding parameter.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         args.interchannel_decorrelate = not args.no_interchannel_decorrelate # infer interchannel decorrelation
         return args # return parsed arguments
@@ -326,7 +331,7 @@ if __name__ == "__main__":
     # encode
     print("Encoding...")
     start_time = time.perf_counter()
-    bottleneck = encode(waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order)
+    bottleneck = encode(waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order, k = args.rice_parameter)
     compression_speed = utils.get_compression_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
     del start_time # free up memory
     bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
@@ -336,7 +341,7 @@ if __name__ == "__main__":
 
     # decode
     print("Decoding...")
-    round_trip = decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate)
+    round_trip = decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate, k = args.rice_parameter)
 
     # verify losslessness
     assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match!"

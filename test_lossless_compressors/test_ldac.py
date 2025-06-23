@@ -27,6 +27,7 @@ sys.path.insert(0, f"{dirname(dirname(realpath(__file__)))}/dac") # import dac p
 import utils
 from lossless_compressors import ldac
 import dac
+import rice
 
 # ignore deprecation warning from pytorch
 warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm")
@@ -37,7 +38,7 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 # CONSTANTS
 ##################################################
 
-OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size", "interchannel_decorrelate", "gpu"]
+OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size", "interchannel_decorrelate", "n_codebooks", "gpu", "k", "overlap"]
 
 ##################################################
 
@@ -59,18 +60,21 @@ if __name__ == "__main__":
         parser.add_argument("-mp", "--model_path", type = str, default = ldac.DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
+        parser.add_argument("--n_codebooks", type = int, choices = ldac.POSSIBLE_DAC_N_CODEBOOKS, default = ldac.N_CODEBOOKS, help = "Number of codebooks for DAC model.")
+        parser.add_argument("--rice_parameter", type = int, default = rice.K, help = "Rice coding parameter.")
+        parser.add_argument("--overlap", type = float, default = utils.OVERLAP, help = "Block overlap (as a percentage 0-100).")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         args.interchannel_decorrelate = not args.no_interchannel_decorrelate # infer interchannel decorrelation
+        if not exists(args.input_filepath): # ensure input_filepath exists
+            raise RuntimeError(f"--input_filepath argument does not exist: {args.input_filepath}")
+        if args.overlap < 0 or args.overlap >= 100: # ensure overlap is valid
+            raise RuntimeError(f"Overlap must be in range [0, 100), but received {args.overlap}!")
         return args # return parsed arguments
     args = parse_args()
 
-    # ensure input_filepath exists
-    if not exists(args.input_filepath):
-        raise RuntimeError(f"--input_filepath argument does not exist: {args.input_filepath}")
-    
     # create output directory if necessary
     if not exists(args.output_dir):
         makedirs(args.output_dir, exist_ok = True)
@@ -87,9 +91,10 @@ if __name__ == "__main__":
         pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = True, index = False, mode = "w")
         already_completed_paths = set() # no paths have been already completed
     else: # determine already completed paths
-        already_completed_paths = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-        already_completed_paths = already_completed_paths[(already_completed_paths["block_size"] == args.block_size) & (already_completed_paths["interchannel_decorrelate"] == args.interchannel_decorrelate) & (already_completed_paths["gpu"] == using_gpu)]
-        already_completed_paths = set(already_completed_paths["path"])
+        results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
+        results = results[(results["block_size"] == args.block_size) & (results["interchannel_decorrelate"] == args.interchannel_decorrelate) & (results["n_codebooks"] == args.n_codebooks) & (results["gpu"] == using_gpu) & (results["k"] == args.rice_parameter) & (results["overlap"] == args.overlap)]
+        already_completed_paths = set(results["path"])
+        del results # free up memory
 
     ##################################################
 
@@ -129,11 +134,11 @@ if __name__ == "__main__":
             duration_audio = len(waveform) / sample_rate
             start_time = time.perf_counter()
             bottleneck = ldac.encode(
-                waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate,
-                log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "ldac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "gpu": using_gpu}, "path": path}, # arguments to log for zach
+                waveform = waveform, sample_rate = sample_rate, model = model, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, n_codebooks = args.n_codebooks, k = args.rice_parameter, overlap = args.overlap,
+                log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "ldac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "n_codebooks": args.n_codebooks, "gpu": using_gpu, "k": args.rice_parameter, "overlap": args.overlap}, "path": path}, # arguments to log for zach
             ) # compute compressed bottleneck
             duration_encoding = time.perf_counter() - start_time # measure speed of compression
-            round_trip = ldac.decode(bottleneck = bottleneck, model = model, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness
+            round_trip = ldac.decode(bottleneck = bottleneck, model = model, interchannel_decorrelate = args.interchannel_decorrelate, k = args.rice_parameter, overlap = args.overlap) # reconstruct waveform from bottleneck to ensure losslessness
             assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
             del round_trip, start_time # free up memory
 
@@ -150,7 +155,7 @@ if __name__ == "__main__":
         # output
         pd.DataFrame(data = [dict(zip(
             OUTPUT_COLUMNS, 
-            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed, args.block_size, args.interchannel_decorrelate, using_gpu)
+            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed, args.block_size, args.interchannel_decorrelate, args.n_codebooks, using_gpu, args.rice_parameter, args.overlap)
         ))]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
         # return nothing
@@ -160,7 +165,10 @@ if __name__ == "__main__":
     postfix = {
         "Block Size": f"{args.block_size}",
         "Interchannel Decorrelate": str(args.interchannel_decorrelate),
+        "Number of Codebooks": f"{args.n_codebooks}",
         "Using GPU": str(using_gpu),
+        "K": f"{args.rice_parameter}",
+        "Overlap": f"{args.overlap}",
     }
     if using_gpu: # cannot use multiprocessing with GPU
         for path in tqdm(iterable = paths, desc = "Evaluating", total = len(paths), postfix = postfix):
@@ -186,7 +194,7 @@ if __name__ == "__main__":
 
     # read in results (just the compression rate column, we don't really care about anything else)
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-    results = results[(results["block_size"] == args.block_size) & (results["interchannel_decorrelate"] == args.interchannel_decorrelate) & (results["gpu"] == using_gpu)]
+    results = results[(results["block_size"] == args.block_size) & (results["interchannel_decorrelate"] == args.interchannel_decorrelate) & (results["n_codebooks"] == args.n_codebooks) & (results["gpu"] == using_gpu) & (results["k"] == args.rice_parameter) & (results["overlap"] == args.overlap)]
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()
 

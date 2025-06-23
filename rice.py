@@ -14,7 +14,6 @@
 
 import numpy as np
 from typing import Union, List
-import warnings
 
 from os.path import dirname, realpath
 import sys
@@ -28,7 +27,14 @@ import utils
 # CONSTANTS
 ##################################################
 
+# default rice parameter
 K = 12 # Golomb coding equivalent M is calculated as M = 2 ** K, so probably want to use a small value for K
+
+# golden ratio for determining optimal rice parameter
+PHI = (1 + np.sqrt(5)) / 2
+
+# for reconstructing arrays in case where k = 0
+BYTES_PER_ELEMENT_TO_DTYPE = dict(zip((1, 2, 4, 8), (np.int8, np.int16, np.int32, np.int64)))
 
 ##################################################
 
@@ -53,61 +59,83 @@ def inverse_int_to_pos(x: int) -> int:
 ##################################################
 
 
-# ENCODE
+# DETERMINE OPTIMAL K
 ##################################################
 
-# def encode(out: BitOutputStream, nums: Union[List[int], np.array], k: int = K):
-#     """
-#     Encode a list of integers (can be negative or positive) using Rice coding.
-#     """
+# given a list of numbers, determines the optimal rice parameter
+def get_optimal_k(nums: Union[List[int], np.array]) -> int:
+    """
+    Given a list of integers, return the optimal Rice parameter `k` that would yield the best compression.
+    Uses formula described in section III, part A, equation 8 (page 6) of https://tda.jpl.nasa.gov/progress_report/42-159/159E.pdf.
+    """
 
-#     # iterate through numbers
-#     for x in nums:
+    # convert to numpy array of zigzagged (to ensure only positive numbers)
+    nums = np.array(list(map(int_to_pos, nums)))
 
-#         # convert from potentially negative number to non-negative
-#         x = int_to_pos(x = x)
+    # get mean of nums
+    mu = np.mean(nums)
 
-#         # compute quotient and remainder
-#         q = x >> k # quotient = n // 2^k
-#         r = x & ((1 << k) - 1) # remainder = n % 2^k
+    # get optimal rice parameter
+    k = max(0, 1 + int(np.log2(np.log(PHI - 1) / np.log(mu / (mu + 1)))))
 
-#         # encode the quotient with unary coding (q ones followed by a zero)
-#         for _ in range(q):
-#             out.write_bit(bit = True)
-#         out.write_bit(bit = False)
+    # return optimal rice parameter
+    return k
 
-#         # encode the remainder with binary coding using k bits, since the remainder will range from 0 to 2^k - 1, which can be encoded in k bits
-#         out.write_bits(bits = r, n = k)
+##################################################
 
-#     # flush output stream
-#     out.flush()
+
+# ENCODE
+##################################################
 
 def encode(nums: Union[List[int], np.array], k: int = K) -> bytes:
     """
     Encode a list of integers (can be negative or positive) using Rice coding.
     """
-
+        
     # helper for writing bits and bytes to an output stream
     out = utils.BitOutputStream()
 
-    # iterate through numbers
-    for x in nums:
+    # special case where k = 0, then don't use rice coding
+    if k == 0:
 
-        # convert from potentially negative number to non-negative
-        x = int_to_pos(x = x)
+        # ensure nums is a numpy array
+        nums = np.array(nums)
 
-        # compute quotient and remainder
-        q = x >> k # quotient = n // 2^k
-        r = x & ((1 << k) - 1) # remainder = n % 2^k
+        # write header, which contains the number of bytes per element as a single byte
+        bytes_per_element = nums.itemsize
+        out.write_byte(byte = bytes_per_element)
+        bits_per_element = 8 * bytes_per_element
 
-        # encode the quotient with unary coding (q ones followed by a zero)
-        # out.write_bits(bits = (((1 << q) - 1) << 1), n = q + 1)
-        for _ in range(q):
-            out.write_bit(bit = True)
-        out.write_bit(bit = False)
+        # iterate through nums
+        for x in nums:
 
-        # encode the remainder with binary coding using k bits, since the remainder will range from 0 to 2^k - 1, which can be encoded in k bits
-        out.write_bits(bits = r, n = k)
+            # convert from potentially negative number to non-negative
+            x = int_to_pos(x = x)
+
+            # write each element in the correct number of bits
+            out.write_bits(bits = x, n = bits_per_element)
+
+    # otherwise, do normal rice coding
+    else:
+
+        # iterate through numbers
+        for x in nums:
+
+            # convert from potentially negative number to non-negative
+            x = int_to_pos(x = x)
+
+            # compute quotient and remainder
+            q = x >> k # quotient = n // 2^k
+            r = x & ((1 << k) - 1) # remainder = n % 2^k
+
+            # encode the quotient with unary coding (q ones followed by a zero)
+            # out.write_bits(bits = (((1 << q) - 1) << 1), n = q + 1)
+            for _ in range(q):
+                out.write_bit(bit = True)
+            out.write_bit(bit = False)
+
+            # encode the remainder with binary coding using k bits, since the remainder will range from 0 to 2^k - 1, which can be encoded in k bits
+            out.write_bits(bits = r, n = k)
 
     # get bytes stream and return
     stream = out.flush()
@@ -119,62 +147,40 @@ def encode(nums: Union[List[int], np.array], k: int = K) -> bytes:
 # DECODE
 ##################################################
 
-# def decode(inp: BitInputStream, n: int = None, k: int = K) -> np.array:
-#     """
-#     Decode an input stream using Rice coding (terminates at end of file or after `n` numbers have been read).
-#     """
-
-#     # initialize numbers list
-#     nums = []
-
-#     # read in numbers
-#     i = 0
-#     while n is None or i < n:
-
-#         # try to read bits
-#         try:
-
-#             # read unary-coded quotient
-#             q = 0
-#             while inp.read_bit() == True:
-#                 q += 1
-            
-#             # read k-bit remainder
-#             r = inp.read_bits(n = k)
-
-#             # reconstruct original number
-#             x = (q << k) | r
-#             x = inverse_int_to_pos(x = x)
-#             nums.append(x)
-
-#             # increment i
-#             i += 1
-
-#         # break out of while loop when the end of the file is reached
-#         except EOFError:
-#             break
-
-#     # convert results to numpy array and return
-#     nums = np.array(nums)
-#     return nums
-
-def decode(stream: bytes, n: int = None, k: int = K) -> np.array:
+def decode(stream: bytes, n: int, k: int = K) -> np.array:
     """
-    Decode an input stream using Rice coding (terminates at end of stream or after `n` numbers have been read).
+    Decode an input stream using Rice coding (terminates after `n` numbers have been read).
     """
-
-    # initialize numbers list
-    nums = []
 
     # helper for reading bits and bytes from an input stream
-    inp = utils.BitInputStream(stream = stream)    
-    
-    # read in numbers
-    i = 0
-    while n is None or i < n:
+    inp = utils.BitInputStream(stream = stream)  
 
-        # try to read bits
-        try:
+    # initialize numbers list
+    nums = utils.rep(x = 0, times = n)
+
+    # special case where k = 0, then don't use rice coding
+    if k == 0:
+
+        # read in first byte, which is number of bytes per element
+        bytes_per_element = inp.read_byte()
+        bits_per_element = bytes_per_element * 8
+
+        # read in numbers
+        for i in range(n):
+
+            # reconstruct original number
+            x = inp.read_bits(n = bits_per_element)
+            x = inverse_int_to_pos(x = x)
+            nums[i] = x
+
+        # convert results to numpy array
+        nums = np.array(nums, dtype = BYTES_PER_ELEMENT_TO_DTYPE[bytes_per_element])
+    
+    # otherwise, do normal rice coding
+    else:
+
+        # read in numbers
+        for i in range(n):
 
             # read unary-coded quotient
             q = 0
@@ -187,17 +193,12 @@ def decode(stream: bytes, n: int = None, k: int = K) -> np.array:
             # reconstruct original number
             x = (q << k) | r
             x = inverse_int_to_pos(x = x)
-            nums.append(x)
+            nums[i] = x
 
-            # increment i
-            i += 1
+        # convert results to numpy array
+        nums = np.array(nums)
 
-        # break out of while loop when the end of the stream is reached
-        except RuntimeError:
-            break
-
-    # convert results to numpy array and return
-    nums = np.array(nums)
+    # return list of numbers
     return nums
 
 ##################################################

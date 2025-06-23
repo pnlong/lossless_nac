@@ -66,49 +66,49 @@ def plot_compression_statistics_percentiles(df: pd.DataFrame, facet_columns: Lis
     # enable seaborn style
     sns.set_theme(style = "whitegrid")
 
-    # # plot for each facet group
-    # grouped = df.groupby(by = facet_columns)
-    # for facet_values, group in grouped:
-
-    #     # compute percentile values for compression_rate and compression_speed
-    #     compression_rate_percentiles = np.percentile(a = group["compression_rate"], q = percentiles)
-    #     compression_speed_percentiles = np.percentile(a = group["compression_speed"], q = percentiles)
-
-    #     # plot percentiles
-    #     label = ", ".join(map(formatter, facet_values)) if isinstance(facet_values, tuple) else formatter(facet_values)
-    #     ax_rate.plot(percentiles, compression_rate_percentiles, label = label)
-    #     ax_speed.plot(percentiles, compression_speed_percentiles, label = label)
-
-    # construct data frame with percentiles data
-    data = pd.DataFrame(columns = ["percentile", "compression_rate", "compression_speed"] + facet_columns)
-    get_facet_column = lambda facet_value: utils.rep(x = formatter(facet_value), times = len(percentiles))
+    # plot for each facet group
     grouped = df.groupby(by = facet_columns)
     for facet_values, group in grouped:
-        facet_data = {
-            "percentile": percentiles,
-            "compression_rate": np.percentile(a = group["compression_rate"], q = percentiles), # percentile values for compression rate
-            "compression_speed": np.percentile(a = group["compression_speed"], q = percentiles), # percentile values for compression rate
-        }
-        facet_data.update(dict(zip(facet_columns, map(get_facet_column, facet_values))) if isinstance(facet_values, tuple) else {facet_columns[0]: get_facet_column(facet_value = facet_values)}) # repeat facet values in facet columns
-        data = pd.concat((data, pd.DataFrame(data = facet_data)), axis = 0, ignore_index = True)
-        del facet_data
-    del get_facet_column, grouped
 
-    # plot data
-    facetting_attributes = ["hue"] if len(facet_columns) == 1 else (["hue", "style"] if len(facet_columns) == 2 else ["hue", "style", "size"])
-    if len(facet_columns) > 3:
-        warnings.warn(message = "Only facetting on the first 3 facet columns.", category = RuntimeWarning)
-    legend_facets = dict(zip(facetting_attributes, facet_columns))
-    sns.lineplot(ax = ax_rate, data = data, x = "percentile", y = "compression_rate", legend = "auto", **legend_facets)
-    sns.lineplot(ax = ax_speed, data = data, x = "percentile", y = "compression_speed", legend = False, **legend_facets)
+        # compute percentile values for compression_rate and compression_speed
+        compression_rate_percentiles = np.percentile(a = group["compression_rate"], q = percentiles)
+        compression_speed_percentiles = np.percentile(a = group["compression_speed"], q = percentiles)
+
+        # plot percentiles
+        label = ", ".join(map(formatter, facet_values)) if isinstance(facet_values, tuple) else formatter(facet_values)
+        ax_rate.plot(percentiles, compression_rate_percentiles, label = label)
+        ax_speed.plot(percentiles, compression_speed_percentiles, label = label)
+
+    # # construct data frame with percentiles data
+    # data = pd.DataFrame(columns = ["percentile", "compression_rate", "compression_speed"] + facet_columns)
+    # get_facet_column = lambda facet_value: utils.rep(x = formatter(facet_value), times = len(percentiles))
+    # grouped = df.groupby(by = facet_columns)
+    # for facet_values, group in grouped:
+    #     facet_data = {
+    #         "percentile": percentiles,
+    #         "compression_rate": np.percentile(a = group["compression_rate"], q = percentiles), # percentile values for compression rate
+    #         "compression_speed": np.percentile(a = group["compression_speed"], q = percentiles), # percentile values for compression rate
+    #     }
+    #     facet_data.update(dict(zip(facet_columns, map(get_facet_column, facet_values))) if isinstance(facet_values, tuple) else {facet_columns[0]: get_facet_column(facet_value = facet_values)}) # repeat facet values in facet columns
+    #     data = pd.concat((data, pd.DataFrame(data = facet_data)), axis = 0, ignore_index = True)
+    #     del facet_data
+    # del get_facet_column, grouped
+
+    # # plot data
+    # facetting_attributes = ["hue"] if len(facet_columns) == 1 else (["hue", "style"] if len(facet_columns) == 2 else ["hue", "style", "size"])
+    # if len(facet_columns) > 3:
+    #     warnings.warn(message = "Only facetting on the first 3 facet columns.", category = RuntimeWarning)
+    # legend_facets = dict(zip(facetting_attributes, facet_columns))
+    # sns.lineplot(ax = ax_rate, data = data, x = "percentile", y = "compression_rate", legend = "auto", **legend_facets)
+    # sns.lineplot(ax = ax_speed, data = data, x = "percentile", y = "compression_speed", legend = False, **legend_facets)
 
     # styling the plots
     ax_rate.set_title("Compression Rate")
     ax_rate.set_ylabel("Compression Rate (%)")
     ax_speed.set_title("Encoding Speed")
-    ax_speed.set_ylabel("Encoding Speed (seconds of computation per second of audio)")
+    ax_speed.set_ylabel("Encoding Speed (seconds of audio encoded per second)")
     ax_speed.set_xlabel("Percentile")
-    ax_rate.legend(fontsize = "small", title_fontsize = "small")
+    ax_rate.legend(title = ", ".join(map(lambda column: column.replace("_", " ").title(), facet_columns)), fontsize = "x-small", title_fontsize = "x-small")
     # ax_speed.legend().remove() # remove legend from bottom panel
 
     # add grid
@@ -141,7 +141,7 @@ def plot_compression_statistics_boxplots(df: pd.DataFrame, facet_columns: List[s
     sns.set_theme(style = "whitegrid")
 
     # prepare data for plotting, melting the dataframe to long format
-    facet_column_name = ", ".join(map(lambda column: " ".join(column.split("_")).title(), facet_columns))
+    facet_column_name = ", ".join(map(lambda column: column.replace("_", " ").title(), facet_columns))
     df_plot = df.copy()
     if len(facet_columns) > 1: # create a combined facet label if multiple facet columns exist
         df_plot[facet_column_name] = df_plot[facet_columns].apply(lambda row: ", ".join(map(formatter, row.values)), axis = 1)
@@ -157,7 +157,7 @@ def plot_compression_statistics_boxplots(df: pd.DataFrame, facet_columns: List[s
     ax_rate.set_ylabel("Compression Rate (%)")
     ax_rate.set_xlabel("") # hide x label
     ax_speed.set_title("Encoding Speed")
-    ax_speed.set_ylabel("Encoding Speed (seconds of computation per second of audio)")
+    ax_speed.set_ylabel("Encoding Speed (seconds of audio encoded per second)")
     ax_speed.set_xlabel(f"Configuration: {facet_column_name}")
 
     # rotate x-axis labels if there are many categories or long labels
@@ -230,7 +230,7 @@ def plot_comparison_percentiles(dfs: Dict[str, pd.DataFrame], facet_columns: Dic
     ax_rate.set_title("Compression Rate")
     ax_rate.set_ylabel("Compression Rate (%)")
     ax_speed.set_title("Encoding Speed")
-    ax_speed.set_ylabel("Encoding Speed (seconds of computation per second of audio)")
+    ax_speed.set_ylabel("Encoding Speed (seconds of audio encoded per second)")
     ax_speed.set_xlabel("Percentile")
     ax_rate.legend(title = "Lossless Compressor", fontsize = "small", title_fontsize = "small")
     # ax_speed.legend().remove() # remove legend from bottom panel
@@ -304,7 +304,7 @@ def plot_comparison_boxplots(dfs: Dict[str, pd.DataFrame], facet_columns: Dict[s
     ax_rate.set_ylabel("Compression Rate (%)")
     ax_rate.set_xlabel("") # hide x label
     ax_speed.set_title("Encoding Speed")
-    ax_speed.set_ylabel("Encoding Speed (seconds of computation per second of audio)")
+    ax_speed.set_ylabel("Encoding Speed (seconds of audio encoded per second)")
     ax_speed.set_xlabel("Lossless Compressor")
 
     # add grid

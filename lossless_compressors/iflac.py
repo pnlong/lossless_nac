@@ -35,9 +35,6 @@ from flac import lpc_autocorrelation_method, LPC_DTYPE
 # lpc order
 MIN_LPC_ORDER, MAX_LPC_ORDER = 5, 20 # since adaptive LPC order is used, this defines the minimum and maximum possible LPC orders
 
-# golden ratio for optimal rice parameter calculation
-PHI = (1 + np.sqrt(5)) / 2
-
 ##################################################
 
 
@@ -69,11 +66,7 @@ def encode_block(
         
         # compute residual and encode with rice coding
         residuals = block - approximate_block
-        mu = np.mean(np.apply_along_axis(rice.int_to_pos, axis = 0, arr = residuals)) # mean of positive zigzagged residuals
-        try:
-            k = 1 + int(np.log2(np.log(PHI - 1) / np.log(mu / (mu + 1)))) # determine optimal k from residuals; see section III, part A, equation 8 (page 6) of https://tda.jpl.nasa.gov/progress_report/42-159/159E.pdf
-        except (OverflowError): # when mu = 0, there is an overflow error
-            k = rice.K
+        k = rice.get_optimal_k(nums = residuals) # determine optimal k
         residuals_rice = rice.encode(nums = residuals, k = k) # rice encoding
 
         # determine cost
@@ -258,7 +251,7 @@ if __name__ == "__main__":
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate IFLAC Implementation on a Test File") # create argument parser
-        parser.add_argument("-p", "--path", type = str, default = f"{dirname(realpath(__file__))}/test.wav", help = "Absolute filepath to the WAV file.")
+        parser.add_argument("-p", "--path", type = str, default = f"{dirname(dirname(realpath(__file__)))}/test.wav", help = "Absolute filepath to the WAV file.")
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")

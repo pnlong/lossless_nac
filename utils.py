@@ -39,6 +39,9 @@ MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES = ceil(log2(MAXIMUM_BLOCK_SIZE_ASSUMPTION + 
 INTERCHANNEL_DECORRELATE = True
 INTERCHANNEL_DECORRELATE_DTYPE = np.int64 # using interchannel decorrelation can cause bugs with overflow, so we must use the proper data type
 
+# default amount of overlap
+OVERLAP = 0 # default to no overlap
+
 # filepaths
 BASE_DIR = "/deepfreeze/pnlong/lnac"
 EVAL_DIR = f"{BASE_DIR}/eval"
