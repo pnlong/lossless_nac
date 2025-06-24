@@ -209,11 +209,16 @@ def decode(
     
     # go through blocks
     n_channels, n_blocks = len(blocks), len(blocks[0])
+    block_size = blocks[0][0][0] # get block size
+    samples_overlap = int(block_size * (overlap / 100))
+    samples_overlap_first_half = int(samples_overlap / 2)
+    samples_overlap_second_half = samples_overlap - samples_overlap_first_half
     waveform = [[None] * n_blocks for _ in range(n_channels)]
     for channel_index in range(n_channels):
         for i in range(n_blocks):
             waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], model = model, k = k)
             waveform[channel_index][i] = waveform[channel_index][i].astype(utils.INTERCHANNEL_DECORRELATE_DTYPE if interchannel_decorrelate else waveform_dtype)
+            waveform[channel_index][i] = waveform[channel_index][i][(samples_overlap_first_half if i > 0 else 0):(len(waveform[channel_index][i]) - (samples_overlap_second_half if i < (n_blocks - 1) else 0))] # truncate to account for overlap
 
     # reconstruct final waveform
     waveform = [np.concatenate(channel, axis = 0) for channel in waveform]

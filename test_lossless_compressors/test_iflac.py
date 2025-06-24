@@ -113,7 +113,7 @@ if __name__ == "__main__":
         start_time = time.perf_counter()
         bottleneck = iflac.encode(
             waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate,
-            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "flac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate}, "path": path}, # arguments to log for zach
+            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "iflac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate}, "path": path}, # arguments to log for zach
         ) # compute compressed bottleneck
         duration_encoding = time.perf_counter() - start_time # measure speed of compression
         round_trip = iflac.decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate) # reconstruct waveform from bottleneck to ensure losslessness

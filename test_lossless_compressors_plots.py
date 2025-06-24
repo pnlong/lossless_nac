@@ -292,7 +292,7 @@ def plot_comparison_boxplots(dfs: Dict[str, pd.DataFrame], facet_columns: Dict[s
     summary["lossless_compressor"] = list(map(lambda descriptor: descriptor + (" " * (max_descriptor_length - len(descriptor))), summary["lossless_compressor"])) # end pad so that they are left aligned
     summary = summary.drop(columns = "parameters") # because parameters is baked into the lossless_compressor column
     summary = summary.groupby(by = "lossless_compressor").mean().reset_index(drop = False)
-    print(utils.pretty_dataframe_string(df = summary, max_colwidth = 100, border_style = "simple"))
+    print(utils.pretty_dataframe_string(df = summary, max_colwidth = 150, border_style = "simple"))
     del summary, longest_lossless_compressor_string_length, max_descriptor_length # free up memory
 
     # plot data

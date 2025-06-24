@@ -24,7 +24,7 @@ sys.path.insert(0, dirname(dirname(realpath(__file__))))
 import utils
 import rice
 import logging_for_zach
-from flac import lpc_autocorrelation_method, LPC_DTYPE
+from nflac import lpc_autocorrelation_method, LPC_DTYPE
 
 ##################################################
 

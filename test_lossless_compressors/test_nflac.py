@@ -2,7 +2,7 @@
 # Phillip Long
 # June 9, 2025
 
-# Test compression rate of naive-FLAC encoder. We use the MusDB18 dataset as a testbed.
+# Test compression rate of Naive-FLAC (NFLAC) encoder. We use the MusDB18 dataset as a testbed.
 
 # IMPORTS
 ##################################################
@@ -22,7 +22,7 @@ sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 import utils
-from lossless_compressors import flac
+from lossless_compressors import nflac
 import rice
 
 ##################################################
@@ -49,10 +49,10 @@ if __name__ == "__main__":
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate Naive-FLAC Implementation") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-44100/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
-        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/flac", help = "Absolute filepath to the output directory.")
+        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/nflac", help = "Absolute filepath to the output directory.")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
-        parser.add_argument("--lpc_order", type = int, default = flac.LPC_ORDER, help = "Order for linear predictive coding.")
+        parser.add_argument("--lpc_order", type = int, default = nflac.LPC_ORDER, help = "Order for linear predictive coding.")
         parser.add_argument("--rice_parameter", type = int, default = rice.K, help = "Rice coding parameter.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
@@ -114,12 +114,12 @@ if __name__ == "__main__":
         # encode and decode
         duration_audio = len(waveform) / sample_rate
         start_time = time.perf_counter()
-        bottleneck = flac.encode(
+        bottleneck = nflac.encode(
             waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate, order = args.lpc_order, k = args.rice_parameter,
-            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "flac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "lpc_order": args.lpc_order, "k": args.rice_parameter}, "path": path}, # arguments to log for zach
+            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "nflac", "parameters": {"block_size": args.block_size, "interchannel_decorrelate": args.interchannel_decorrelate, "lpc_order": args.lpc_order, "k": args.rice_parameter}, "path": path}, # arguments to log for zach
         ) # compute compressed bottleneck
         duration_encoding = time.perf_counter() - start_time # measure speed of compression
-        round_trip = flac.decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate, k = args.rice_parameter) # reconstruct waveform from bottleneck to ensure losslessness
+        round_trip = nflac.decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate, k = args.rice_parameter) # reconstruct waveform from bottleneck to ensure losslessness
         assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
         del round_trip, start_time # free up memory
 
@@ -127,7 +127,7 @@ if __name__ == "__main__":
         size_original = utils.get_waveform_size(waveform = waveform)
 
         # compute size in bytes of compressed bottleneck
-        size_compressed = flac.get_bottleneck_size(bottleneck = bottleneck)
+        size_compressed = nflac.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
         compression_rate = utils.get_compression_rate(size_original = size_original, size_compressed = size_compressed)

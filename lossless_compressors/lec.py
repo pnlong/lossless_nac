@@ -203,9 +203,14 @@ def decode(
     
     # go through blocks
     n_blocks = len(blocks)
+    block_size = blocks[0][0] # get block size
+    samples_overlap = int(block_size * (overlap / 100))
+    samples_overlap_first_half = int(samples_overlap / 2)
+    samples_overlap_second_half = samples_overlap - samples_overlap_first_half
     waveform = utils.rep(x = None, times = n_blocks)
     for i in range(n_blocks):
         waveform[i] = decode_block(block = blocks[i], model = model, device = device, waveform_dtype = waveform_dtype, is_mono = is_mono, k = k)
+        waveform[i] = waveform[i][(samples_overlap_first_half if i > 0 else 0):(len(waveform[i]) - (samples_overlap_second_half if i < (n_blocks - 1) else 0))] # truncate to account for overlap
 
     # reconstruct final waveform
     waveform = np.concatenate(waveform, axis = 0) # concatenate blocks into single waveform

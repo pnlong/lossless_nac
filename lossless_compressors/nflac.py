@@ -2,7 +2,7 @@
 # Phillip Long
 # May 11, 2025
 
-# Implementation of Free Lossless Audio Codec (FLAC) for use as a baseline.
+# Implementation of Naive Free Lossless Audio Codec (FLAC) for use as a baseline.
 # See https://xiph.org/flac/documentation_format_overview.html for more.
 
 # IMPORTS
@@ -110,7 +110,7 @@ def encode_block(
         order: int = LPC_ORDER, # order for linear predictive coding
         k: int = rice.K, # rice parameter
     ) -> Tuple[int, np.array, bytes]: # returns tuple of number of samples in the block, compressed material, and rice encoded residuals
-    """FLAC encoder helper function that encodes blocks."""
+    """NFLAC encoder helper function that encodes blocks."""
 
     # convert block to float
     block_float = block.astype(np.float32)
@@ -142,7 +142,7 @@ def encode(
         k: int = rice.K, # rice parameter
         log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
     ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
-    """Naive FLAC encoder."""
+    """NFLAC encoder."""
 
     # ensure waveform is correct type
     waveform_dtype = waveform.dtype
@@ -197,7 +197,7 @@ def decode_block(
         block: Tuple[int, np.array, bytes], # block tuple with elements (n_samples_in_block, bottleneck, residuals_rice)
         k: int = rice.K, # rice parameter
     ) -> np.array:
-    """FLAC decoder helper function that decodes blocks."""
+    """NFLAC decoder helper function that decodes blocks."""
 
     # split block
     n_samples_in_block, linear_prediction_coefficients, residuals_rice = block # lpc_order = len(linear_prediction_coefficients) - 1; len(linear_prediction_coefficients) = lpc_order + 1
@@ -221,7 +221,7 @@ def decode(
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # was interchannel decorrelation used
         k: int = rice.K, # rice parameter
     ) -> np.array: # returns the reconstructed waveform of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
-    """Naive FLAC decoder."""
+    """NFLAC decoder."""
 
     # split bottleneck
     blocks, waveform_dtype = bottleneck
