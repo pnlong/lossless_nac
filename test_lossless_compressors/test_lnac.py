@@ -202,8 +202,8 @@ if __name__ == "__main__":
     print(f"Mean Compression Rate: {np.mean(compression_rates):.2f}%")
     print(f"Median Compression Rate: {np.median(compression_rates):.2f}%")
     print(f"Standard Deviation of Compression Rates: {np.std(compression_rates):.2f}%")
-    print(f"Best Compression Rate: {np.min(compression_rates):.2f}%")
-    print(f"Worst Compression Rate: {np.max(compression_rates):.2f}%")
+    print(f"Best Compression Rate: {np.max(compression_rates):.2f}%")
+    print(f"Worst Compression Rate: {np.min(compression_rates):.2f}%")
 
     # output statistics on compression speed
     print(f"Mean Compression Speed: {np.mean(compression_speeds):.2f}%")
