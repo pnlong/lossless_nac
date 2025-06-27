@@ -141,7 +141,7 @@ def encode(
         order: int = LPC_ORDER, # order for linear predictive coding
         k: int = rice.K, # rice parameter
         log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
-    ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
+    ) -> Tuple[type, List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]]]: # returns tuple of data type of original data and blocks 
     """NFLAC encoder."""
 
     # ensure waveform is correct type
@@ -153,7 +153,7 @@ def encode(
     if is_mono: # if mono
         waveform = np.expand_dims(a = waveform, axis = -1) # add channel to represent single channel
     elif interchannel_decorrelate and waveform.ndim == 2 and waveform.shape[-1] == 2: # if stereo, perform inter-channel decorrelation (https://xiph.org/flac/documentation_format_overview.html#:~:text=smaller%20frame%20header.-,INTER%2DCHANNEL%20DECORRELATION,-In%20the%20case)
-        left, right = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE) # extract left and right channels, cast as int64 so there are no overflow bugs
+        left, right = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE_BY_AUDIO_DTYPE[str(waveform_dtype)]) # extract left and right channels, cast as int64 so there are no overflow bugs
         center = (left + right) >> 1 # center channel
         side = left - right # side channel
         waveform = np.stack(arrays = (center, side), axis = -1)
@@ -184,8 +184,8 @@ def encode(
     if is_mono:
         blocks = blocks[0]
     
-    # return blocks and waveform data type
-    return blocks, waveform_dtype
+    # return waveform data type and blocks
+    return waveform_dtype, blocks
 
 ##################################################
 
@@ -217,19 +217,20 @@ def decode_block(
 
 
 def decode(
-        bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type], # tuple of blocks and the datatype of the original waveform
+        bottleneck: Tuple[type, List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]]], # tuple of the datatype of the original waveform and the blocks
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # was interchannel decorrelation used
         k: int = rice.K, # rice parameter
     ) -> np.array: # returns the reconstructed waveform of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
     """NFLAC decoder."""
 
     # split bottleneck
-    blocks, waveform_dtype = bottleneck
+    waveform_dtype, blocks = bottleneck
 
     # determine if mono
     is_mono = type(blocks[0]) is not list
     if is_mono:
         blocks = [blocks] # add multiple channels if mono
+        interchannel_decorrelate = False # ensure interchannel decorrelate is false if the signal is mono
     
     # go through blocks
     n_channels, n_blocks = len(blocks), len(blocks[0])
@@ -237,7 +238,7 @@ def decode(
     for channel_index in range(n_channels):
         for i in range(n_blocks):
             waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], k = k)
-            waveform[channel_index][i] = waveform[channel_index][i].astype(utils.INTERCHANNEL_DECORRELATE_DTYPE if interchannel_decorrelate else waveform_dtype)
+            waveform[channel_index][i] = waveform[channel_index][i].astype(utils.INTERCHANNEL_DECORRELATE_DTYPE_BY_AUDIO_DTYPE[str(waveform_dtype)] if interchannel_decorrelate else waveform_dtype)
 
     # reconstruct final waveform
     waveform = [np.concatenate(channel, axis = 0) for channel in waveform]
@@ -247,7 +248,7 @@ def decode(
     if is_mono: # if mono, ensure waveform is one dimension
         waveform = waveform[:, 0]
     elif interchannel_decorrelate and n_channels == 2: # if stereo, perform inter-channel decorrelation
-        center, side = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE) # extract center and side channels, cast as int64 so there are no overflow bugs
+        center, side = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE_BY_AUDIO_DTYPE[str(waveform_dtype)]) # extract center and side channels, cast as int64 so there are no overflow bugs
         left = center + ((side + 1) >> 1) # left channel
         right = center - (side >> 1) # right channel
         waveform = np.stack(arrays = (left, right), axis = -1)
@@ -264,7 +265,7 @@ def decode(
 ##################################################
 
 def get_bottleneck_size(
-    bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type],
+    bottleneck: Tuple[type, List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]]],
 ) -> int:
     """Returns the size of the given bottleneck in bytes."""
 
@@ -272,7 +273,7 @@ def get_bottleneck_size(
     size = 0
 
     # split bottleneck
-    blocks, waveform_dtype = bottleneck
+    waveform_dtype, blocks = bottleneck
     # size += 1 # use a single byte to encode the data type of the original waveform, but assume the effect of waveform_dtype is negligible on the total size in bytes
 
     # determine if mono
@@ -319,7 +320,8 @@ if __name__ == "__main__":
 
     # force to mono if necessary
     if args.mono and waveform.ndim == 2:
-        waveform = np.mean(a = waveform, axis = -1)
+        print("Forcing waveform to mono!")
+        waveform = np.round(np.mean(a = waveform, axis = -1)).astype(waveform.dtype)
 
     # print statistics about waveform
     print(f"Waveform Shape: {tuple(waveform.shape)}")

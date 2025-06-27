@@ -78,6 +78,12 @@ def encode_block(
     approximate_block = approximate_block.squeeze(dim = 0)[:, :n_samples_in_block].detach().cpu().numpy() # truncate to match, also remove batch_size to shape (n_channels, n_samples)
     approximate_block = approximate_block[0].unsqueeze(dim = 0) if is_mono else approximate_block # if the waveform is mono, only have one channel
     approximate_block = approximate_block.T # tranpose to shape (n_samples, n_channels)
+    print(f"Block Dtype: {block_array.dtype}")
+    print(f"Block Max: {block_array.max()}")
+    print(f"Block Min: {block_array.min()}")
+    print(f"Approximate Block Dtype: {approximate_block.dtype}")
+    print(f"Approximate Block Max: {approximate_block.max()}")
+    print(f"Approximate Block Min: {approximate_block.min()}")
     approximate_block = utils.convert_waveform_floating_to_fixed(waveform = approximate_block, output_dtype = block_array.dtype) # convert approximate waveform to fixed-point for residual calculation
 
     # remove batch_size dimension from codes
@@ -286,7 +292,7 @@ if __name__ == "__main__":
     # force to mono if necessary
     if args.mono and waveform.ndim == 2:
         print(f"Forcing waveform to mono!")
-        waveform = np.mean(a = waveform, axis = -1)
+        waveform = np.round(np.mean(a = waveform, axis = -1)).astype(waveform.dtype)
         waveform_reshaped = True
 
     # load encodec

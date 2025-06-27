@@ -76,10 +76,10 @@ def get_optimal_k(nums: Union[List[int], np.array]) -> int:
     mu = np.mean(nums)
 
     # get optimal rice parameter
-    k = max(0, 1 + int(np.log2(np.log(PHI - 1) / np.log(mu / (mu + 1)))))
-
-    # return optimal rice parameter
-    return k
+    if mu < PHI:
+        return 0
+    else:
+        return 1 + int(np.log2(np.log(PHI - 1) / np.log(mu / (mu + 1))))
 
 ##################################################
 

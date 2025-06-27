@@ -38,6 +38,41 @@ MIN_LPC_ORDER, MAX_LPC_ORDER = 5, 20 # since adaptive LPC order is used, this de
 ##################################################
 
 
+# HELPER FUNCTION TO GET THE SIZE IN BYTES OF THE BOTTLENECK
+##################################################
+
+def get_bottleneck_size(
+    bottleneck: Tuple[type, bool, List[Union[Tuple[int, int, np.array, int, bytes], List[Tuple[int, int, np.array, int, bytes]]]]],
+) -> int:
+    """Returns the size of the given bottleneck in bytes."""
+
+    # tally of the size in bytes of the bottleneck
+    size = 0
+
+    # split bottleneck
+    waveform_dtype, interchannel_decorrelate, blocks = bottleneck
+    # size += 1 # use a single byte to encode the data type of the original waveform and whether interchannel decorrelation was used, but assume the effect is negligible on the total size in bytes
+
+    # determine if mono
+    is_mono = type(blocks[0]) is not list
+    if is_mono:
+        blocks = [blocks] # add multiple channels if mono
+
+    # iterate through blocks
+    for channel in blocks:
+        for block in channel:
+            block_length, lpc_order, linear_prediction_coefficients, k, residuals_rice = block
+            size += utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES # we assume the block length can be encoded as an unsigned integer in 2-bytes (np.int16); in other words, block_length must be strictly less than (2 ** 16 = 65536)
+            size += 1 # we assume that we can encode the LPC order in 5 bits and the rice parameter K in another 3 bits, so together, 1 byte total
+            size += linear_prediction_coefficients.nbytes # the size of the linear_prediction_coefficients is easily known from the LPC order, which is a fixed hyperparameter
+            size += len(residuals_rice) # rice residuals can be easily decoded since we know the block_length
+    
+    # return the size in bytes
+    return size
+
+##################################################
+
+
 # ENCODE
 ##################################################
 
@@ -79,7 +114,7 @@ def encode_block(
             best_residuals_rice = residuals_rice
 
         # free up memory
-        del linear_prediction_coefficients, approximate_block, residuals, mu, k, residuals_rice
+        del linear_prediction_coefficients, approximate_block, residuals, k, residuals_rice
     
     # return number of samples in block, LPC order, compressed materials, rice parameter K, and rice encoded residuals
     return len(block), best_lpc_order, best_linear_prediction_coefficients, best_k, best_residuals_rice
@@ -88,9 +123,8 @@ def encode_block(
 def encode(
         waveform: np.array, # waveform of integers of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
         block_size: int = utils.BLOCK_SIZE, # block size
-        interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # use interchannel decorrelation
         log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
-    ) -> Tuple[List[Union[Tuple[int, int, np.array, int, bytes], List[Tuple[int, int, np.array, int, bytes]]]], type]: # returns tuple of blocks and data type of original data
+    ) -> Tuple[type, bool, List[Union[Tuple[int, int, np.array, int, bytes], List[Tuple[int, int, np.array, int, bytes]]]]]: # returns tuple of data type of original data, interchannel decorrelation, and blocks 
     """IFLAC encoder."""
 
     # ensure waveform is correct type
@@ -101,26 +135,38 @@ def encode(
     is_mono = waveform.ndim == 1
     if is_mono: # if mono
         waveform = np.expand_dims(a = waveform, axis = -1) # add channel to represent single channel
-    elif interchannel_decorrelate and waveform.ndim == 2 and waveform.shape[-1] == 2: # if stereo, perform inter-channel decorrelation (https://xiph.org/flac/documentation_format_overview.html#:~:text=smaller%20frame%20header.-,INTER%2DCHANNEL%20DECORRELATION,-In%20the%20case)
-        left, right = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE) # extract left and right channels, cast as int64 so there are no overflow bugs
-        center = (left + right) >> 1 # center channel
-        side = left - right # side channel
-        waveform = np.stack(arrays = (center, side), axis = -1)
-        del left, right, center, side
     
-    # go through blocks and encode them each
+    # go through blocks and encode them each, trying different bottleneck options
+    bottleneck_options = dict()
     n_samples, n_channels = waveform.shape
     n_blocks = ceil(n_samples / block_size)
-    blocks = [[None] * n_blocks for _ in range(n_channels)]
-    for channel_index in range(n_channels):
-        for i in range(n_blocks):
-            start_index = i * block_size
-            end_index = (start_index + block_size) if (i < (n_blocks - 1)) else n_samples
-            blocks[channel_index][i] = encode_block(block = waveform[start_index:end_index, channel_index])
+    for interchannel_decorrelate in (False,) if is_mono else (False, True):
+
+        # perform inter-channel decorrelation if necessary
+        if interchannel_decorrelate and waveform.shape[-1] == 2: # if stereo, perform inter-channel decorrelation (https://xiph.org/flac/documentation_format_overview.html#:~:text=smaller%20frame%20header.-,INTER%2DCHANNEL%20DECORRELATION,-In%20the%20case)
+            left, right = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE_BY_AUDIO_DTYPE[str(waveform_dtype)]) # extract left and right channels, cast as int64 so there are no overflow bugs
+            center = (left + right) >> 1 # center channel
+            side = left - right # side channel
+            waveform = np.stack(arrays = (center, side), axis = -1)
+            del left, right, center, side
+
+        # encode blocks
+        blocks = [[None] * n_blocks for _ in range(n_channels)]
+        for channel_index in range(n_channels):
+            for i in range(n_blocks):
+                start_index = i * block_size
+                end_index = (start_index + block_size) if (i < (n_blocks - 1)) else n_samples
+                blocks[channel_index][i] = encode_block(block = waveform[start_index:end_index, channel_index])
+        if is_mono: # don't have multiple channels if mono
+            blocks = blocks[0]
+        bottleneck_options[interchannel_decorrelate] = (waveform_dtype, interchannel_decorrelate, blocks) # waveform data type, interchannel decorrelation, and blocks
+    
+    # determine the best bottleneck option
+    best_bottleneck_option = min(bottleneck_options.values(), key = get_bottleneck_size)
 
     # log for zach
     if log_for_zach_kwargs is not None:
-        residuals = np.stack([np.concatenate([rice.decode(stream = block[-1], n = block[0], k = block[-2]) for block in channel], axis = 0) for channel in blocks], axis = -1)
+        residuals = np.stack([np.concatenate([rice.decode(stream = block[-1], n = block[0], k = block[-2]) for block in channel], axis = 0) for channel in best_bottleneck_option[-1]], axis = -1)
         if is_mono:
             residuals = residuals.squeeze(dim = -1)
         residuals_rice = rice.encode(nums = residuals.flatten())
@@ -129,12 +175,8 @@ def encode(
             residuals_rice = residuals_rice,
             **log_for_zach_kwargs)
 
-    # don't have multiple channels if mono
-    if is_mono:
-        blocks = blocks[0]
-    
-    # return blocks and waveform data type
-    return blocks, waveform_dtype
+    # return the best bottleneck option
+    return best_bottleneck_option
 
 ##################################################
 
@@ -165,18 +207,18 @@ def decode_block(
 
 
 def decode(
-        bottleneck: Tuple[List[Union[Tuple[int, int, np.array, int, bytes], List[Tuple[int, int, np.array, int, bytes]]]], type], # tuple of blocks and the datatype of the original waveform
-        interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # was interchannel decorrelation used
+        bottleneck: Tuple[type, bool, List[Union[Tuple[int, int, np.array, int, bytes], List[Tuple[int, int, np.array, int, bytes]]]]], # tuple of the datatype of the original waveform, interchannel decorrelation, and blocks 
     ) -> np.array: # returns the reconstructed waveform of shape (n_samples, n_channels) (if multichannel) or (n_samples,) (if mono)
     """IFLAC decoder."""
 
     # split bottleneck
-    blocks, waveform_dtype = bottleneck
+    waveform_dtype, interchannel_decorrelate, blocks = bottleneck
 
     # determine if mono
     is_mono = type(blocks[0]) is not list
     if is_mono:
         blocks = [blocks] # add multiple channels if mono
+        interchannel_decorrelate = False # ensure interchannel decorrelate is false if the signal is mono
     
     # go through blocks
     n_channels, n_blocks = len(blocks), len(blocks[0])
@@ -184,7 +226,7 @@ def decode(
     for channel_index in range(n_channels):
         for i in range(n_blocks):
             waveform[channel_index][i] = decode_block(block = blocks[channel_index][i])
-            waveform[channel_index][i] = waveform[channel_index][i].astype(utils.INTERCHANNEL_DECORRELATE_DTYPE if interchannel_decorrelate else waveform_dtype)
+            waveform[channel_index][i] = waveform[channel_index][i].astype(utils.INTERCHANNEL_DECORRELATE_DTYPE_BY_AUDIO_DTYPE[str(waveform_dtype)] if interchannel_decorrelate else waveform_dtype)
 
     # reconstruct final waveform
     waveform = [np.concatenate(channel, axis = 0) for channel in waveform]
@@ -194,7 +236,7 @@ def decode(
     if is_mono: # if mono, ensure waveform is one dimension
         waveform = waveform[:, 0]
     elif interchannel_decorrelate and n_channels == 2: # if stereo, perform inter-channel decorrelation
-        center, side = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE) # extract center and side channels, cast as int64 so there are no overflow bugs
+        center, side = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE_BY_AUDIO_DTYPE[str(waveform_dtype)]) # extract center and side channels, cast as int64 so there are no overflow bugs
         left = center + ((side + 1) >> 1) # left channel
         right = center - (side >> 1) # right channel
         waveform = np.stack(arrays = (left, right), axis = -1)
@@ -203,41 +245,6 @@ def decode(
     # return final reconstructed waveform
     waveform = waveform.astype(waveform_dtype) # ensure correct data type
     return waveform
-
-##################################################
-
-
-# HELPER FUNCTION TO GET THE SIZE IN BYTES OF THE BOTTLENECK
-##################################################
-
-def get_bottleneck_size(
-    bottleneck: Tuple[List[Union[Tuple[int, int, np.array, int, bytes], List[Tuple[int, int, np.array, int, bytes]]]], type],
-) -> int:
-    """Returns the size of the given bottleneck in bytes."""
-
-    # tally of the size in bytes of the bottleneck
-    size = 0
-
-    # split bottleneck
-    blocks, waveform_dtype = bottleneck
-    # size += 1 # use a single byte to encode the data type of the original waveform, but assume the effect of waveform_dtype is negligible on the total size in bytes
-
-    # determine if mono
-    is_mono = type(blocks[0]) is not list
-    if is_mono:
-        blocks = [blocks] # add multiple channels if mono
-
-    # iterate through blocks
-    for channel in blocks:
-        for block in channel:
-            block_length, lpc_order, linear_prediction_coefficients, k, residuals_rice = block
-            size += utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES # we assume the block length can be encoded as an unsigned integer in 2-bytes (np.int16); in other words, block_length must be strictly less than (2 ** 16 = 65536)
-            size += 1 # we assume that we can encode the LPC order in 5 bits and the rice parameter K in another 3 bits, so together, 1 byte total
-            size += linear_prediction_coefficients.nbytes # the size of the linear_prediction_coefficients is easily known from the LPC order, which is a fixed hyperparameter
-            size += len(residuals_rice) # rice residuals can be easily decoded since we know the block_length
-    
-    # return the size in bytes
-    return size
 
 ##################################################
 
@@ -254,9 +261,7 @@ if __name__ == "__main__":
         parser.add_argument("-p", "--path", type = str, default = f"{dirname(dirname(realpath(__file__)))}/test.wav", help = "Absolute filepath to the WAV file.")
         parser.add_argument("--mono", action = "store_true", help = "Ensure that the WAV file is mono (single-channeled).")
         parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
-        parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
-        args.interchannel_decorrelate = not args.no_interchannel_decorrelate # infer interchannel decorrelation
         return args # return parsed arguments
     args = parse_args()
 
@@ -265,7 +270,8 @@ if __name__ == "__main__":
 
     # force to mono if necessary
     if args.mono and waveform.ndim == 2:
-        waveform = np.mean(a = waveform, axis = -1)
+        print("Forcing waveform to mono!")
+        waveform = np.round(np.mean(a = waveform, axis = -1)).astype(waveform.dtype)
 
     # print statistics about waveform
     print(f"Waveform Shape: {tuple(waveform.shape)}")
@@ -277,7 +283,7 @@ if __name__ == "__main__":
     # encode
     print("Encoding...")
     start_time = time.perf_counter()
-    bottleneck = encode(waveform = waveform, block_size = args.block_size, interchannel_decorrelate = args.interchannel_decorrelate)
+    bottleneck = encode(waveform = waveform, block_size = args.block_size)
     compression_speed = utils.get_compression_speed(duration_audio = len(waveform) / sample_rate, duration_encoding = time.perf_counter() - start_time)
     del start_time # free up memory
     bottleneck_size = get_bottleneck_size(bottleneck = bottleneck) # compute size of bottleneck in bytes
@@ -287,7 +293,7 @@ if __name__ == "__main__":
 
     # decode
     print("Decoding...")
-    round_trip = decode(bottleneck = bottleneck, interchannel_decorrelate = args.interchannel_decorrelate)
+    round_trip = decode(bottleneck = bottleneck)
 
     # verify losslessness
     assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match!"

@@ -24,7 +24,7 @@ import pandas as pd
 ##################################################
 
 # valid audio data types
-VALID_AUDIO_DTYPES = (np.int8, np.int16, np.int32, np.int64) # signed integers
+VALID_AUDIO_DTYPES = (np.int8, np.int16, np.int32) # signed integers
 DEFAULT_AUDIO_DTYPE = VALID_AUDIO_DTYPES[2]
 
 # default sample rate
@@ -37,7 +37,7 @@ MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES = ceil(log2(MAXIMUM_BLOCK_SIZE_ASSUMPTION + 
 
 # use interchannel decorrelation
 INTERCHANNEL_DECORRELATE = True
-INTERCHANNEL_DECORRELATE_DTYPE = np.int64 # using interchannel decorrelation can cause bugs with overflow, so we must use the proper data type
+INTERCHANNEL_DECORRELATE_DTYPE_BY_AUDIO_DTYPE = dict(zip((valid_audio_dtype.__name__ for valid_audio_dtype in VALID_AUDIO_DTYPES), (np.int16, np.int32, np.int64))) # using interchannel decorrelation can cause bugs with overflow, so we must use the proper data type
 
 # default amount of overlap
 OVERLAP = 0 # default to no overlap
@@ -322,7 +322,7 @@ def convert_waveform_fixed_to_floating(waveform: np.array, output_dtype: type = 
     assert any(output_dtype == dtype for dtype in {np.float16, np.float32, np.float64}), "Output data type must be floating-point." # ensure output data type is correct
 
     # get scaling factor (denominator is the maximum positive integer representable by dtype)
-    scaling_factor = np.iinfo(waveform.dtype).max + 1  # to map [-dtype_max - 1, dtype_max] → [-1.0, 1.0)
+    scaling_factor = np.iinfo(waveform.dtype).max + 1 # to map [-dtype_max - 1, dtype_max] → [-1.0, 1.0)
 
     # convert to floating point and scale
     waveform = waveform.astype(output_dtype) / scaling_factor
@@ -341,7 +341,7 @@ def convert_waveform_floating_to_fixed(waveform: np.array, output_dtype: type = 
     assert any(output_dtype == dtype for dtype in VALID_AUDIO_DTYPES), "Output data type must be a signed-integer data type." # ensure output data type is correct
 
     # get scaling factor
-    scaling_factor = np.iinfo(output_dtype).max + 1  # inverse of the factor used in fixed- to floating-point conversion
+    scaling_factor = np.iinfo(output_dtype).max + 1 # inverse of the factor used in fixed- to floating-point conversion
 
     # scale and round to nearest integer
     waveform = np.clip(a = waveform, a_min = -1.0, a_max = 1.0 - np.finfo(waveform.dtype).eps) # prevent overflow

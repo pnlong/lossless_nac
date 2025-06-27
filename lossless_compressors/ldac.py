@@ -61,20 +61,25 @@ def encode_block(
     """LDAC encoder helper function that encodes blocks."""
 
     # get bottleneck
-    block = block.to(model.device) # ensure on correct device
-    block_array = block.audio_data.squeeze(dim = (0, 1)).cpu().numpy() # get version of block that is 1d array
+    block_numpy = block.audio_data.numpy()
+    block_array = block_numpy.squeeze(axis = 0).squeeze(axis = 0) # get version of block that is 1d array
     n_samples_in_block = len(block_array)
-    x = model.preprocess(audio_data = block.audio_data, sample_rate = block.sample_rate)
-    _, codes, _, _, _ = model.encode(audio_data = x.float())
+    x = model.preprocess(
+        audio_data = torch.from_numpy(utils.convert_waveform_fixed_to_floating(waveform = block_numpy, output_dtype = np.float32)).to(model.device), # ensure floating point and on correct device
+        sample_rate = block.sample_rate,
+    ).float() # convert to float to avoid RuntimeError: Input type (torch.cuda.DoubleTensor) and weight type (torch.cuda.FloatTensor) should be the same
+    _, codes, _, _, _ = model.encode(audio_data = x)
     codes = codes[:, :n_codebooks, :] # truncate codes to desired number of codebooks
+    del block, block_numpy, x # free up memory immediately
 
     # approximate block
     z = model.quantizer.from_codes(codes = codes)[0].detach() # get z from codes
     approximate_block = model.decode(z = z)
     approximate_block = approximate_block.squeeze(dim = (0, 1)).detach().cpu().numpy() # get rid of unnecessary dimensions
     approximate_block = approximate_block[:n_samples_in_block] # truncate to correct length
-    approximate_block = np.round(approximate_block).astype(block_array.dtype) # ensure approximate waveform is integer values
-    
+    approximate_block = utils.convert_waveform_floating_to_fixed(waveform = approximate_block, output_dtype = block_array.dtype) # ensure approximate waveform is integer values
+    del z # free up memory immediately
+
     # remove batch_size dimension from codes
     codes = codes.squeeze(dim = 0)
     codes = codes.detach().cpu().numpy() # convert to numpy
@@ -82,9 +87,7 @@ def encode_block(
     # compute residual and encode with rice coding
     residuals = block_array - approximate_block
     residuals_rice = rice.encode(nums = residuals, k = k) # rice encoding
-    
-    # free up gpu memory immediately
-    del block, block_array, x, z, approximate_block, residuals
+    del block_array, approximate_block, residuals # free up memory immediately
     
     # return number of samples in block, compressed materials, and rice encoded residuals
     return n_samples_in_block, codes, residuals_rice
@@ -100,7 +103,7 @@ def encode(
         k: int = rice.K, # rice parameter
         overlap: float = utils.OVERLAP, # block overlap (as a percentage in range [0, 100))
         log_for_zach_kwargs: dict = None, # available keyword arguments for log_for_zach() function
-    ) -> Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type]: # returns tuple of blocks and data type of original data
+    ) -> Tuple[type, type, List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]]]: # returns tuple of the datatype of the original waveform, the datatype of the waveform as passed to blocks to encode, and the blocks themselves
     """Naive LDAC encoder."""
 
     # ensure waveform is correct type
@@ -108,18 +111,20 @@ def encode(
     assert any(waveform_dtype == dtype for dtype in utils.VALID_AUDIO_DTYPES)
 
     # deal with different size inputs
-    is_mono = waveform.ndim == 1
+    is_mono = waveform.ndim == 1        
     if is_mono: # if mono
         waveform = np.expand_dims(a = waveform, axis = -1) # add channel to represent single channel
+        interchannel_decorrelate = False # ensure interchannel decorrelate is false if the signal is mono
     elif interchannel_decorrelate and waveform.ndim == 2 and waveform.shape[-1] == 2: # if stereo, perform inter-channel decorrelation (https://xiph.org/flac/documentation_format_overview.html#:~:text=smaller%20frame%20header.-,INTER%2DCHANNEL%20DECORRELATION,-In%20the%20case)
-        left, right = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE) # extract left and right channels, cast as int64 so there are no overflow bugs
+        left, right = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE_BY_AUDIO_DTYPE[str(waveform_dtype)]) # extract left and right channels, cast as int64 so there are no overflow bugs
         center = (left + right) >> 1 # center channel
         side = left - right # side channel
         waveform = np.stack(arrays = (center, side), axis = -1)
         del left, right, center, side
+    encoding_dtype = waveform.dtype
 
     # convert waveform to audio signal for DAC
-    waveform = AudioSignal(audio_path_or_array = waveform if is_mono else waveform.T, sample_rate = sample_rate)
+    waveform = AudioSignal(audio_path_or_array = waveform.T, sample_rate = sample_rate)
 
     # go through blocks and encode them each
     _, n_channels, n_samples = waveform.shape
@@ -148,8 +153,8 @@ def encode(
     if is_mono:
         blocks = blocks[0]
     
-    # return blocks and waveform data type
-    return blocks, waveform_dtype
+    # return waveform data type, data type of waveform passed to blocks to encode, and the blocks
+    return waveform_dtype, encoding_dtype, blocks
 
 ##################################################
 
@@ -160,6 +165,7 @@ def encode(
 def decode_block(
         block: Tuple[int, np.array, bytes], # block tuple with elements (n_samples_in_block, bottleneck, residuals_rice)
         model: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
+        encoding_dtype: type = utils.DEFAULT_AUDIO_DTYPE, # data type of the resulting reconstructed waveform
         k: int = rice.K, # rice parameter
     ) -> np.array:
     """LDAC decoder helper function that decodes blocks."""
@@ -174,7 +180,7 @@ def decode_block(
     approximate_block = model.decode(z = z)
     approximate_block = approximate_block.squeeze(dim = (0, 1)).detach().cpu().numpy() # convert from AudioSignal to numpy array
     approximate_block = approximate_block[:n_samples_in_block] # truncate to correct length
-    approximate_block = np.round(approximate_block) # quantize approximate waveform to pseudo-integer values
+    approximate_block = utils.convert_waveform_floating_to_fixed(waveform = approximate_block, output_dtype = encoding_dtype) # ensure approximate waveform is integer values
 
     # free up gpu memory immediately
     del codes, z
@@ -191,7 +197,7 @@ def decode_block(
 
 
 def decode(
-        bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type], # tuple of blocks and the datatype of the original waveform
+        bottleneck: Tuple[type, type, List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]]], # tuple of the datatype of the original waveform, the datatype of the waveform as passed to blocks to encode, and the blocks themselves
         model: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, # was interchannel decorrelation used
         k: int = rice.K, # rice parameter
@@ -200,12 +206,13 @@ def decode(
     """Naive LDAC decoder."""
 
     # split bottleneck
-    blocks, waveform_dtype = bottleneck
+    waveform_dtype, encoding_dtype, blocks = bottleneck
 
     # determine if mono
     is_mono = type(blocks[0]) is not list
     if is_mono:
         blocks = [blocks] # add multiple channels if mono
+        interchannel_decorrelate = False # ensure interchannel decorrelate is false if the signal is mono
     
     # go through blocks
     n_channels, n_blocks = len(blocks), len(blocks[0])
@@ -216,8 +223,7 @@ def decode(
     waveform = [[None] * n_blocks for _ in range(n_channels)]
     for channel_index in range(n_channels):
         for i in range(n_blocks):
-            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], model = model, k = k)
-            waveform[channel_index][i] = waveform[channel_index][i].astype(utils.INTERCHANNEL_DECORRELATE_DTYPE if interchannel_decorrelate else waveform_dtype)
+            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], model = model, encoding_dtype = encoding_dtype, k = k)
             waveform[channel_index][i] = waveform[channel_index][i][(samples_overlap_first_half if i > 0 else 0):(len(waveform[channel_index][i]) - (samples_overlap_second_half if i < (n_blocks - 1) else 0))] # truncate to account for overlap
 
     # reconstruct final waveform
@@ -228,7 +234,7 @@ def decode(
     if is_mono: # if mono, ensure waveform is one dimension
         waveform = waveform[:, 0]
     elif interchannel_decorrelate and n_channels == 2: # if stereo, perform inter-channel decorrelation
-        center, side = waveform.T.astype(utils.INTERCHANNEL_DECORRELATE_DTYPE) # extract center and side channels, cast as int64 so there are no overflow bugs
+        center, side = waveform.T # extract center and side channels, cast as int64 so there are no overflow bugs
         left = center + ((side + 1) >> 1) # left channel
         right = center - (side >> 1) # right channel
         waveform = np.stack(arrays = (left, right), axis = -1)
@@ -245,7 +251,7 @@ def decode(
 ##################################################
 
 def get_bottleneck_size(
-    bottleneck: Tuple[List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]], type],
+    bottleneck: Tuple[type, type, List[Union[Tuple[int, np.array, bytes], List[Tuple[int, np.array, bytes]]]]],
 ) -> int:
     """Returns the size of the given bottleneck in bytes."""
 
@@ -253,8 +259,8 @@ def get_bottleneck_size(
     size = 0
 
     # split bottleneck
-    blocks, waveform_dtype = bottleneck
-    # size += 1 # use a single byte to encode the data type of the original waveform, but assume the effect of waveform_dtype is negligible on the total size in bytes
+    waveform_dtype, encoding_dtype, blocks = bottleneck
+    # size += 1 # use a single byte to encode the data type of the original waveform and the data type of the waveform as passed to the block encoder, but assume the effect of these data types is negligible on the total size in bytes
 
     # determine if mono
     is_mono = type(blocks[0]) is not list
@@ -314,7 +320,7 @@ if __name__ == "__main__":
     # force to mono if necessary
     if args.mono and waveform.ndim == 2:
         print(f"Forcing waveform to mono!")
-        waveform = np.mean(a = waveform, axis = -1)
+        waveform = np.round(np.mean(a = waveform, axis = -1)).astype(waveform.dtype)
         waveform_reshaped = True
 
     # load descript audio codec

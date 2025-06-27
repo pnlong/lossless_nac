@@ -1,8 +1,8 @@
 # README
 # Phillip Long
-# June 21, 2025
+# June 26, 2025
 
-# Test compression rate of IFLAC encoder. We use the MusDB18 dataset as a testbed.
+# Test compression rate of FLACB encoder. We use the MusDB18 dataset as a testbed.
 
 # IMPORTS
 ##################################################
@@ -22,7 +22,7 @@ sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 import utils
-from lossless_compressors import iflac
+from lossless_compressors import flacb
 
 ##################################################
 
@@ -30,7 +30,7 @@ from lossless_compressors import iflac
 # CONSTANTS
 ##################################################
 
-OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + ["block_size"]
+OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES + []
 
 ##################################################
 
@@ -46,10 +46,9 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate IFLAC Implementation") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate FLACB Implementation") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-44100/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
-        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/iflac", help = "Absolute filepath to the output directory.")
-        parser.add_argument("--block_size", type = int, default = utils.BLOCK_SIZE, help = "Block size.")
+        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/flacb", help = "Absolute filepath to the output directory.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
@@ -57,7 +56,7 @@ if __name__ == "__main__":
             raise RuntimeError(f"--input_filepath argument does not exist: {args.input_filepath}")
         return args # return parsed arguments
     args = parse_args()
-
+    
     # create output directory if necessary
     if not exists(args.output_dir):
         makedirs(args.output_dir, exist_ok = True)
@@ -69,7 +68,6 @@ if __name__ == "__main__":
         already_completed_paths = set() # no paths have been already completed
     else: # determine already completed paths
         results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-        results = results[(results["block_size"] == args.block_size)]
         already_completed_paths = set(results["path"])
         del results # free up memory
 
@@ -109,12 +107,12 @@ if __name__ == "__main__":
         # encode and decode
         duration_audio = len(waveform) / sample_rate
         start_time = time.perf_counter()
-        bottleneck = iflac.encode(
-            waveform = waveform, block_size = args.block_size
-            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "iflac", "parameters": {"block_size": args.block_size}, "path": path}, # arguments to log for zach
+        bottleneck = flacb.encode(
+            waveform = waveform,
+            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "flacb", "parameters": dict(), "path": path}, # arguments to log for zach
         ) # compute compressed bottleneck
         duration_encoding = time.perf_counter() - start_time # measure speed of compression
-        round_trip = iflac.decode(bottleneck = bottleneck) # reconstruct waveform from bottleneck to ensure losslessness
+        round_trip = flacb.decode(bottleneck = bottleneck) # reconstruct waveform from bottleneck to ensure losslessness
         assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
         del round_trip, start_time # free up memory
 
@@ -122,7 +120,7 @@ if __name__ == "__main__":
         size_original = utils.get_waveform_size(waveform = waveform)
 
         # compute size in bytes of compressed bottleneck
-        size_compressed = iflac.get_bottleneck_size(bottleneck = bottleneck)
+        size_compressed = flacb.get_bottleneck_size(bottleneck = bottleneck)
 
         # compute other final statistics
         compression_rate = utils.get_compression_rate(size_original = size_original, size_compressed = size_compressed)
@@ -131,16 +129,14 @@ if __name__ == "__main__":
         # output
         pd.DataFrame(data = [dict(zip(
             OUTPUT_COLUMNS, 
-            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed, args.block_size)
+            (path, size_original, size_compressed, compression_rate, duration_audio, duration_encoding, compression_speed)
         ))]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
         # return nothing
         return
 
     # use multiprocessing
-    postfix = {
-        "Block Size": f"{args.block_size}",
-    }
+    postfix = dict()
     with multiprocessing.Pool(processes = args.jobs) as pool:
         _ = list(tqdm(iterable = pool.imap_unordered(
                 func = evaluate,
@@ -153,15 +149,15 @@ if __name__ == "__main__":
         
     # free up memory
     del already_completed_paths, paths, sample_rate_by_path, postfix
-        
+
     ##################################################
-        
+
+
     # FINAL STATISTICS
     ##################################################
 
     # read in results (just the compression rate column, we don't really care about anything else)
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-    results = results[(results["block_size"] == args.block_size)]
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()
 
