@@ -11,9 +11,10 @@ import numpy as np
 import pandas as pd
 import argparse
 import multiprocessing
+import scipy.io.wavfile
 from tqdm import tqdm
-from os.path import exists, dirname
-from os import makedirs
+from os.path import exists, basename, dirname, realpath, getsize
+from os import makedirs, mkdir
 import time
 import subprocess
 
@@ -30,6 +31,10 @@ import utils
 # CONSTANTS
 ##################################################
 
+# path to flac CLI
+FLAC_PATH = f"{dirname(dirname(realpath(__file__)))}/flac/src/flac/flac"
+
+# output columns for comparison to other methods
 OUTPUT_COLUMNS = utils.TEST_COMPRESSION_COLUMN_NAMES
 
 ##################################################
@@ -46,9 +51,10 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate FLACB Implementation") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate FLAC") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-44100/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
-        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/flacb", help = "Absolute filepath to the output directory.")
+        parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/flac", help = "Absolute filepath to the output directory.")
+        parser.add_argument("--flac_path", type = str, default = FLAC_PATH, help = "Absolute filepath to the FLAC CLI.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
@@ -82,6 +88,17 @@ if __name__ == "__main__":
     sample_rate_by_path = sample_rate_by_path.set_index(keys = "path", drop = True)["sample_rate"].to_dict() # dictionary where keys are paths and values are sample rates of those paths
     paths = list(sample_rate_by_path.keys()) # get paths to NPY audio files
 
+    # create output directories to store WAV and FLAC files
+    data_dir = f"{args.output_dir}/data"
+    if not exists(data_dir):
+        mkdir(data_dir)
+    wav_dir = f"{data_dir}/wav"
+    if not exists(wav_dir):
+        mkdir(wav_dir)
+    flac_dir = f"{data_dir}/flac"
+    if not exists(flac_dir):
+        mkdir(flac_dir)
+
     # helper function for determining compression rate
     def evaluate(path: str):
         """
@@ -92,6 +109,11 @@ if __name__ == "__main__":
         # save time by avoiding unnecessary calculations
         if path in already_completed_paths and not args.reset:
             return # return nothing, stop execution here
+
+        # WAV and FLAC file paths
+        output_stem = ".".join(basename(path).split(".")[:-1])
+        wav_filepath = f"{wav_dir}/{output_stem}.wav"
+        flac_filepath = f"{flac_dir}/{output_stem}.flac"
         
         # load in waveform
         waveform = np.load(file = path)
@@ -104,23 +126,20 @@ if __name__ == "__main__":
             assert waveform.shape[-1] <= 2, f"Multichannel-audio must have either one or two channels, but {path} has {waveform.shape[-1]} channels."
         assert any(waveform.dtype == dtype for dtype in utils.VALID_AUDIO_DTYPES), f"Audio must be stored as a numpy signed integer data type, but found {waveform.dtype}."
 
-        # encode and decode
+        # write audio to WAV file
+        scipy.io.wavfile.write(filename = wav_filepath, rate = sample_rate, data = waveform)
         duration_audio = len(waveform) / sample_rate
+        del waveform, sample_rate # free up memory
+
+        # encode WAV file as FLAC
         start_time = time.perf_counter()
-        bottleneck = flacb.encode(
-            waveform = waveform,
-            log_for_zach_kwargs = {"duration": duration_audio, "lossless_compressor": "flacb", "parameters": dict(), "path": path}, # arguments to log for zach
-        ) # compute compressed bottleneck
+        subprocess.run(args = [args.flac_path, "--force", "-o", flac_filepath, wav_filepath], check = True, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL) # encode WAV file as FLAC
         duration_encoding = time.perf_counter() - start_time # measure speed of compression
-        round_trip = flacb.decode(bottleneck = bottleneck) # reconstruct waveform from bottleneck to ensure losslessness
-        assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
-        del round_trip, start_time # free up memory
+        del start_time # free up memory
 
-        # compute size in bytes of original waveform
-        size_original = utils.get_waveform_size(waveform = waveform)
-
-        # compute size in bytes of compressed bottleneck
-        size_compressed = flacb.get_bottleneck_size(bottleneck = bottleneck)
+        # get size in bytes of original waveform and compressed FLAC file
+        size_original = getsize(wav_filepath)
+        size_compressed = getsize(flac_filepath)
 
         # compute other final statistics
         compression_rate = utils.get_compression_rate(size_original = size_original, size_compressed = size_compressed)
@@ -136,7 +155,6 @@ if __name__ == "__main__":
         return
 
     # use multiprocessing
-    postfix = dict()
     with multiprocessing.Pool(processes = args.jobs) as pool:
         _ = list(tqdm(iterable = pool.imap_unordered(
                 func = evaluate,
@@ -144,11 +162,10 @@ if __name__ == "__main__":
                 chunksize = utils.CHUNK_SIZE,
             ),
             desc = "Evaluating",
-            total = len(paths),
-            postfix = postfix))
+            total = len(paths)))
         
     # free up memory
-    del already_completed_paths, paths, sample_rate_by_path, postfix
+    del already_completed_paths, paths, sample_rate_by_path
 
     ##################################################
 

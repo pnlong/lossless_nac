@@ -21,7 +21,7 @@ import utils
 # CONSTANTS
 ##################################################
 
-
+LIBFLAC_PATH = f"{dirname(dirname(realpath(__file__)))}/libflac/src/libflac"
 
 ##################################################
 
@@ -29,7 +29,7 @@ import utils
 # ENCODE
 ##################################################
 
-def encode(waveform: np.array, block_size: int = utils.BLOCK_SIZE, interchannel_decorrelate: bool = utils.INTERCHANNEL_DECORRELATE, order: int = LPC_ORDER, k: int = rice.K, log_for_zach_kwargs: dict = None):
+def encode(waveform: np.array, log_for_zach_kwargs: dict = None):
 
 
 ##################################################
