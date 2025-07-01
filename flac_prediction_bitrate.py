@@ -39,8 +39,8 @@ OUTPUT_FILEPATH = f"{utils.EVAL_DIR}/flac/{basename(__file__)[:-len('.py')]}.csv
 
 # output columns for comparison to other methods
 FLAC_PREDICTION_METHODS = ["verbatim", "constant", "fixed", "lpc"]
-OUTPUT_COLUMNS = (["path", "duration", "size_total", "size_compressed", "size_prediction"] + 
-                  [f"size_{prediction_method}" for prediction_method in FLAC_PREDICTION_METHODS] + 
+OUTPUT_COLUMNS = (["path", "duration", "size_total", "size_compressed"] + 
+                  ["size_prediction"] + [f"size_{prediction_method}" for prediction_method in FLAC_PREDICTION_METHODS] + 
                   ["n_subframes"] + [f"n_subframes_{prediction_method}" for prediction_method in FLAC_PREDICTION_METHODS] + 
                   ["bitrate_total", "bitrate_prediction", "prediction_proportion", "lossless_compression_rate", "lossy_compression_rate"])
 
@@ -154,7 +154,7 @@ if __name__ == "__main__":
             # output
             pd.DataFrame(data = [dict(zip(
                 OUTPUT_COLUMNS, 
-                [path, duration, size_total, size_compressed] + list(statistics.values()) + [bitrate_total, bitrate_prediction, prediction_proportion, lossless_compression_rate, lossy_compression_rate]
+                [path, duration, size_total, size_compressed] + [statistics[key] for key in ("prediction_bits", "verbatim_bits", "constant_bits", "fixed_bits", "lpc_bits", "n_subframes", "verbatim_n_subframes", "constant_n_subframes", "fixed_n_subframes", "lpc_n_subframes")] + [bitrate_total, bitrate_prediction, prediction_proportion, lossless_compression_rate, lossy_compression_rate]
             ))]).to_csv(path_or_buf = args.output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
             # read in residuals

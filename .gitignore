@@ -1,5 +1,7 @@
 test.wav
 test2.wav
+test.flac
+test2.flac
 __pycache__/
 dac/
 encodec/
