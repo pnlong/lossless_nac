@@ -28,6 +28,7 @@ import utils
 from lossless_compressors import lec
 import encodec
 import rice
+from preprocess_musdb18 import get_mixes_only_mask
 
 # ignore deprecation warning from pytorch
 warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm")
@@ -61,6 +62,7 @@ if __name__ == "__main__":
         parser.add_argument("--n_codebooks", type = int, choices = lec.POSSIBLE_ENCODEC_N_CODEBOOKS, default = lec.N_CODEBOOKS, help = "Number of codebooks for EnCodec model.")
         parser.add_argument("--rice_parameter", type = int, default = rice.K, help = "Rice coding parameter.")
         parser.add_argument("--overlap", type = float, default = utils.OVERLAP, help = "Block overlap (as a percentage 0-100).")
+        parser.add_argument("--mixes_only", action = "store_true", help = "Compute statistics for only mixes in MUSDB18, not all stems.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
@@ -191,6 +193,8 @@ if __name__ == "__main__":
 
     # read in results (just the compression rate column, we don't really care about anything else)
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
+    if args.mixes_only: # filter for only mixes
+        results = results[get_mixes_only_mask(paths = results["path"])]
     results = results[(results["block_size"] == args.block_size) & (results["n_codebooks"] == args.n_codebooks) & (results["gpu"] == using_gpu) & (results["k"] == args.rice_parameter) & (results["overlap"] == args.overlap)]
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()

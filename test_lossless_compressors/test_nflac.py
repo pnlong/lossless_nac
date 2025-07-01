@@ -24,6 +24,7 @@ sys.path.insert(0, dirname(dirname(realpath(__file__))))
 import utils
 from lossless_compressors import nflac
 import rice
+from preprocess_musdb18 import get_mixes_only_mask
 
 ##################################################
 
@@ -54,6 +55,7 @@ if __name__ == "__main__":
         parser.add_argument("--no_interchannel_decorrelate", action = "store_true", help = "Turn off interchannel-decorrelation.")
         parser.add_argument("--lpc_order", type = int, default = nflac.LPC_ORDER, help = "Order for linear predictive coding.")
         parser.add_argument("--rice_parameter", type = int, default = rice.K, help = "Rice coding parameter.")
+        parser.add_argument("--mixes_only", action = "store_true", help = "Compute statistics for only mixes in MUSDB18, not all stems.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
@@ -169,6 +171,8 @@ if __name__ == "__main__":
 
     # read in results (just the compression rate column, we don't really care about anything else)
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
+    if args.mixes_only: # filter for only mixes
+        results = results[get_mixes_only_mask(paths = results["path"])]
     results = results[(results["block_size"] == args.block_size) & (results["interchannel_decorrelate"] == args.interchannel_decorrelate) & (results["lpc_order"] == args.lpc_order) & (results["k"] == args.rice_parameter)]
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()

@@ -13,6 +13,7 @@ import stempeg
 import librosa
 import argparse
 import multiprocessing
+from typing import List
 from tqdm import tqdm
 from os import makedirs, mkdir
 from os.path import basename, exists, isdir
@@ -25,6 +26,19 @@ sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 import utils
+
+##################################################
+
+
+# HELPER METHOD
+##################################################
+
+def get_mixes_only_mask(paths: pd.Series) -> List[bool]:
+    """
+    Given the list of paths to the preprocessed MUSDB18 dataset, return a boolean mask array 
+    where only the audio files that are mixes (not just stems) are True.
+    """
+    return list(map(lambda path: path.split(".")[-2] == "0", paths))
 
 ##################################################
 

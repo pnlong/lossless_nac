@@ -24,6 +24,7 @@ sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 import utils
+from preprocess_musdb18 import get_mixes_only_mask
 
 ##################################################
 
@@ -55,6 +56,7 @@ if __name__ == "__main__":
         parser.add_argument("--input_filepath", type = str, default = f"{utils.MUSDB18_PREPROCESSED_DIR}-44100/data.csv", help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
         parser.add_argument("--output_dir", type = str, default = f"{utils.EVAL_DIR}/flac", help = "Absolute filepath to the output directory.")
         parser.add_argument("--flac_path", type = str, default = FLAC_PATH, help = "Absolute filepath to the FLAC CLI.")
+        parser.add_argument("--mixes_only", action = "store_true", help = "Compute statistics for only mixes in MUSDB18, not all stems.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
@@ -175,6 +177,8 @@ if __name__ == "__main__":
 
     # read in results (just the compression rate column, we don't really care about anything else)
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
+    if args.mixes_only: # filter for only mixes
+        results = results[get_mixes_only_mask(paths = results["path"])]
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()
 
