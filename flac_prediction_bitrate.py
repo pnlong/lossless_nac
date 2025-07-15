@@ -1,6 +1,6 @@
 # README
 # Phillip Long
-# Test what percent of encoded bits in FLAC files are involved in encoding waveform predictions.
+# Test what percent of encoded bits in FLAC files are involved in encoding waveform estimations.
 
 # IMPORTS
 ##################################################
@@ -15,6 +15,7 @@ from os.path import exists, basename, dirname, getsize
 from os import makedirs, listdir, remove
 import subprocess
 import tempfile
+import os
 
 from os.path import dirname, realpath
 import sys
@@ -38,11 +39,11 @@ INPUT_DIR = f"{utils.EVAL_DIR}/flac/data/flac"
 OUTPUT_FILEPATH = f"{utils.EVAL_DIR}/flac/{basename(__file__)[:-len('.py')]}.csv"
 
 # output columns for comparison to other methods
-FLAC_PREDICTION_METHODS = ["verbatim", "constant", "fixed", "lpc"]
+FLAC_ESTIMATION_METHODS = ["verbatim", "constant", "fixed", "lpc"]
 OUTPUT_COLUMNS = (["path", "duration", "size_total", "size_compressed"] + 
-                  ["size_prediction"] + [f"size_{prediction_method}" for prediction_method in FLAC_PREDICTION_METHODS] + 
-                  ["n_subframes"] + [f"n_subframes_{prediction_method}" for prediction_method in FLAC_PREDICTION_METHODS] + 
-                  ["bitrate_total", "bitrate_prediction", "prediction_proportion", "lossless_compression_rate", "lossy_compression_rate"])
+                  ["size_estimation"] + [f"size_{estimation_method}" for estimation_method in FLAC_ESTIMATION_METHODS] + ["size_entropy"] +
+                  ["n_subframes"] + [f"n_subframes_{estimation_method}" for estimation_method in FLAC_ESTIMATION_METHODS] + 
+                  ["bitrate_total", "bitrate_estimation", "estimation_proportion", "entropy_proportion", "lossless_compression_rate", "lossy_compression_rate"])
 
 # output directory for residuals
 RESIDUALS_OUTPUT_DIR = f"{utils.LOGGING_FOR_ZACH_DIR}/flac"
@@ -62,7 +63,7 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate FLAC to Determine Prediction Bitrate") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate FLAC to Determine Estimation Bitrate") # create argument parser
         parser.add_argument("--input_dir", type = str, default = INPUT_DIR, help = "Absolute filepath to directory containing FLAC files to evaluate.")
         parser.add_argument("--output_filepath", type = str, default = OUTPUT_FILEPATH, help = "Absolute filepath to the output CSV file.")
         parser.add_argument("--residuals_output_dir", type = str, default = RESIDUALS_OUTPUT_DIR, help = "Absolute filepath to directory for residuals.")
@@ -107,34 +108,41 @@ if __name__ == "__main__":
     ##################################################
 
 
-    # EVALUATE PREDICTION BITRATE
+    # EVALUATE ESTIMATION BITRATE
     ##################################################
 
-    # temporary directory for decoded waveforms
-    with tempfile.TemporaryDirectory() as temp_dir:
+    # helper function for determining bitrate of encoded estimation bits
+    def evaluate(path: str):
+        """
+        Evaluate bitrate of encoded estimation bits.
+        """
 
-        # helper function for determining bitrate of encoded prediction bits
-        def evaluate(path: str):
-            """
-            Evaluate bitrate of encoded prediction bits.
-            """
+        # save time by avoiding unnecessary calculations
+        if path in already_completed_paths and not args.reset:
+            return # return nothing, stop execution here
+        path_prefix = basename(path)[:-len(".flac")] # get prefix of path
+        
+        # get total number of bits for FLAC file
+        size_compressed = getsize(path) * 8
 
-            # save time by avoiding unnecessary calculations
-            if path in already_completed_paths and not args.reset:
-                return # return nothing, stop execution here
-            path_prefix = basename(path)[:-len(".flac")] # get prefix of path
+        # create temporary files for this specific evaluation
+        wav_fd, wav_filepath = tempfile.mkstemp(suffix=".wav", prefix=f"flac_eval_{path_prefix}_")
+        residuals_fd, residuals_filepath = tempfile.mkstemp(suffix=".bin", prefix=f"flac_residuals_{path_prefix}_")
+        
+        # wrap in try statement to catch errors
+        try:
+
+            # close file descriptors since we only need the file paths
+            os.close(wav_fd)
+            os.close(residuals_fd)
             
-            # get total number of bits for FLAC file
-            size_compressed = getsize(path) * 8
-
             # get statistics from FLAC decoder
-            wav_filepath = f"{temp_dir}/{path_prefix}.wav"
-            residuals_filepath = f"{temp_dir}/{path_prefix}.bin"
             result = subprocess.run(args = [args.flac_path, "--force", "--decode", "--log-residuals", residuals_filepath, "-o", wav_filepath, path], check = True, stdout = subprocess.PIPE, stderr = subprocess.DEVNULL) # encode WAV file as FLAC
             result = result.stdout.decode("utf-8") # read stdout as a string
-            result = next(filter(lambda line: line.startswith("Prediction Statistics: "), result.split("\n"))) # get the line that includes prediction bits
+            result = next(filter(lambda line: line.startswith("Prediction Statistics: "), result.split("\n"))) # get the line that includes estimation bits
             statistics = eval(result[len("Prediction Statistics: "):]) # statistics
-            size_prediction = statistics["prediction_bits"]
+            size_estimation = statistics["prediction_bits"]
+            size_entropy = statistics["entropy_bits"]
             del result # free up memory
 
             # get duration of decoded waveform
@@ -142,19 +150,19 @@ if __name__ == "__main__":
             duration = len(waveform) / sample_rate # duration of waveform in seconds
             del waveform, sample_rate # free up memory
             size_total = getsize(wav_filepath) * 8
-            remove(wav_filepath) # remove decoded waveform to clean up memory
 
             # statistics
             bitrate_total = size_compressed / duration # overall bitrate of the FLAC file
-            bitrate_prediction = size_prediction / duration # bitrate of the prediction bits in the FLAC file
-            prediction_proportion = size_prediction / size_compressed # proportion of bits that are prediction bits
+            bitrate_estimation = size_estimation / duration # bitrate of the estimation bits in the FLAC file
+            estimation_proportion = size_estimation / size_compressed # proportion of bits that are estimation bits
+            entropy_proportion = size_entropy / size_compressed # proportion of bits that are entropy bits
             lossless_compression_rate = utils.get_compression_rate(size_original = size_total, size_compressed = size_compressed)
-            lossy_compression_rate = utils.get_compression_rate(size_original = size_total, size_compressed = size_prediction)
+            lossy_compression_rate = utils.get_compression_rate(size_original = size_total, size_compressed = size_estimation)
 
             # output
             pd.DataFrame(data = [dict(zip(
                 OUTPUT_COLUMNS, 
-                [path, duration, size_total, size_compressed] + [statistics[key] for key in ("prediction_bits", "verbatim_bits", "constant_bits", "fixed_bits", "lpc_bits", "n_subframes", "verbatim_n_subframes", "constant_n_subframes", "fixed_n_subframes", "lpc_n_subframes")] + [bitrate_total, bitrate_prediction, prediction_proportion, lossless_compression_rate, lossy_compression_rate]
+                [path, duration, size_total, size_compressed] + [statistics[key] for key in ("prediction_bits", "verbatim_bits", "constant_bits", "fixed_bits", "lpc_bits", "entropy_bits", "n_subframes", "verbatim_n_subframes", "constant_n_subframes", "fixed_n_subframes", "lpc_n_subframes")] + [bitrate_total, bitrate_estimation, estimation_proportion, entropy_proportion, lossless_compression_rate, lossy_compression_rate]
             ))]).to_csv(path_or_buf = args.output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
             # read in residuals
@@ -162,26 +170,36 @@ if __name__ == "__main__":
             mean_squared_error = np.mean(residuals ** 2)
 
             # write residuals
-            residuals_filepath = f"{residuals_data_dir}/{path_prefix}.npy"
-            np.save(file = residuals_filepath, arr = residuals)
+            output_residuals_filepath = f"{residuals_data_dir}/{path_prefix}.npy"
+            np.save(file = output_residuals_filepath, arr = residuals)
             pd.DataFrame(data = [dict(zip(
                 RESIDUALS_OUTPUT_COLUMNS,
-                [residuals_filepath, path, mean_squared_error]
+                [output_residuals_filepath, path, mean_squared_error]
             ))]).to_csv(path_or_buf = residuals_output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
-            # return nothing
-            return
+        finally:
+            # clean up temporary files
+            try:
+                if exists(wav_filepath):
+                    remove(wav_filepath)
+                if exists(residuals_filepath):
+                    remove(residuals_filepath)
+            except OSError:
+                pass  # ignore cleanup errors
 
-        # use multiprocessing
-        with multiprocessing.Pool(processes = args.jobs) as pool:
-            _ = list(tqdm(iterable = pool.imap_unordered(
-                    func = evaluate,
-                    iterable = paths,
-                    chunksize = utils.CHUNK_SIZE,
-                ),
-                desc = "Evaluating",
-                total = len(paths)))
-        print(utils.MAJOR_SEPARATOR_LINE)
+        # return nothing
+        return
+
+    # use multiprocessing
+    with multiprocessing.Pool(processes = args.jobs) as pool:
+        _ = list(tqdm(iterable = pool.imap_unordered(
+                func = evaluate,
+                iterable = paths,
+                chunksize = utils.CHUNK_SIZE,
+            ),
+            desc = "Evaluating",
+            total = len(paths)))
+    print(utils.MAJOR_SEPARATOR_LINE)
         
     # free up memory
     del already_completed_paths, paths
@@ -206,22 +224,40 @@ if __name__ == "__main__":
     print(f"Minimum Bitrate: {np.min(bitrates_total):.2f} bps")
     print(utils.MINOR_SEPARATOR_LINE)
 
-    # output statistics on prediction bitrate
-    bitrates_prediction = results["bitrate_prediction"].to_numpy()
-    print(f"Mean Prediction Bitrate: {np.mean(bitrates_prediction):.2f} bps")
-    print(f"Median Prediction Bitrate: {np.median(bitrates_prediction):.2f} bps")
-    print(f"Standard Deviation of Prediction Bitrates: {np.std(bitrates_prediction):.2f} bps")
-    print(f"Maximum Prediction Bitrate: {np.max(bitrates_prediction):.2f} bps")
-    print(f"Minimum Prediction Bitrate: {np.min(bitrates_prediction):.2f} bps")
+    # output statistics on estimation bitrate
+    bitrates_estimation = results["bitrate_estimation"].to_numpy()
+    print(f"Mean Estimation Bitrate: {np.mean(bitrates_estimation):.2f} bps")
+    print(f"Median Estimation Bitrate: {np.median(bitrates_estimation):.2f} bps")
+    print(f"Standard Deviation of Estimation Bitrates: {np.std(bitrates_estimation):.2f} bps")
+    print(f"Maximum Estimation Bitrate: {np.max(bitrates_estimation):.2f} bps")
+    print(f"Minimum Estimation Bitrate: {np.min(bitrates_estimation):.2f} bps")
     print(utils.MINOR_SEPARATOR_LINE)
 
-    # output statistics on prediction percentage
-    prediction_percentages = results["prediction_proportion"].to_numpy() * 100 # convert to percentage
-    print(f"Mean Prediction Percentage: {np.mean(prediction_percentages):.2f}%")
-    print(f"Median Prediction Percentage: {np.median(prediction_percentages):.2f}%")
-    print(f"Standard Deviation of Prediction Percentages: {np.std(prediction_percentages):.2f}%")
-    print(f"Minimum Prediction Percentage: {np.min(prediction_percentages):.2f}%")
-    print(f"Maximum Prediction Percentage: {np.max(prediction_percentages):.2f}%")
+    # output statistics on subframe rate
+    subframe_rates = (results["n_subframes"] / results["duration"]).to_numpy()
+    print(f"Mean Subframe Rate: {np.mean(subframe_rates):.2f} fps")
+    print(f"Median Subframe Rate: {np.median(subframe_rates):.2f} fps")
+    print(f"Standard Deviation of Subframe Rates: {np.std(subframe_rates):.2f} fps")
+    print(f"Maximum Subframe Rate: {np.max(subframe_rates):.2f} fps")
+    print(f"Minimum Subframe Rate: {np.min(subframe_rates):.2f} fps")
+    print(utils.MINOR_SEPARATOR_LINE)
+
+    # output statistics on estimation percentage
+    estimation_percentages = results["estimation_proportion"].to_numpy() * 100 # convert to percentage
+    print(f"Mean Estimation Percentage: {np.mean(estimation_percentages):.2f}%")
+    print(f"Median Estimation Percentage: {np.median(estimation_percentages):.2f}%")
+    print(f"Standard Deviation of Estimation Percentages: {np.std(estimation_percentages):.2f}%")
+    print(f"Minimum Estimation Percentage: {np.min(estimation_percentages):.2f}%")
+    print(f"Maximum Estimation Percentage: {np.max(estimation_percentages):.2f}%")
+    print(utils.MINOR_SEPARATOR_LINE)
+
+    # output statistics on entropy percentage
+    entropy_percentages = results["entropy_proportion"].to_numpy() * 100 # convert to percentage
+    print(f"Mean Entropy Percentage: {np.mean(entropy_percentages):.2f}%")
+    print(f"Median Entropy Percentage: {np.median(entropy_percentages):.2f}%")
+    print(f"Standard Deviation of Entropy Percentages: {np.std(entropy_percentages):.2f}%")
+    print(f"Minimum Entropy Percentage: {np.min(entropy_percentages):.2f}%")
+    print(f"Maximum Entropy Percentage: {np.max(entropy_percentages):.2f}%")
     print(utils.MINOR_SEPARATOR_LINE)
 
     # output statistics on lossless compression rate
@@ -250,10 +286,10 @@ if __name__ == "__main__":
     print(utils.MINOR_SEPARATOR_LINE)
 
     # output statistics on different predictor method bit percentages
-    print(f"Mean Verbatim Bit Percentage: {100 * np.mean(results['size_verbatim'] / results['size_prediction']):.2f}%")
-    print(f"Mean Constant Bit Percentage: {100 * np.mean(results['size_constant'] / results['size_prediction']):.2f}%")
-    print(f"Mean Fixed Bit Percentage: {100 * np.mean(results['size_fixed'] / results['size_prediction']):.2f}%")
-    print(f"Mean LPC Bit Percentage: {100 * np.mean(results['size_lpc'] / results['size_prediction']):.2f}%")
+    print(f"Mean Verbatim Bit Percentage: {100 * np.mean(results['size_verbatim'] / results['size_estimation']):.2f}%")
+    print(f"Mean Constant Bit Percentage: {100 * np.mean(results['size_constant'] / results['size_estimation']):.2f}%")
+    print(f"Mean Fixed Bit Percentage: {100 * np.mean(results['size_fixed'] / results['size_estimation']):.2f}%")
+    print(f"Mean LPC Bit Percentage: {100 * np.mean(results['size_lpc'] / results['size_estimation']):.2f}%")
     print(utils.MAJOR_SEPARATOR_LINE)
 
     ##################################################

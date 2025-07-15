@@ -6,3 +6,5 @@ __pycache__/
 dac/
 encodec/
 flac/
+residuals.bin
+residuals_truncated.bin

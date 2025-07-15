@@ -184,7 +184,7 @@ if __name__ == "__main__":
                 postfix = postfix))
         
     # free up memory
-    del already_completed_paths, paths, sample_rate_by_path, using_gpu, postfix
+    del already_completed_paths, paths, sample_rate_by_path, postfix
         
     ##################################################
         
