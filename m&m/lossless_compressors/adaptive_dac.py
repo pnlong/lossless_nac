@@ -11,9 +11,9 @@ import numpy as np
 from typing import List, Tuple, Dict, Any
 import warnings
 import multiprocessing
-import functools
 import torch
 from audiotools import AudioSignal
+import logging
 
 from os.path import dirname, realpath
 import sys
@@ -22,7 +22,7 @@ sys.path.insert(0, f"{dirname(dirname(realpath(__file__)))}/entropy_coders")
 sys.path.insert(0, dirname(dirname(dirname(realpath(__file__)))))
 sys.path.insert(0, f"{dirname(dirname(dirname(realpath(__file__))))}/dac") # for dac import
 
-from lossless_compressors import LosslessCompressor, partition_data_into_frames, INTERCHANNEL_DECORRELATION_DEFAULT, INTERCHANNEL_DECORRELATION_SCHEMES_MAP, REVERSE_INTERCHANNEL_DECORRELATION_SCHEMES_MAP, JOBS_DEFAULT
+from lossless_compressors import LosslessCompressor, partition_data_into_frames, BLOCK_SIZE_DEFAULT, INTERCHANNEL_DECORRELATION_DEFAULT, INTERCHANNEL_DECORRELATION_SCHEMES_MAP, REVERSE_INTERCHANNEL_DECORRELATION_SCHEMES_MAP, JOBS_DEFAULT
 from entropy_coders import EntropyCoder
 import naive_dac
 import utils
@@ -215,12 +215,7 @@ def batch_dac_encode(subframes_batch: np.array, model: dac.model.dac.DAC, sample
     
     # preprocess batch
     x = model.preprocess(
-        audio_data = torch.from_numpy(
-            utils.convert_waveform_fixed_to_floating(
-                waveform = batch_audio.audio_data.numpy(), # convert to float to avoid RuntimeError: Input type (torch.cuda.DoubleTensor) and weight type (torch.cuda.FloatTensor) should be the same
-                output_dtype = np.float32,
-            )
-        ).to(model.device),
+        audio_data = torch.from_numpy(naive_dac.convert_audio_fixed_to_floating(waveform = batch_audio.audio_data.numpy())).to(model.device), # convert to float with correct audio scaling
         sample_rate = sample_rate,
     ).float()
     
@@ -353,7 +348,7 @@ def encode_subframes_batch_adaptive(subframes_data: List[np.array], subframes_me
                 # truncate approximate to original length
                 original_length = len(subframe_data)
                 approximate_truncated = approximate[:original_length]
-                approximate_truncated = utils.convert_waveform_floating_to_fixed(
+                approximate_truncated = naive_dac.convert_audio_floating_to_fixed(
                     waveform = approximate_truncated,
                     output_dtype = subframe_data.dtype,
                 )
@@ -364,14 +359,15 @@ def encode_subframes_batch_adaptive(subframes_data: List[np.array], subframes_me
                 # entropy encode residuals
                 encoded_residuals = entropy_coder.encode(nums = residuals)
                 
-                # create candidate bottleneck subframe
+                # simple losslessness check, verify entropy coding is reversible
+                decoded_residuals = entropy_coder.decode(stream = encoded_residuals, num_samples = len(residuals))
+                if not np.array_equal(residuals, decoded_residuals): # only consider if entropy coding is lossless
+                    continue # skip this level if entropy coding is not lossless
+
+                # update best if this is smaller OR if no previous solution exists
                 candidate_subframe = (original_length, codebook_level, codes.shape[-1], codes, encoded_residuals)
-                
-                # calculate compressed size
                 candidate_size = get_compressed_subframe_size(bottleneck_subframe = candidate_subframe)
-                
-                # update best if this is smaller
-                if candidate_size < best_sizes[subframe_idx]:
+                if candidate_size < best_sizes[subframe_idx] or best_subframes[subframe_idx] is None: # update best if this is smaller OR if no previous solution exists
                     best_sizes[subframe_idx] = candidate_size
                     best_subframes[subframe_idx] = candidate_subframe
     
@@ -444,9 +440,11 @@ def decode_subframes_batch_adaptive(bottleneck_subframes: List[BOTTLENECK_SUBFRA
                 
                 # truncate and convert approximate
                 approximate_truncated = approximate[:length]
-                approximate_truncated = utils.convert_waveform_floating_to_fixed(
+                logging.debug(f"adaptive_dac.decode_subframes_batch_adaptive: approximate_truncated dtype={approximate_truncated.dtype}, shape={approximate_truncated.shape}")
+                logging.debug(f"adaptive_dac.decode_subframes_batch_adaptive: converting to int32 for compatibility")
+                approximate_truncated = naive_dac.convert_audio_floating_to_fixed(
                     waveform = approximate_truncated, 
-                    output_dtype = np.int64, # we use int64 to avoid overflows
+                    output_dtype = np.int32, # use int32 for compatibility
                 )
                 
                 # reconstruct subframe
@@ -655,7 +653,7 @@ class AdaptiveDAC(LosslessCompressor):
     Adaptive DAC Compressor.
     """
 
-    def __init__(self, entropy_coder: EntropyCoder, model_path: str = DAC_PATH, interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT, device: str = DEVICE_DEFAULT, jobs: int = JOBS_DEFAULT, batch_size: int = BATCH_SIZE_DEFAULT):
+    def __init__(self, entropy_coder: EntropyCoder, model_path: str = DAC_PATH, block_size: int = BLOCK_SIZE_DEFAULT, interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT, device: str = DEVICE_DEFAULT, jobs: int = JOBS_DEFAULT, batch_size: int = BATCH_SIZE_DEFAULT):
         """
         Initialize the Adaptive DAC Compressor.
 
@@ -665,6 +663,8 @@ class AdaptiveDAC(LosslessCompressor):
             The entropy coder to use.
         model_path : str, default = DAC_PATH
             Path to the DAC model weights.
+        block_size : int, default = BLOCK_SIZE_DEFAULT
+            The block size to use for encoding.
         interchannel_decorrelation : bool, default = INTERCHANNEL_DECORRELATION_DEFAULT
             Whether to decorrelate channels.
         device : str, default = DEVICE_DEFAULT
@@ -675,10 +675,14 @@ class AdaptiveDAC(LosslessCompressor):
             Batch size for DAC processing.
         """
         self.entropy_coder = entropy_coder
+        self.block_size = block_size
+        assert self.block_size > 0 and self.block_size <= utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION, f"Block size must be positive and less than or equal to {utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION}."
         self.interchannel_decorrelation = interchannel_decorrelation
         self.device = device
         self.jobs = jobs
+        assert self.jobs > 0 and self.jobs <= multiprocessing.cpu_count(), f"Number of jobs must be positive and less than or equal to {multiprocessing.cpu_count()}."
         self.batch_size = batch_size
+        assert self.batch_size > 0, "Batch size must be positive."
         
         # load DAC model
         self.device = torch.device(device)

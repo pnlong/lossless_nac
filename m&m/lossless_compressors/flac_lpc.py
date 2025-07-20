@@ -15,10 +15,7 @@ from os.path import dirname, realpath, exists
 import multiprocessing
 import functools
 from typing import List, Tuple
-import warnings
-import wave
-import struct
-import re
+import logging
 
 from os.path import dirname, realpath
 import sys
@@ -33,65 +30,14 @@ import utils
 ##################################################
 
 
-# HELPER FUNCTIONS
-##################################################
-
-def write_samples_to_wav(samples: np.array, wav_filepath: str, sample_rate: int = 44100) -> None:
-    """
-    Write int32 samples to a WAV file (16-bit mono).
-    
-    Parameters
-    ----------
-    samples : np.array
-        Array of int32 samples to write
-    wav_filepath : str
-        Path to output WAV file
-    sample_rate : int
-        Sample rate in Hz
-    """
-    with wave.open(wav_filepath, 'wb') as wav_file:
-        wav_file.setnchannels(1)  # Mono
-        wav_file.setsampwidth(2)  # 16-bit
-        wav_file.setframerate(sample_rate)
-        
-        # Convert int32 to int16 and write
-        samples_16bit = np.clip(samples, -32768, 32767).astype(np.int16)
-        wav_file.writeframes(samples_16bit.tobytes())
-
-def read_samples_from_wav(wav_filepath: str) -> np.array:
-    """
-    Read samples from a WAV file and convert to int32.
-    
-    Parameters
-    ----------
-    wav_filepath : str
-        Path to input WAV file
-        
-    Returns
-    -------
-    np.array
-        Array of int32 samples
-    """
-    with wave.open(wav_filepath, 'rb') as wav_file:
-        frames = wav_file.readframes(wav_file.getnframes())
-        
-        # Convert to int32 (assuming 16-bit input)
-        if wav_file.getsampwidth() == 2:
-            samples = np.frombuffer(frames, dtype=np.int16).astype(np.int32)
-        else:
-            samples = np.frombuffer(frames, dtype=np.int32)
-            
-        return samples
-
-##################################################
-
-
 # CONSTANTS
 ##################################################
 
 FLAC_LPC_HELPERS_DIR = f"{dirname(realpath(__file__))}/flac_lpc_helpers" # directory that contains the FLAC LPC encode and decode scripts
 FLAC_LPC_ENCODE_SCRIPT_FILEPATH = f"{FLAC_LPC_HELPERS_DIR}/flac_lpc_encode.py" # filepath to FLAC LPC encode script
 FLAC_LPC_DECODE_SCRIPT_FILEPATH = f"{FLAC_LPC_HELPERS_DIR}/flac_lpc_decode.py" # filepath to FLAC LPC decode script
+FLAC_ENCODING_METHODS = ["verbatim", "constant", "fixed", "lpc"] # encoding methods for FLAC
+FLAC_ENCODING_METHODS_WITH_ENTROPY = set(FLAC_ENCODING_METHODS[2:]) # encoding methods that have entropy that needs to be encoded are fixed and lpc, use set for fast lookup
 
 ##################################################
 
@@ -111,21 +57,12 @@ BOTTLENECK_TYPE = List[BOTTLENECK_FRAME_TYPE]
 ##################################################
 
 
-# FLAC ENCODING METHODS
-##################################################
-
-FLAC_ENCODING_METHODS = ["verbatim", "constant", "fixed", "lpc"] # encoding methods for FLAC
-FLAC_ENCODING_METHODS_WITH_ENTROPY = set(FLAC_ENCODING_METHODS[2:]) # encoding methods that have entropy that needs to be encoded are fixed and lpc, use set for fast lookup
-
-##################################################
-
-
 # FLAC LPC ESTIMATOR FUNCTIONS
 ##################################################
 
 def encode_estimator_data(subframe_data: np.array) -> Tuple[bytes, int]:
     """
-    Encode the estimator data for a subframe of data using helper script.
+    Encode the estimator data for a subframe of data using FLAC LPC implementation.
     
     Parameters
     ----------
@@ -187,20 +124,22 @@ def encode_estimator_data(subframe_data: np.array) -> Tuple[bytes, int]:
     estimator_method_index = int(estimator_method_index.split(":")[-1].strip())
 
     # check if estimator method index is valid
-    if estimator_method_index not in FLAC_ENCODING_METHODS_WITH_ENTROPY:
+    if estimator_method_index < 0 or estimator_method_index >= len(FLAC_ENCODING_METHODS):
         raise ValueError(f"Invalid estimator method index: {estimator_method_index}")
 
     return encoded_estimator_data, estimator_method_index
 
 
-def decode_estimator_data(encoded_estimator_data: bytes) -> Tuple[np.array, int, int]:
+def decode_estimator_data(encoded_estimator_data: bytes, n_samples: int) -> Tuple[np.array, int, int]:
     """
-    Decode the estimator data for a subframe of data using helper script.
+    Decode the estimator data for a subframe of data using FLAC LPC implementation.
     
     Parameters
     ----------
     encoded_estimator_data : bytes
         Encoded estimator data.
+    n_samples : int
+        Number of samples to decode.
 
     Returns
     -------
@@ -222,7 +161,7 @@ def decode_estimator_data(encoded_estimator_data: bytes) -> Tuple[np.array, int,
         
         # encode subframe data to get estimator bits using script
         result = subprocess.run(
-            args = ["python3", FLAC_LPC_DECODE_SCRIPT_FILEPATH, encoded_estimator_data_filepath],
+            args = ["python3", FLAC_LPC_DECODE_SCRIPT_FILEPATH, encoded_estimator_data_filepath, str(n_samples)],
             check = True,
             stdout = subprocess.PIPE,
             stderr = subprocess.PIPE,
@@ -254,7 +193,7 @@ def decode_estimator_data(encoded_estimator_data: bytes) -> Tuple[np.array, int,
     n_warmup_samples = int(n_warmup_samples.split(":")[-1].strip())
 
     # check if estimator method index is valid
-    if estimator_method_index not in FLAC_ENCODING_METHODS_WITH_ENTROPY:
+    if estimator_method_index < 0 or estimator_method_index >= len(FLAC_ENCODING_METHODS):
         raise ValueError(f"Invalid estimator method index: {estimator_method_index}")
 
     # assertions
@@ -292,8 +231,9 @@ def encode_subframe(subframe_data: np.array, entropy_coder: EntropyCoder) -> BOT
 
     # encode residuals for Fixed and LPC
     if FLAC_ENCODING_METHODS[estimator_method_index] in FLAC_ENCODING_METHODS_WITH_ENTROPY:
-        approximate_subframe_data, reconstructed_estimator_method_index, n_warmup_samples = decode_estimator_data(encoded_estimator_data = encoded_estimator_data) # decode estimator data to get reconstructed subframe data and number of warmup samples
+        approximate_subframe_data, reconstructed_estimator_method_index, n_warmup_samples = decode_estimator_data(encoded_estimator_data = encoded_estimator_data, n_samples = len(subframe_data)) # decode estimator data to get reconstructed subframe data and number of warmup samples
         assert reconstructed_estimator_method_index == estimator_method_index, "Reconstructed estimator method index must match encoded estimator method index."
+        approximate_subframe_data = approximate_subframe_data[:len(subframe_data)] # truncate to original length (CRITICAL: FLAC decoder may return padded data)
         assert np.array_equal(subframe_data[:n_warmup_samples], approximate_subframe_data[:n_warmup_samples]), "Warmup samples must match."
         residuals = subframe_data[n_warmup_samples:] - approximate_subframe_data[n_warmup_samples:] # calculate residuals
         encoded_residuals = entropy_coder.encode(residuals)
@@ -331,12 +271,19 @@ def decode_subframe(bottleneck_subframe: BOTTLENECK_SUBFRAME_TYPE, entropy_coder
         return np.array([], dtype = np.int32)
 
     # decode estimator data to get reconstructed subframe data and number of warmup samples
-    subframe_data, estimator_method_index, n_warmup_samples = decode_estimator_data(encoded_estimator_data = encoded_estimator_data)
+    subframe_data, estimator_method_index, n_warmup_samples = decode_estimator_data(encoded_estimator_data = encoded_estimator_data, n_samples = n_samples)
     
     # decode residuals for Fixed and LPC
     if FLAC_ENCODING_METHODS[estimator_method_index] in FLAC_ENCODING_METHODS_WITH_ENTROPY:
-        residuals = entropy_coder.decode(encoded_residuals = encoded_residuals)
+        num_residual_samples = n_samples - n_warmup_samples
+        residuals = entropy_coder.decode(stream = encoded_residuals, num_samples = num_residual_samples)
         subframe_data = np.concatenate((subframe_data[:n_warmup_samples], subframe_data[n_warmup_samples:] + residuals), axis = 0)
+
+    # truncate to the original length (CRITICAL: FLAC decoder may return padded data)
+    subframe_data = subframe_data[:n_samples]
+
+    # ensure output is int32
+    subframe_data = subframe_data.astype(np.int32)
 
     # return subframe data
     return subframe_data
@@ -378,7 +325,7 @@ def encode_frame(frame_data: np.array, entropy_coder: EntropyCoder, interchannel
     
     # try all interchannel decorrelation schemes and pick the best
     best_size = float("inf")
-    best_bottleneck_frame = None
+    best_bottleneck_frame = (0, [])
     for interchannel_decorrelation_scheme_index, interchannel_decorrelation_scheme_func in enumerate(INTERCHANNEL_DECORRELATION_SCHEMES_MAP):
 
         # apply the scheme
@@ -542,8 +489,10 @@ class FlacLPC(LosslessCompressor):
         """
         self.entropy_coder = entropy_coder
         self.block_size = block_size
+        assert self.block_size > 0 and self.block_size <= utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION, f"Block size must be positive and less than or equal to {utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION}."
         self.interchannel_decorrelation = interchannel_decorrelation
         self.jobs = jobs
+        assert self.jobs > 0 and self.jobs <= multiprocessing.cpu_count(), f"Number of jobs must be positive and less than or equal to {multiprocessing.cpu_count()}."
 
         # check if the python LPC encoder and decoder scripts exist
         if not exists(FLAC_LPC_ENCODE_SCRIPT_FILEPATH):

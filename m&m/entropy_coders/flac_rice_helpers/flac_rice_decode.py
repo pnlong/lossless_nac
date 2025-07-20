@@ -116,29 +116,30 @@ def main():
         # Create temporary output file
         temp_output = os.path.join(temp_dir, 'decoded.bin')
         
-        # Run the helper program
+        # Run the old decoder: ./old_flac_rice_decode input.bin num_samples > output.bin
         print("Running FLAC entropy decoder...", file=sys.stderr)
         try:
             result = subprocess.run([
                 helper_executable_path, 
                 args.entropy_file, 
-                temp_output, 
-                str(args.num_samples)
-            ], check=True, capture_output=True, text=True)
+                str(args.num_samples),
+                '0'  # predictor order 0 for Rice coding
+            ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # The old decoder outputs decoded data to stdout
+            decoded_data = result.stdout
             
             if result.stderr:
-                print(result.stderr, file=sys.stderr)
+                print(result.stderr.decode(), file=sys.stderr)
                 
         except subprocess.CalledProcessError as e:
             print(f"Decoding failed: {e}", file=sys.stderr)
             if e.stderr:
-                print(f"Error output: {e.stderr}", file=sys.stderr)
+                print(f"Error output: {e.stderr.decode()}", file=sys.stderr)
             sys.exit(1)
         
-        # Read the decoded output
+        # Validate the decoded output
         try:
-            with open(temp_output, 'rb') as f:
-                decoded_data = f.read()
             
             # Verify we got the expected amount of data
             expected_bytes = args.num_samples * 4  # 4 bytes per int32

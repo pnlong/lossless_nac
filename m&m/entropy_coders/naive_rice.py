@@ -2,38 +2,43 @@
 # Phillip Long
 # July 6, 2025
 
-# Naive Rice Coder.
+# Naive Rice Coder using C helpers for performance.
 
 # IMPORTS
 ##################################################
 
 import numpy as np
+import subprocess
+import tempfile
+from os import remove
+from os.path import dirname, realpath, exists
 
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, dirname(dirname(dirname(realpath(__file__)))))
 
-from entropy_coders import EntropyCoder, int_to_pos, inverse_int_to_pos
+from entropy_coders import EntropyCoder
 import utils
 
 ##################################################
-
 
 # CONSTANTS
 ##################################################
 
 K_DEFAULT = 1 # default rice parameter
+NAIVE_RICE_HELPERS_DIR = f"{dirname(realpath(__file__))}/naive_rice_helpers" # directory that contains the naive rice helpers
+NAIVE_RICE_ENCODE_SCRIPT_FILEPATH = f"{NAIVE_RICE_HELPERS_DIR}/naive_rice_encode.py" # filepath to naive rice encode script
+NAIVE_RICE_DECODE_SCRIPT_FILEPATH = f"{NAIVE_RICE_HELPERS_DIR}/naive_rice_decode.py" # filepath to naive rice decode script
 
 ##################################################
-
 
 # NAIVE RICE ENTROPY CODING FUNCTIONS
 ##################################################
 
-def encode(nums: np.array, k: int = K_DEFAULT, is_nums_signed: bool = False) -> bytes:
+def encode(nums: np.array, k: int = K_DEFAULT) -> bytes:
     """
-    Encode the data.
+    Encode the data using C helper for performance.
 
     Parameters
     ----------
@@ -41,8 +46,6 @@ def encode(nums: np.array, k: int = K_DEFAULT, is_nums_signed: bool = False) -> 
         The data to encode.
     k : int, default = K_DEFAULT
         The Rice parameter k, defaults to K_DEFAULT.
-    is_nums_signed : bool, default = False
-        Whether the numbers being encoded are signed, defaults to False.
 
     Returns
     -------
@@ -50,37 +53,55 @@ def encode(nums: np.array, k: int = K_DEFAULT, is_nums_signed: bool = False) -> 
         The encoded data.
     """
 
-    # helper for writing bits and bytes to an output stream
-    out = utils.BitOutputStream()
+    # ensure nums is a numpy array of correct data type
+    nums = np.array(nums, dtype = np.int32)
+    
+    # check for empty arrays
+    if len(nums) == 0:
+        return bytes()
+    
+    # use individual temporary file for multiprocessing safety
+    with tempfile.NamedTemporaryFile(suffix = ".bin", delete = False) as tmp_file:
+        nums_filepath = tmp_file.name
+        nums.tofile(nums_filepath)
+    
+    # try to encode nums to stream
+    try:
 
-    # ensure nums is a numpy array
-    if is_nums_signed:
-        nums = np.array(list(map(int_to_pos, nums))) # convert from potentially negative number to non-negative
-    else:
-        nums = np.array(nums)
+        # verify file was created successfully
+        if not exists(nums_filepath):
+            raise RuntimeError(f"Failed to create temporary file: {nums_filepath}")
 
-    # iterate through numbers
-    for x in nums:
+        # encode nums to stream using C helper script
+        result = subprocess.run(
+            args = ["python3", NAIVE_RICE_ENCODE_SCRIPT_FILEPATH, nums_filepath, str(k)],
+            check = True,
+            stdout = subprocess.PIPE,
+            stderr = subprocess.PIPE,
+        )
+        
+    # except exception, raise error
+    except subprocess.CalledProcessError as e:
+        stderr_text = e.stderr.decode("utf-8", errors = "ignore") if e.stderr else "No error message"
+        raise RuntimeError(f"Naive Rice encoder failed (exit {e.returncode}): {stderr_text}")
+    
+    # always cleanup, even if there was an error
+    finally:
+        if exists(nums_filepath):
+            try:
+                remove(nums_filepath)
+            except OSError:
+                pass # ignore cleanup errors
 
-        # compute quotient and remainder
-        q = x >> k # quotient = n // 2^k
-        r = x & ((1 << k) - 1) # remainder = n % 2^k
+    # get stream from result
+    stream = result.stdout
 
-        # encode the quotient with unary coding (q ones followed by a zero)
-        for _ in range(q):
-            out.write_bit(bit = True)
-        out.write_bit(bit = False)
-
-        # encode the remainder with binary coding using k bits
-        out.write_bits(bits = r, n = k)
-
-    # get bytes stream and return
-    stream = out.flush()
+    # return stream
     return stream
 
-def decode(stream: bytes, num_samples: int, k: int = K_DEFAULT, is_nums_signed: bool = False) -> np.array:
+def decode(stream: bytes, num_samples: int, k: int = K_DEFAULT) -> np.array:
     """
-    Decode the data.
+    Decode the data using C helper for performance.
 
     Parameters
     ----------
@@ -90,8 +111,6 @@ def decode(stream: bytes, num_samples: int, k: int = K_DEFAULT, is_nums_signed: 
         The number of samples to decode.
     k : int, default = K_DEFAULT
         The Rice parameter k, defaults to K_DEFAULT.
-    is_nums_signed : bool, default = False
-        Whether the numbers being decoded are signed, defaults to False.
 
     Returns
     -------
@@ -99,46 +118,58 @@ def decode(stream: bytes, num_samples: int, k: int = K_DEFAULT, is_nums_signed: 
         The decoded data.
     """
     
-    # helper for reading bits and bytes from an input stream
-    inp = utils.BitInputStream(stream = stream)
+    # check for zero samples
+    if num_samples == 0:
+        return np.array([], dtype = np.int32)
+    
+    # use individual temporary file for multiprocessing safety
+    with tempfile.NamedTemporaryFile(suffix = ".bin", delete = False) as tmp_file:
+        stream_filepath = tmp_file.name
+        tmp_file.write(stream)
+    
+    # try to decode stream to nums
+    try:
 
-    # initialize numbers list
-    nums = utils.rep(x = 0, times = num_samples)
+        # verify file was created successfully
+        if not exists(stream_filepath):
+            raise RuntimeError(f"Failed to create temporary stream file: {stream_filepath}")
 
-    # read in numbers
-    for i in range(num_samples):
-        # read unary-coded quotient
-        q = 0
-        while inp.read_bit() == True:
-            q += 1
+        # decode stream to nums using C helper script
+        result = subprocess.run(
+            args = ["python3", NAIVE_RICE_DECODE_SCRIPT_FILEPATH, stream_filepath, str(num_samples), str(k)],
+            check = True,
+            stdout = subprocess.PIPE,
+            stderr = subprocess.PIPE,
+        )
+        nums = np.frombuffer(result.stdout, dtype = np.int32)
+        
+    # except exception, raise error
+    except subprocess.CalledProcessError as e:
+        stderr_text = e.stderr.decode("utf-8", errors = "ignore") if e.stderr else "No error message"
+        raise RuntimeError(f"Naive Rice decoder failed (exit {e.returncode}): {stderr_text}")
 
-        # read k-bit remainder
-        r = inp.read_bits(n = k)
+    # always cleanup, even if there was an error
+    finally: 
+        if exists(stream_filepath):
+            try:
+                remove(stream_filepath)
+            except OSError:
+                pass # ignore cleanup errors
 
-        # reconstruct original number
-        x = (q << k) | r
-        nums[i] = x
-
-    # convert results to numpy array
-    if is_nums_signed: # convert back to signed numbers
-        nums = list(map(inverse_int_to_pos, nums))
-    nums = np.array(nums)
-
-    # return list of numbers
+    # return nums
     return nums
 
 ##################################################
-
 
 # ENTROPY CODER INTERFACE
 ##################################################
 
 class NaiveRiceCoder(EntropyCoder):
     """
-    Naive Rice Coder.
+    Naive Rice Coder using C helpers for performance.
     """
 
-    def __init__(self, k: int = K_DEFAULT, is_nums_signed: bool = False):
+    def __init__(self, k: int = K_DEFAULT):
         """
         Initialize the Naive Rice Coder.
 
@@ -146,12 +177,15 @@ class NaiveRiceCoder(EntropyCoder):
         ----------
         k : int, default = K_DEFAULT
             The Rice parameter k, defaults to K_DEFAULT.
-        is_nums_signed : bool, default = False
-            Whether the numbers being encoded are signed, defaults to False.
         """
         self.k = k
         assert self.k > 0, "Rice parameter k must be positive."
-        self.is_nums_signed = is_nums_signed
+        
+        # check if the helper scripts exist
+        if not exists(NAIVE_RICE_ENCODE_SCRIPT_FILEPATH):
+            raise RuntimeError(f"Naive Rice encoder script not found: {NAIVE_RICE_ENCODE_SCRIPT_FILEPATH}")
+        elif not exists(NAIVE_RICE_DECODE_SCRIPT_FILEPATH):
+            raise RuntimeError(f"Naive Rice decoder script not found: {NAIVE_RICE_DECODE_SCRIPT_FILEPATH}")
     
     def encode(self, nums: np.array) -> bytes:
         """
@@ -170,7 +204,6 @@ class NaiveRiceCoder(EntropyCoder):
         return encode(
             nums = nums,
             k = self.k,
-            is_nums_signed = self.is_nums_signed,
         )
 
     def decode(self, stream: bytes, num_samples: int) -> np.array:
@@ -193,7 +226,6 @@ class NaiveRiceCoder(EntropyCoder):
             stream = stream,
             num_samples = num_samples,
             k = self.k,
-            is_nums_signed = self.is_nums_signed,
         )
-        
+
 ##################################################

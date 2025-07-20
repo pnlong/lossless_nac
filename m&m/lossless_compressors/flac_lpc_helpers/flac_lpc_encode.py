@@ -56,7 +56,7 @@ def main():
     # Get paths for the helper program
     script_dir = os.path.dirname(os.path.abspath(__file__))
     helper_source_path = os.path.join(script_dir, 'flac_lpc_encode_helper.c')
-    helper_executable_path = os.path.join(script_dir, 'flac_lpc_encode_helper')
+    helper_executable_path = os.path.join(script_dir, 'flac_lpc_encode_helper_fixed')
     
     # Check if input file exists
     if not os.path.exists(input_file):

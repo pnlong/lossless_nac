@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 from os import remove
 from os.path import dirname, realpath, exists
+from typing import List
 
 from os.path import dirname, realpath
 import sys
@@ -20,6 +21,14 @@ sys.path.insert(0, dirname(dirname(dirname(realpath(__file__)))))
 
 from entropy_coders import EntropyCoder
 import utils
+
+# Import the encoder and decoder modules directly
+try:
+    from flac_rice_helpers.flac_rice_encode import encode_residuals as flac_encode_residuals
+    from flac_rice_helpers.flac_rice_encode import decode_residuals as flac_decode_residuals
+    DIRECT_IMPORT_AVAILABLE = True
+except ImportError:
+    DIRECT_IMPORT_AVAILABLE = False
 
 ##################################################
 
@@ -59,6 +68,15 @@ def encode(nums: np.array) -> bytes:
     if len(nums) == 0:
         return bytes()
     
+    # Use direct import if available (much faster - single subprocess instead of double)
+    if DIRECT_IMPORT_AVAILABLE:
+        try:
+            return flac_encode_residuals(nums.tolist())
+        except Exception as e:
+            # Fall back to subprocess method if direct import fails
+            pass
+    
+    # Fallback to original subprocess method
     # use individual temporary file instead of shared directory (more robust for multiprocessing)
     with tempfile.NamedTemporaryFile(suffix = ".bin", delete = False) as tmp_file:
         nums_filepath = tmp_file.name
@@ -121,6 +139,16 @@ def decode(stream: bytes, num_samples: int) -> np.array:
     if num_samples == 0:
         return np.array([], dtype = np.int32)
     
+    # Use direct import if available (much faster - no subprocess for Python script)
+    if DIRECT_IMPORT_AVAILABLE:
+        try:
+            decoded_list = flac_decode_residuals(stream, num_samples)
+            return np.array(decoded_list, dtype=np.int32)
+        except Exception as e:
+            # Fall back to subprocess method if direct import fails
+            pass
+    
+    # Fallback to original subprocess method
     # use individual temporary file instead of shared directory (more robust for multiprocessing)
     with tempfile.NamedTemporaryFile(suffix = ".bin", delete = False) as tmp_file:
         stream_filepath = tmp_file.name
@@ -158,6 +186,61 @@ def decode(stream: bytes, num_samples: int) -> np.array:
 
     # return nums
     return nums
+
+def batch_encode(nums_list: List[np.array]) -> List[bytes]:
+    """
+    Encode multiple data arrays with reduced Python overhead.
+    
+    Uses direct function calls when possible to eliminate subprocess overhead.
+    
+    Parameters
+    ----------
+    nums_list : List[np.array]
+        List of data arrays to encode.
+        
+    Returns
+    -------
+    List[bytes]
+        List of encoded data corresponding to each input array.
+    """
+    
+    if not nums_list:
+        return []
+    
+    results = []
+    
+    # Use direct import if available (much faster)
+    if DIRECT_IMPORT_AVAILABLE:
+        for nums in nums_list:
+            if len(nums) == 0:
+                results.append(bytes())
+            else:
+                try:
+                    # Convert numpy array to list and encode directly
+                    encoded = flac_encode_residuals(nums.astype(np.int32).tolist())
+                    results.append(encoded)
+                except Exception as e:
+                    # Fall back to subprocess method for this array
+                    results.append(encode(nums))
+    else:
+        # Fallback: batch the individual encodes with optimizations
+        # Pre-compile helper once if needed (instead of checking each time)
+        first_valid_nums = next((nums for nums in nums_list if len(nums) > 0), None)
+        if first_valid_nums is not None:
+            # Trigger any one-time compilation by encoding a small array
+            try:
+                _ = encode(np.array([0], dtype=np.int32))
+            except:
+                pass  # Ignore compilation errors for now
+        
+        # Now encode all arrays (helper should be compiled)
+        for nums in nums_list:
+            if len(nums) == 0:
+                results.append(bytes())
+            else:
+                results.append(encode(nums))
+    
+    return results
 
 ##################################################
 
@@ -218,5 +301,21 @@ class FlacRiceCoder(EntropyCoder):
             stream = stream,
             num_samples = num_samples,
         )
+
+    def batch_encode(self, nums_list: List[np.array]) -> List[bytes]:
+        """
+        Encode multiple data arrays with reduced Python overhead.
+        
+        Parameters
+        ----------
+        nums_list : List[np.array]
+            List of data arrays to encode.
+            
+        Returns
+        -------
+        List[bytes]
+            List of encoded data corresponding to each input array.
+        """
+        return batch_encode(nums_list)
         
 ##################################################

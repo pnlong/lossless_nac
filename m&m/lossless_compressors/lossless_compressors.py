@@ -28,7 +28,7 @@ from entropy_coders import EntropyCoder
 
 BLOCK_SIZE_DEFAULT = 2048 # default block size for lossless compressors
 INTERCHANNEL_DECORRELATION_DEFAULT = True # default interchannel decorrelation
-JOBS_DEFAULT = int(cpu_count() / 4) # default number of jobs for multiprocessing
+JOBS_DEFAULT = 3 # default number of jobs for multiprocessing
 
 ##################################################
 
@@ -74,6 +74,7 @@ class LosslessCompressor(ABC):
         """
         self.entropy_coder = entropy_coder
         self.block_size = block_size
+        self.interchannel_decorrelation = interchannel_decorrelation
 
     @abstractmethod
     def encode(self, data: np.array) -> Any:

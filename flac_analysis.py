@@ -63,7 +63,7 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate FLAC to Determine Estimation Bitrate") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Analysis", description = "Analyze the makeup of FLAC files.") # create argument parser
         parser.add_argument("--input_dir", type = str, default = INPUT_DIR, help = "Absolute filepath to directory containing FLAC files to evaluate.")
         parser.add_argument("--output_filepath", type = str, default = OUTPUT_FILEPATH, help = "Absolute filepath to the output CSV file.")
         parser.add_argument("--residuals_output_dir", type = str, default = RESIDUALS_OUTPUT_DIR, help = "Absolute filepath to directory for residuals.")
@@ -139,9 +139,9 @@ if __name__ == "__main__":
             # get statistics from FLAC decoder
             result = subprocess.run(args = [args.flac_path, "--force", "--decode", "--log-residuals", residuals_filepath, "-o", wav_filepath, path], check = True, stdout = subprocess.PIPE, stderr = subprocess.DEVNULL) # encode WAV file as FLAC
             result = result.stdout.decode("utf-8") # read stdout as a string
-            result = next(filter(lambda line: line.startswith("Prediction Statistics: "), result.split("\n"))) # get the line that includes estimation bits
-            statistics = eval(result[len("Prediction Statistics: "):]) # statistics
-            size_estimation = statistics["prediction_bits"]
+            result = next(filter(lambda line: line.startswith("FLAC Analysis Statistics: "), result.split("\n"))) # get the line that includes estimation bits
+            statistics = eval(result[len("FLAC Analysis Statistics: "):]) # statistics
+            size_estimation = statistics["estimation_bits"]
             size_entropy = statistics["entropy_bits"]
             del result # free up memory
 
@@ -162,7 +162,7 @@ if __name__ == "__main__":
             # output
             pd.DataFrame(data = [dict(zip(
                 OUTPUT_COLUMNS, 
-                [path, duration, size_total, size_compressed] + [statistics[key] for key in ("prediction_bits", "verbatim_bits", "constant_bits", "fixed_bits", "lpc_bits", "entropy_bits", "n_subframes", "verbatim_n_subframes", "constant_n_subframes", "fixed_n_subframes", "lpc_n_subframes")] + [bitrate_total, bitrate_estimation, estimation_proportion, entropy_proportion, lossless_compression_rate, lossy_compression_rate]
+                [path, duration, size_total, size_compressed] + [statistics[key] for key in ("estimation_bits", "verbatim_bits", "constant_bits", "fixed_bits", "lpc_bits", "entropy_bits", "n_subframes", "verbatim_n_subframes", "constant_n_subframes", "fixed_n_subframes", "lpc_n_subframes")] + [bitrate_total, bitrate_estimation, estimation_proportion, entropy_proportion, lossless_compression_rate, lossy_compression_rate]
             ))]).to_csv(path_or_buf = args.output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
 
             # read in residuals

@@ -9,10 +9,9 @@
 
 import numpy as np
 from typing import List, Tuple
-import scipy.signal
-import warnings
 import multiprocessing
 import functools
+import logging
 
 from os.path import dirname, realpath
 import sys
@@ -20,7 +19,7 @@ sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, f"{dirname(dirname(realpath(__file__)))}/entropy_coders")
 sys.path.insert(0, dirname(dirname(dirname(realpath(__file__)))))
 
-from lossless_compressors import LosslessCompressor, partition_data_into_frames, INTERCHANNEL_DECORRELATION_DEFAULT, INTERCHANNEL_DECORRELATION_SCHEMES_MAP, REVERSE_INTERCHANNEL_DECORRELATION_SCHEMES_MAP, JOBS_DEFAULT
+from lossless_compressors import LosslessCompressor, partition_data_into_frames, BLOCK_SIZE_DEFAULT, INTERCHANNEL_DECORRELATION_DEFAULT, INTERCHANNEL_DECORRELATION_SCHEMES_MAP, REVERSE_INTERCHANNEL_DECORRELATION_SCHEMES_MAP, JOBS_DEFAULT
 from entropy_coders import EntropyCoder
 import naive_lpc
 import utils
@@ -112,6 +111,10 @@ def decode_subframe(bottleneck_subframe: BOTTLENECK_SUBFRAME_TYPE, entropy_coder
 
     # decode bottleneck subframe
     reconstructed_subframe = naive_lpc.decode_subframe(bottleneck_subframe = (n_samples, warmup_samples, lpc_coefficients, encoded_residuals), entropy_coder = entropy_coder)
+    
+    # ensure output is int32
+    logging.debug(f"adaptive_lpc.decode_subframe: reconstructed_subframe dtype={reconstructed_subframe.dtype}, shape={reconstructed_subframe.shape}")
+    reconstructed_subframe = reconstructed_subframe.astype(np.int32)
     
     return reconstructed_subframe
 
@@ -303,7 +306,7 @@ class AdaptiveLPC(LosslessCompressor):
     Adaptive LPC Compressor.
     """
 
-    def __init__(self, entropy_coder: EntropyCoder, interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT, jobs: int = JOBS_DEFAULT):
+    def __init__(self, entropy_coder: EntropyCoder, block_size: int = BLOCK_SIZE_DEFAULT, interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT, jobs: int = JOBS_DEFAULT):
         """
         Initialize the Adaptive LPC Compressor.
 
@@ -311,14 +314,19 @@ class AdaptiveLPC(LosslessCompressor):
         ----------
         entropy_coder : EntropyCoder
             The entropy coder to use.
+        block_size : int, default = BLOCK_SIZE_DEFAULT
+            The block size to use for encoding.
         interchannel_decorrelation : bool, default = INTERCHANNEL_DECORRELATION_DEFAULT
             Whether to decorrelate channels.
         jobs : int, default = JOBS_DEFAULT
             The number of jobs to use for multiprocessing.
         """
         self.entropy_coder = entropy_coder
+        self.block_size = block_size
+        assert self.block_size > 0 and self.block_size <= utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION, f"Block size must be positive and less than or equal to {utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION}."
         self.interchannel_decorrelation = interchannel_decorrelation
         self.jobs = jobs
+        assert self.jobs > 0 and self.jobs <= multiprocessing.cpu_count(), f"Number of jobs must be positive and less than or equal to {multiprocessing.cpu_count()}."
         
     def encode(self, data: np.array) -> BOTTLENECK_TYPE:
         """

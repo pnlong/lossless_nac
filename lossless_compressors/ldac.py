@@ -46,7 +46,32 @@ DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # pa
 POSSIBLE_DAC_N_CODEBOOKS = tuple(range(1, 10)) # upper-bounded by the number of codebooks for the pretrained descript audio codec model, 9
 N_CODEBOOKS = POSSIBLE_DAC_N_CODEBOOKS[-1] # use the upper bound as the default
 
+# scaling factor for DAC processing
+AUDIO_SCALE = 32768.0 # audio-appropriate scaling factor for DAC processing
+
 ##################################################
+
+
+# CONVERSION FUNCTIONS
+##################################################
+
+def convert_audio_fixed_to_floating(waveform: np.array, audio_scale: float = AUDIO_SCALE) -> np.array:
+    """
+    Convert fixed-point audio to floating-point using appropriate audio scaling.
+    
+    This replaces utils.convert_waveform_fixed_to_floating which uses full dtype range
+    and creates artificially tiny values that lead to huge residuals after DAC processing.
+    """
+    return waveform.astype(np.float32) / audio_scale
+
+def convert_audio_floating_to_fixed(waveform: np.array, output_dtype: type = np.int32, audio_scale: float = AUDIO_SCALE) -> np.array:
+    """
+    Convert floating-point audio to fixed-point using appropriate audio scaling.
+    
+    This replaces utils.convert_waveform_floating_to_fixed which uses full dtype range
+    and creates artificially huge residuals from tiny DAC outputs.
+    """
+    return np.round(waveform * audio_scale).astype(output_dtype)
 
 
 # ENCODE
@@ -65,7 +90,7 @@ def encode_block(
     block_array = block_numpy.squeeze(axis = 0).squeeze(axis = 0) # get version of block that is 1d array
     n_samples_in_block = len(block_array)
     x = model.preprocess(
-        audio_data = torch.from_numpy(utils.convert_waveform_fixed_to_floating(waveform = block_numpy, output_dtype = np.float32)).to(model.device), # ensure floating point and on correct device
+        audio_data = torch.from_numpy(convert_audio_fixed_to_floating(waveform = block_numpy)).to(model.device), # ensure floating point and on correct device
         sample_rate = block.sample_rate,
     ).float() # convert to float to avoid RuntimeError: Input type (torch.cuda.DoubleTensor) and weight type (torch.cuda.FloatTensor) should be the same
     _, codes, _, _, _ = model.encode(audio_data = x)
@@ -77,7 +102,7 @@ def encode_block(
     approximate_block = model.decode(z = z)
     approximate_block = approximate_block.squeeze(dim = (0, 1)).detach().cpu().numpy() # get rid of unnecessary dimensions
     approximate_block = approximate_block[:n_samples_in_block] # truncate to correct length
-    approximate_block = utils.convert_waveform_floating_to_fixed(waveform = approximate_block, output_dtype = block_array.dtype) # ensure approximate waveform is integer values
+    approximate_block = convert_audio_floating_to_fixed(waveform = approximate_block, output_dtype = block_array.dtype) # ensure approximate waveform is integer values
     del z # free up memory immediately
 
     # remove batch_size dimension from codes
@@ -180,7 +205,7 @@ def decode_block(
     approximate_block = model.decode(z = z)
     approximate_block = approximate_block.squeeze(dim = (0, 1)).detach().cpu().numpy() # convert from AudioSignal to numpy array
     approximate_block = approximate_block[:n_samples_in_block] # truncate to correct length
-    approximate_block = utils.convert_waveform_floating_to_fixed(waveform = approximate_block, output_dtype = encoding_dtype) # ensure approximate waveform is integer values
+    approximate_block = convert_audio_floating_to_fixed(waveform = approximate_block, output_dtype = encoding_dtype) # ensure approximate waveform is integer values
 
     # free up gpu memory immediately
     del codes, z

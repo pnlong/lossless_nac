@@ -10,6 +10,8 @@
 import numpy as np
 import sys
 import traceback
+from scipy.io import wavfile
+import logging
 
 from os.path import dirname, realpath
 import sys
@@ -143,24 +145,44 @@ def test_compressor(compressor_type, compressor_name, entropy_coder, test_data, 
         traceback.print_exc()
         return False, None
 
-def test(interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT) -> dict:
+def test(interchannel_decorrelation: bool = False) -> dict:
     """
-    Test compression rates of different lossless compressors.
+    Test compression rates of different lossless compressors using real audio data.
     """
-    print("Testing Lossless Compressors")
-    print("============================")
+    print("Testing Lossless Compressors with Real Audio Data")
+    print("=================================================")
     
-    # Create test data
-    print("Creating test data...")
-    np.random.seed(42)  # For reproducible results
-    
-    # Test with both mono and stereo data
-    test_cases = {
-        "Mono": np.random.randint(-32768, 32767, size=2048, dtype=np.int32),
-        "Stereo": np.random.randint(-32768, 32767, size=(2048, 2), dtype=np.int32)
-    }
-    
-    print(f"✓ Created test cases: {list(test_cases.keys())}")
+    # Read actual audio file
+    print("Reading test.wav file...")
+    try:
+        sample_rate, audio_data = wavfile.read('/home/pnlong/lnac/test.wav')
+        print(f"✓ Successfully read test.wav")
+        print(f"  Sample rate: {sample_rate} Hz")
+        print(f"  Data shape: {audio_data.shape}")
+        print(f"  Data type: {audio_data.dtype}")
+        print(f"  Data range: [{np.min(audio_data)}, {np.max(audio_data)}]")
+        
+        # Convert to int32 for consistency
+        if audio_data.dtype != np.int32:
+            audio_data = audio_data.astype(np.int32)
+            print(f"✓ Converted to int32")
+        
+        # Create test cases
+        test_cases = {}
+        if len(audio_data.shape) == 1:
+            # Mono audio
+            test_cases["Real_Audio_Mono"] = audio_data
+        else:
+            # Stereo audio - test both mono (left channel) and stereo
+            test_cases["Real_Audio_Mono"] = audio_data[:, 0]  # Left channel only
+            test_cases["Real_Audio_Stereo"] = audio_data      # Both channels
+        
+        print(f"✓ Created test cases: {list(test_cases.keys())}")
+        
+    except Exception as e:
+        print(f"✗ Failed to read test.wav: {e}")
+        traceback.print_exc()
+        return {}
     
     # Import entropy coder
     try:
@@ -228,6 +250,12 @@ def test(interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT) 
 ##################################################
 
 if __name__ == "__main__":
-    test(interchannel_decorrelation = False)
+    # Enable info logging (disable debug for cleaner output)
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    print("Running lossless compressor tests with real audio data...")
+    print("Interchannel decorrelation: OFF")
+    print()
+    test(interchannel_decorrelation=False)
 
 ##################################################

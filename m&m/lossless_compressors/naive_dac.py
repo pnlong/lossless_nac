@@ -11,9 +11,9 @@ import numpy as np
 from typing import List, Tuple, Dict, Any
 import warnings
 import multiprocessing
-import functools
 import torch
 from audiotools import AudioSignal
+import logging
 
 from os.path import dirname, realpath
 import sys
@@ -22,7 +22,7 @@ sys.path.insert(0, f"{dirname(dirname(realpath(__file__)))}/entropy_coders")
 sys.path.insert(0, dirname(dirname(dirname(realpath(__file__)))))
 sys.path.insert(0, f"{dirname(dirname(dirname(realpath(__file__))))}/dac") # for dac import
 
-from lossless_compressors import LosslessCompressor, partition_data_into_frames, INTERCHANNEL_DECORRELATION_DEFAULT, INTERCHANNEL_DECORRELATION_SCHEMES_MAP, REVERSE_INTERCHANNEL_DECORRELATION_SCHEMES_MAP, JOBS_DEFAULT
+from lossless_compressors import LosslessCompressor, partition_data_into_frames, BLOCK_SIZE_DEFAULT, INTERCHANNEL_DECORRELATION_DEFAULT, INTERCHANNEL_DECORRELATION_SCHEMES_MAP, REVERSE_INTERCHANNEL_DECORRELATION_SCHEMES_MAP, JOBS_DEFAULT
 from entropy_coders import EntropyCoder
 import utils
 import dac
@@ -41,6 +41,31 @@ MAXIMUM_CODEBOOK_LEVEL = 9 # maximum codebook level for the pretrained descript 
 CODEBOOK_LEVEL_DEFAULT = MAXIMUM_CODEBOOK_LEVEL # codebook level for descript audio codec model, use the upper bound as the default
 DEVICE_DEFAULT = "cpu" # default device for running the DAC model
 BATCH_SIZE_DEFAULT = 32 # optimal batch size for GPU processing
+AUDIO_SCALE = 32768.0 # audio-appropriate scaling factor for DAC processing
+
+##################################################
+
+
+# CONVERSION FUNCTIONS
+##################################################
+
+def convert_audio_fixed_to_floating(waveform: np.array, audio_scale: float = AUDIO_SCALE) -> np.array:
+    """
+    Convert fixed-point audio to floating-point using appropriate audio scaling.
+    
+    This replaces utils.convert_waveform_fixed_to_floating which uses full dtype range
+    and creates artificially tiny values that lead to huge residuals after DAC processing.
+    """
+    return waveform.astype(np.float32) / audio_scale
+
+def convert_audio_floating_to_fixed(waveform: np.array, output_dtype: type = np.int32, audio_scale: float = AUDIO_SCALE) -> np.array:
+    """
+    Convert floating-point audio to fixed-point using appropriate audio scaling.
+    
+    This replaces utils.convert_waveform_floating_to_fixed which uses full dtype range
+    and creates artificially huge residuals from tiny DAC outputs.
+    """
+    return np.round(waveform * audio_scale).astype(output_dtype)
 
 ##################################################
 
@@ -215,12 +240,7 @@ def batch_dac_encode(subframes_batch: np.array, model: dac.model.dac.DAC, sample
     
     # preprocess batch
     x = model.preprocess(
-        audio_data = torch.from_numpy(
-            utils.convert_waveform_fixed_to_floating(
-                waveform = batch_audio.audio_data.numpy(), # convert to float to avoid RuntimeError: Input type (torch.cuda.DoubleTensor) and weight type (torch.cuda.FloatTensor) should be the same
-                output_dtype = np.float32,
-            )
-        ).to(model.device),
+        audio_data = torch.from_numpy(convert_audio_fixed_to_floating(waveform = batch_audio.audio_data.numpy())).to(model.device), # convert to float with correct audio scaling
         sample_rate = sample_rate,
     ).float()
     
@@ -334,7 +354,7 @@ def encode_subframes_batch_optimized(subframes_data: List[np.array], subframes_m
 
             # truncate approximate to original length
             approximate_truncated = approximate[:original_length]
-            approximate_truncated = utils.convert_waveform_floating_to_fixed(
+            approximate_truncated = convert_audio_floating_to_fixed(
                 waveform = approximate_truncated,
                 output_dtype = original_subframe.dtype,
             )
@@ -406,9 +426,11 @@ def decode_subframes_batch_optimized(bottleneck_subframes: List[BOTTLENECK_SUBFR
 
             # truncate and convert approximate
             approximate_truncated = approximate[:length]
-            approximate_truncated = utils.convert_waveform_floating_to_fixed(
+            logging.debug(f"naive_dac.decode_subframes_batch_optimized: approximate_truncated dtype={approximate_truncated.dtype}, shape={approximate_truncated.shape}")
+            logging.debug(f"naive_dac.decode_subframes_batch_optimized: converting to int32 for compatibility")
+            approximate_truncated = convert_audio_floating_to_fixed(
                 waveform = approximate_truncated, 
-                output_dtype = np.int64, # we use int64 to avoid overflows
+                output_dtype = np.int32, # use int32 for compatibility
             )
             
             # reconstruct subframe
@@ -616,7 +638,7 @@ class NaiveDAC(LosslessCompressor):
     Naive DAC Compressor.
     """
 
-    def __init__(self, entropy_coder: EntropyCoder, model_path: str = DAC_PATH, codebook_level: int = CODEBOOK_LEVEL_DEFAULT, interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT, device: str = DEVICE_DEFAULT, jobs: int = JOBS_DEFAULT, batch_size: int = BATCH_SIZE_DEFAULT):
+    def __init__(self, entropy_coder: EntropyCoder, model_path: str = DAC_PATH, codebook_level: int = CODEBOOK_LEVEL_DEFAULT, block_size: int = BLOCK_SIZE_DEFAULT, interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT, device: str = DEVICE_DEFAULT, jobs: int = JOBS_DEFAULT, batch_size: int = BATCH_SIZE_DEFAULT):
         """
         Initialize the Naive DAC Compressor.
 
@@ -628,6 +650,8 @@ class NaiveDAC(LosslessCompressor):
             Path to the DAC model weights.
         codebook_level : int, default = CODEBOOK_LEVEL_DEFAULT
             The number of codebooks to use for DAC encoding.
+        block_size : int, default = BLOCK_SIZE_DEFAULT
+            The block size to use for encoding.
         interchannel_decorrelation : bool, default = INTERCHANNEL_DECORRELATION_DEFAULT
             Whether to decorrelate channels.
         device : str, default = DEVICE_DEFAULT
@@ -640,10 +664,14 @@ class NaiveDAC(LosslessCompressor):
         self.entropy_coder = entropy_coder
         self.codebook_level = codebook_level
         assert (self.codebook_level > 0) and (self.codebook_level <= MAXIMUM_CODEBOOK_LEVEL), f"Codebook level must be between 1 and {MAXIMUM_CODEBOOK_LEVEL}."
+        self.block_size = block_size
+        assert self.block_size > 0 and self.block_size <= utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION, f"Block size must be positive and less than or equal to {utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION}."
         self.interchannel_decorrelation = interchannel_decorrelation
         self.device = device
         self.jobs = jobs
+        assert self.jobs > 0 and self.jobs <= multiprocessing.cpu_count(), f"Number of jobs must be positive and less than or equal to {multiprocessing.cpu_count()}."
         self.batch_size = batch_size
+        assert self.batch_size > 0, "Batch size must be positive."
         
         # load DAC model
         self.device = torch.device(device)

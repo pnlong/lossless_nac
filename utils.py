@@ -270,7 +270,10 @@ NA_STRING = "NA"
 CHUNK_SIZE = 1
 
 # separator line
-SEPARATOR_LINE_WIDTH = get_terminal_size().columns
+try:
+    SEPARATOR_LINE_WIDTH = get_terminal_size().columns
+except OSError:
+    SEPARATOR_LINE_WIDTH = 80  # Default width when terminal size can't be determined
 MAJOR_SEPARATOR_LINE = "".join(("=" for _ in range(SEPARATOR_LINE_WIDTH)))
 MINOR_SEPARATOR_LINE = "".join(("-" for _ in range(SEPARATOR_LINE_WIDTH)))
 DOTTED_SEPARATOR_LINE = "".join(("- " for _ in range(SEPARATOR_LINE_WIDTH // 2)))

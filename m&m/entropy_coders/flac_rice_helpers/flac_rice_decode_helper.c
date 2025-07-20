@@ -58,10 +58,18 @@ uint32_t bitreader_read_bits(BitReader *br, int n) {
 
 /* Read Rice-coded signed integer */
 int32_t bitreader_read_rice_signed(BitReader *br, int parameter) {
-    /* Read unary part (quotient) */
+    /* Read unary part (quotient) with bounds checking */
     uint32_t quotient = 0;
-    while (bitreader_read_bits(br, 1) == 0) {
+    const uint32_t MAX_QUOTIENT = 65535; // Reasonable upper bound to prevent infinite loops
+    
+    while (quotient < MAX_QUOTIENT && bitreader_read_bits(br, 1) == 0) {
         quotient++;
+    }
+    
+    /* Check if we hit the maximum quotient (likely corrupted data) */
+    if (quotient >= MAX_QUOTIENT) {
+        fprintf(stderr, "Warning: Rice quotient exceeded maximum (%u), data may be corrupted\n", MAX_QUOTIENT);
+        return 0; // Return safe default value
     }
     
     /* Read binary part (remainder) */

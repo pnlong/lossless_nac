@@ -9,10 +9,14 @@
 
 import numpy as np
 from typing import List, Tuple
-import scipy.signal
 import warnings
 import multiprocessing
 import functools
+import logging
+import subprocess
+import tempfile
+from os import remove
+from os.path import dirname, realpath, exists
 
 from os.path import dirname, realpath
 import sys
@@ -20,7 +24,7 @@ sys.path.insert(0, dirname(realpath(__file__)))
 sys.path.insert(0, f"{dirname(dirname(realpath(__file__)))}/entropy_coders")
 sys.path.insert(0, dirname(dirname(dirname(realpath(__file__)))))
 
-from lossless_compressors import LosslessCompressor, partition_data_into_frames, INTERCHANNEL_DECORRELATION_DEFAULT, INTERCHANNEL_DECORRELATION_SCHEMES_MAP, REVERSE_INTERCHANNEL_DECORRELATION_SCHEMES_MAP, JOBS_DEFAULT
+from lossless_compressors import LosslessCompressor, partition_data_into_frames, BLOCK_SIZE_DEFAULT, INTERCHANNEL_DECORRELATION_DEFAULT, INTERCHANNEL_DECORRELATION_SCHEMES_MAP, REVERSE_INTERCHANNEL_DECORRELATION_SCHEMES_MAP, JOBS_DEFAULT
 from entropy_coders import EntropyCoder
 import utils
 
@@ -31,7 +35,9 @@ import utils
 ##################################################
 
 ORDER_DEFAULT = 9 # default LPC order
-LPC_COEFFICIENTS_DTYPE = np.int8 # default LPC coefficients data type for quantization
+LPC_COEFFICIENTS_DTYPE = np.float32 # default LPC coefficients data type for quantization
+NAIVE_LPC_HELPERS_DIR = f"{dirname(realpath(__file__))}/naive_lpc_helpers" # directory that contains the naive LPC helpers
+LPC_PREDICT_SCRIPT_FILEPATH = f"{NAIVE_LPC_HELPERS_DIR}/lpc_predict.py" # filepath to LPC predict script
 
 ##################################################
 
@@ -116,14 +122,62 @@ def lpc_predict_samples(lpc_coefficients: np.array, warmup_samples: np.array, n_
     """
     Predict samples using LPC coefficients and warmup samples.
     """
-    order = len(lpc_coefficients) # infer order from length of LPC coefficients
-    predicted_samples = np.zeros(shape = n_predicted_samples, dtype = np.float32) # initialize predicted samples
-    for i in range(n_predicted_samples):
-        if i < order: # use some warmup samples and some predicted samples
-            previous_samples = np.concatenate((warmup_samples[-(order - i):], predicted_samples[:i]), axis = 0)
-        else: # use only previous predicted samples
-            previous_samples = predicted_samples[(i - order):i]
-        predicted_samples[i] = np.dot(lpc_coefficients, previous_samples[::-1])
+    
+    # convert to float32 for C helper
+    lpc_coefficients = np.array(lpc_coefficients, dtype = np.float32)
+    warmup_samples = np.array(warmup_samples, dtype = np.float32)
+    
+    # use individual temporary files for multiprocessing safety
+    with tempfile.NamedTemporaryFile(suffix = ".bin", delete = False) as coeff_file:
+        coeff_filepath = coeff_file.name
+        lpc_coefficients.tofile(coeff_filepath)
+    
+    with tempfile.NamedTemporaryFile(suffix = ".bin", delete = False) as warmup_file:
+        warmup_filepath = warmup_file.name
+        warmup_samples.tofile(warmup_filepath)
+    
+    # try to call C helper for LPC prediction
+    try:
+
+        # verify files were created successfully
+        if not exists(coeff_filepath):
+            raise RuntimeError(f"Failed to create temporary coefficients file: {coeff_filepath}")
+        if not exists(warmup_filepath):
+            raise RuntimeError(f"Failed to create temporary warmup file: {warmup_filepath}")
+
+        # call C helper script
+        result = subprocess.run(
+            args = ["python3", LPC_PREDICT_SCRIPT_FILEPATH, coeff_filepath, warmup_filepath, str(n_predicted_samples)],
+            check = True,
+            stdout = subprocess.PIPE,
+            stderr = subprocess.PIPE,
+        )
+        
+        # read predicted samples from result
+        predicted_samples = np.frombuffer(result.stdout, dtype = np.float32)
+        
+        # verify we got the expected number of samples
+        if len(predicted_samples) != n_predicted_samples:
+            raise RuntimeError(f"Expected {n_predicted_samples} predicted samples, got {len(predicted_samples)}")
+        
+    # except exception, raise error
+    except subprocess.CalledProcessError as e:
+        stderr_text = e.stderr.decode("utf-8", errors = "ignore") if e.stderr else "No error message"
+        raise RuntimeError(f"LPC prediction helper failed (exit {e.returncode}): {stderr_text}")
+    
+    # always cleanup, even if there was an error
+    finally:
+        if exists(coeff_filepath):
+            try:
+                remove(coeff_filepath)
+            except OSError:
+                pass # ignore cleanup errors
+        if exists(warmup_filepath):
+            try:
+                remove(warmup_filepath)
+            except OSError:
+                pass # ignore cleanup errors
+
     return predicted_samples
 
 ##################################################
@@ -166,16 +220,31 @@ def encode_subframe(subframe_data: np.array, entropy_coder: EntropyCoder, order:
     if not np.all(np.abs(np.roots(lpc_coefficients)) < 1):
         warnings.warn(message = "Linear prediction coefficients are unstable!", category = RuntimeWarning)
     lpc_coefficients = lpc_coefficients[1:] # remove first coefficient which is 1.0
-    lpc_coefficients = np.round(lpc_coefficients).astype(LPC_COEFFICIENTS_DTYPE) # quantize
+    lpc_coefficients = lpc_coefficients.astype(LPC_COEFFICIENTS_DTYPE) # preserve precision for lossless compression
     
     # store first `order` samples as warmup samples for LPC
     warmup_samples = subframe_data[:order].copy()
     
-    # predict samples from index `order` onwards using previous reconstructed samples
+    # predict samples from index `order` onwards using iterative approach (same as decoding)
     samples_to_predict = subframe_data[order:]
     n_predicted_samples = len(samples_to_predict)
-    predicted_samples = lpc_predict_samples(lpc_coefficients = lpc_coefficients, warmup_samples = warmup_samples, n_predicted_samples = n_predicted_samples)
-    predicted_samples = np.round(predicted_samples).astype(subframe_data.dtype) # quantize predicted samples
+    
+    # use same iterative prediction as in decoding
+    reconstructed_samples = np.zeros(len(subframe_data), dtype=np.int64)
+    reconstructed_samples[:order] = warmup_samples.astype(np.int64)
+    
+    predicted_samples = np.zeros(n_predicted_samples, dtype=np.int32)
+    for i in range(n_predicted_samples):
+        sample_idx = order + i
+        
+        # predict using previous reconstructed samples (same logic as decoding)
+        previous_samples = reconstructed_samples[sample_idx-order:sample_idx][::-1]  # reverse order for dot product
+        predicted_value = np.dot(lpc_coefficients.astype(np.float64), previous_samples.astype(np.float64))
+        predicted_value = int(np.round(predicted_value))  # round exactly as in decoding
+        predicted_samples[i] = predicted_value
+        
+        # update reconstructed samples for next prediction (using original sample, not residual)
+        reconstructed_samples[sample_idx] = subframe_data[sample_idx]
     
     # encode residuals
     residuals = samples_to_predict - predicted_samples
@@ -212,12 +281,29 @@ def decode_subframe(bottleneck_subframe: BOTTLENECK_SUBFRAME_TYPE, entropy_coder
     n_predicted_samples = n_samples - len(warmup_samples)
     residuals = entropy_coder.decode(stream = encoded_residuals, num_samples = n_predicted_samples)
 
-    # predict samples from index `order` onwards using previous reconstructed samples
-    predicted_samples = lpc_predict_samples(lpc_coefficients = lpc_coefficients, warmup_samples = warmup_samples, n_predicted_samples = n_predicted_samples)
-    predicted_samples = np.round(predicted_samples).astype(np.int32) # quantize predicted samples
-
-    # reconstruct subframe
-    reconstructed_subframe = np.concatenate((warmup_samples, predicted_samples + residuals), axis = 0)
+    # reconstruct samples one by one using previously reconstructed samples for prediction
+    order = len(lpc_coefficients)
+    reconstructed_subframe = np.zeros(n_samples, dtype=np.int64)
+    
+    # copy warmup samples
+    reconstructed_subframe[:order] = warmup_samples.astype(np.int64)
+    
+    # reconstruct each sample iteratively using previous reconstructed samples
+    for i in range(n_predicted_samples):
+        sample_idx = order + i
+        
+        # predict using previous reconstructed samples
+        previous_samples = reconstructed_subframe[sample_idx-order:sample_idx][::-1]  # reverse order for dot product
+        predicted_value = np.dot(lpc_coefficients.astype(np.float64), previous_samples.astype(np.float64))
+        predicted_value = int(np.round(predicted_value))  # round to match encoding
+        
+        # add residual to get reconstructed sample
+        reconstructed_value = predicted_value + residuals[i]
+        reconstructed_subframe[sample_idx] = reconstructed_value
+    
+    # ensure output is int32 and clip to prevent overflow
+    logging.debug(f"naive_lpc.decode_subframe: before conversion dtype={reconstructed_subframe.dtype}, shape={reconstructed_subframe.shape}, range=[{np.min(reconstructed_subframe)}, {np.max(reconstructed_subframe)}]")
+    reconstructed_subframe = np.clip(reconstructed_subframe, np.iinfo(np.int32).min, np.iinfo(np.int32).max).astype(np.int32)
     
     return reconstructed_subframe
 
@@ -408,7 +494,7 @@ class NaiveLPC(LosslessCompressor):
     Naive LPC Compressor.
     """
 
-    def __init__(self, entropy_coder: EntropyCoder, order: int = ORDER_DEFAULT, interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT, jobs: int = JOBS_DEFAULT):
+    def __init__(self, entropy_coder: EntropyCoder, order: int = ORDER_DEFAULT, block_size: int = BLOCK_SIZE_DEFAULT, interchannel_decorrelation: bool = INTERCHANNEL_DECORRELATION_DEFAULT, jobs: int = JOBS_DEFAULT):
         """
         Initialize the Naive LPC Compressor.
 
@@ -418,6 +504,8 @@ class NaiveLPC(LosslessCompressor):
             The entropy coder to use.
         order : int, default = ORDER_DEFAULT
             The LPC order to use for encoding, defaults to ORDER_DEFAULT.
+        block_size : int, default = BLOCK_SIZE_DEFAULT
+            The block size to use for encoding.
         interchannel_decorrelation : bool, default = INTERCHANNEL_DECORRELATION_DEFAULT
             Whether to decorrelate channels.
         jobs : int, default = JOBS_DEFAULT
@@ -426,8 +514,11 @@ class NaiveLPC(LosslessCompressor):
         self.entropy_coder = entropy_coder
         self.order = order
         assert self.order > 0, "LPC order must be positive."
+        self.block_size = block_size
+        assert self.block_size > 0 and self.block_size <= utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION, f"Block size must be positive and less than or equal to {utils.MAXIMUM_BLOCK_SIZE_ASSUMPTION}."
         self.interchannel_decorrelation = interchannel_decorrelation
         self.jobs = jobs
+        assert self.jobs > 0 and self.jobs <= multiprocessing.cpu_count(), f"Number of jobs must be positive and less than or equal to {multiprocessing.cpu_count()}."
         
     def encode(self, data: np.array) -> BOTTLENECK_TYPE:
         """
