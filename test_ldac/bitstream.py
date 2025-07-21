@@ -44,7 +44,14 @@ class BitInputStream:
         self.is_byte_aligned = True # no bytes have been read yet
 
     def read_bit(self) -> bool:
-        """Read a single bit."""
+        """
+        Read a single bit.
+
+        Returns
+        -------
+        bool
+            The bit.
+        """
         if self.bit_buffer_position == 0: # read the next byte if necessary
             _ = self.read_byte() # sets bit buffer to the current byte
         current_bit = self.bit_buffer >> (7 - self.bit_buffer_position) # get the correct bit from the bit buffer
@@ -55,7 +62,19 @@ class BitInputStream:
         return current_bit
     
     def read_bits(self, n: int) -> int:
-        """Read `n` bits."""
+        """
+        Read `n` bits.
+
+        Parameters
+        ----------
+        n : int
+            The number of bits to read.
+
+        Returns
+        -------
+        int
+            The bits.
+        """
         value = 0
         for _ in range(n):
             value <<= 1
@@ -63,7 +82,14 @@ class BitInputStream:
         return value
 
     def read_byte(self) -> int:
-        """Read a single byte."""
+        """
+        Read a single byte.
+
+        Returns
+        -------
+        int
+            The byte.
+        """
         assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!" # ensure byte alignment
         try:
             self.bit_buffer = next(self.stream_iter) # read in current byte
@@ -72,7 +98,14 @@ class BitInputStream:
         return self.bit_buffer # return the current byte
 
     def read_uint(self) -> int:
-        """Read an unsigned integer (4 bytes)."""
+        """
+        Read an unsigned integer (4 bytes).
+
+        Returns
+        -------
+        int
+            The unsigned integer.
+        """
         assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!" # ensure byte alignment
         current_uint = 0
         for _ in range(4):
@@ -81,7 +114,14 @@ class BitInputStream:
         return current_uint
 
     def read_int(self) -> int:
-        """Read a signed integer (4 bytes)."""
+        """
+        Read a signed integer (4 bytes).
+
+        Returns
+        -------
+        int
+            The signed integer.
+        """
         assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!" # ensure byte alignment
         current_int = self.read_uint()
         most_significant_bit = bool(current_int >> 31) # get the most significant bit
@@ -127,7 +167,14 @@ class BitOutputStream:
         self.is_byte_aligned = True
 
     def write_bit(self, bit: bool):
-        """Write a single bit."""
+        """
+        Write a single bit.
+
+        Parameters
+        ----------
+        bit : bool
+            The bit to write.
+        """
         if bit == True: # if the bit is 1
             self.bit_buffer |= (1 << (7 - self.bit_buffer_position)) # set the bit
         self.bit_buffer_position += 1
@@ -136,7 +183,16 @@ class BitOutputStream:
             self.flush_byte()
 
     def write_bits(self, bits: int, n: int):
-        """Write `n` bits."""
+        """
+        Write `n` bits.
+
+        Parameters
+        ----------
+        bits : int
+            The bits to write.
+        n : int
+            The number of bits to write.
+        """
         for i in range(n): # iterate over n bits
             bit = bits >> (n - i - 1) # shift relevant bit all the way to right
             bit &= 1 # mask out all but rightmost bit
@@ -144,18 +200,39 @@ class BitOutputStream:
             self.write_bit(bit = bit) # write the bit
 
     def write_byte(self, byte: int):
-        """Write a single byte."""
+        """
+        Write a single byte.
+
+        Parameters
+        ----------
+        byte : int
+            The byte to write.
+        """
         assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!" # ensure byte alignment
         self.stream.append(byte)
 
     def write_uint(self, value: int):
-        """Write an unsigned integer (4 bytes)."""
+        """
+        Write an unsigned integer (4 bytes).
+
+        Parameters
+        ----------
+        value : int
+            The unsigned integer to write.
+        """
         assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!" # ensure byte alignment
         for shift in (3, 2, 1, 0):
             self.write_byte((value >> (shift * 8)) & 0xFF)
 
     def write_int(self, value: int):
-        """Write a signed integer (4 bytes)."""
+        """
+        Write a signed integer (4 bytes).
+
+        Parameters
+        ----------
+        value : int
+            The signed integer to write.
+        """
         assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!" # ensure byte alignment
         if value < 0:
             value += (1 << 32)
@@ -175,7 +252,14 @@ class BitOutputStream:
         self.is_byte_aligned = True
 
     def flush(self) -> bytes:
-        """Flush stream contents, returning a bytes object."""
+        """
+        Flush stream contents, returning a bytes object.
+
+        Returns
+        -------
+        bytes
+            The stream contents.
+        """
         self.align_to_byte()
         return bytes(self.stream)
 

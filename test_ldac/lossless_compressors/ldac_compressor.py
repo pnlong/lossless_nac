@@ -16,9 +16,10 @@ from math import ceil, log2
 
 from os.path import dirname, realpath
 import sys
-sys.path.insert(0, f"{dirname(dirname(realpath(__file__)))}/entropy_coders")
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
 sys.path.insert(0, f"{dirname(dirname(dirname(realpath(__file__))))}/dac") # for dac import
 
+from entropy_coders.factory import TYPES
 import dac
 
 # ignore deprecation warning from pytorch
@@ -30,17 +31,21 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 # CONSTANTS
 ##################################################
 
-BLOCK_SIZE_DEFAULT = 4096 # default block size for partitioning data into frames
-MAXIMUM_BLOCK_SIZE_ASSUMPTION = (2 ** 16) - 1 # maximum block size value (we expect the block size to be this value or lesser)
-MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES = ceil(log2(MAXIMUM_BLOCK_SIZE_ASSUMPTION + 1) / 8) # convert into number of bytes
-MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION = (2 ** 8) - 1 # maximum DAC time dimension value (we expect the DAC time dimension to be this value or lesser)
-MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BYTES = ceil(log2(MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION + 1) / 8) # convert into number of bytes
 DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # path to descript audio codec pretrained model
 MAXIMUM_CODEBOOK_LEVEL = 9 # maximum codebook level for the pretrained descript audio codec model
 MAXIMUM_CODEBOOK_LEVEL_BITS = ceil(log2(MAXIMUM_CODEBOOK_LEVEL + 1)) # convert into number of bits
 CODEBOOK_LEVEL_DEFAULT = MAXIMUM_CODEBOOK_LEVEL # codebook level for descript audio codec model, use the upper bound as the default
+MAXIMUM_AUDIO_SCALE = 2 ** (32 - 1) # maximum audio scale for DAC processing
+MAXIMUM_AUDIO_SCALE_BITS = ceil(log2((log2(MAXIMUM_AUDIO_SCALE) + 1) / 8)) # convert into number of bits
+AUDIO_SCALE_DEFAULT = 2 ** (16 - 1)  # audio-appropriate scaling factor for DAC processing
+BLOCK_SIZE_DEFAULT = 4096 # default block size for partitioning data into frames
+MAXIMUM_BLOCK_SIZE_ASSUMPTION = (2 ** 16) - 1 # maximum block size value (we expect the block size to be this value or lesser)
+MAXIMUM_BLOCK_SIZE_ASSUMPTION_BITS = ceil(log2(MAXIMUM_BLOCK_SIZE_ASSUMPTION + 1) / 8) * 8 # convert into number of bits
+MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION = (2 ** 8) - 1 # maximum DAC time dimension value (we expect the DAC time dimension to be this value or lesser)
+MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BITS = ceil(log2(MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION + 1) / 8) * 8 # convert into number of bits
+MAXIMUM_BATCH_SIZE = (2 ** 7) # maximum batch size for GPU processing
+MAXIMUM_BATCH_SIZE_BITS = ceil(log2(log2(MAXIMUM_BATCH_SIZE) + 1)) # convert into number of bits
 BATCH_SIZE_DEFAULT = 32 # optimal batch size for GPU processing
-AUDIO_SCALE = 32768.0 # audio-appropriate scaling factor for DAC processing
 
 ##################################################
 
@@ -48,7 +53,7 @@ AUDIO_SCALE = 32768.0 # audio-appropriate scaling factor for DAC processing
 # CONVERSION FUNCTIONS
 ##################################################
 
-def convert_audio_fixed_to_floating(waveform: np.ndarray, audio_scale: float = AUDIO_SCALE) -> np.ndarray:
+def convert_audio_fixed_to_floating(waveform: np.ndarray, audio_scale: float = AUDIO_SCALE_DEFAULT) -> np.ndarray:
     """
     Convert fixed-point audio to floating-point using appropriate audio scaling.
 
@@ -56,7 +61,7 @@ def convert_audio_fixed_to_floating(waveform: np.ndarray, audio_scale: float = A
     ----------
     waveform : np.ndarray
         The waveform to convert.
-    audio_scale : float, default = AUDIO_SCALE
+    audio_scale : float, default = AUDIO_SCALE_DEFAULT
         The audio scale to use.
     
     Returns
@@ -66,7 +71,7 @@ def convert_audio_fixed_to_floating(waveform: np.ndarray, audio_scale: float = A
     """
     return waveform.astype(np.float32) / audio_scale
 
-def convert_audio_floating_to_fixed(waveform: np.ndarray, output_dtype: type = np.int32, audio_scale: float = AUDIO_SCALE) -> np.ndarray:
+def convert_audio_floating_to_fixed(waveform: np.ndarray, output_dtype: type = np.int32, audio_scale: float = AUDIO_SCALE_DEFAULT) -> np.ndarray:
     """
     Convert floating-point audio to fixed-point using appropriate audio scaling.
     
@@ -76,7 +81,7 @@ def convert_audio_floating_to_fixed(waveform: np.ndarray, output_dtype: type = n
         The waveform to convert.
     output_dtype : type, default = np.int32
         The output dtype to use.
-    audio_scale : float, default = AUDIO_SCALE
+    audio_scale : float, default = AUDIO_SCALE_DEFAULT
         The audio scale to use.
 
     Returns
@@ -85,6 +90,26 @@ def convert_audio_floating_to_fixed(waveform: np.ndarray, output_dtype: type = n
         The converted waveform
     """
     return np.round(waveform * audio_scale).astype(output_dtype)
+
+def get_optimal_audio_scale(waveform: np.ndarray) -> float:
+    """
+    Get the optimal audio scale for a waveform.
+    
+    Parameters
+    ----------
+    waveform : np.ndarray
+        The waveform to get the optimal audio scale for.
+        
+    Returns
+    -------
+    float
+        The optimal audio scale.
+    """
+    max_abs = np.max(np.abs(waveform))
+    optimal_audio_scale = ceil((log2(max_abs) + 1) / 8)
+    optimal_audio_scale = 2 ** ((8 * optimal_audio_scale) - 1)
+    optimal_audio_scale = float(optimal_audio_scale)
+    return optimal_audio_scale
 
 def get_numpy_dtype_bit_size(dtype: np.dtype) -> int:
     """
@@ -117,6 +142,107 @@ def get_numpy_dtype_from_bit_size(bit_size: int) -> np.dtype:
         Appropriate numpy dtype.
     """
     return np.dtype(f"int{bit_size}")
+
+def encode_batch_size_bits(batch_size: int = BATCH_SIZE_DEFAULT) -> int:
+    """
+    Encode batch size as 3 bits (0-7) where actual batch size = 2^x.
+    
+    Parameters
+    ----------
+    batch_size : int, default = BATCH_SIZE_DEFAULT
+        The actual batch size to encode.
+        
+    Returns
+    -------
+    int
+        Encoded batch size bits (0-7).
+    """
+    batch_size_bits = int(log2(batch_size))
+    return batch_size_bits
+
+def decode_batch_size_bits(batch_size_bits: int = int(log2(BATCH_SIZE_DEFAULT))) -> int:
+    """
+    Decode batch size from 3 bits (0-7) where actual batch size = 2^x.
+    
+    Parameters
+    ----------
+    batch_size_bits : int, default = int(log2(BATCH_SIZE_DEFAULT))
+        Encoded batch size bits (0-7).
+        
+    Returns
+    -------
+    int
+        Actual batch size.
+    """
+    return 2 ** batch_size_bits
+
+def encode_audio_scale_bits(audio_scale: float = AUDIO_SCALE_DEFAULT) -> int:
+    """
+    Encode audio scale as 2 bits (0-3) where actual audio scale = 2^((8*(x+1))-1).
+    
+    Parameters
+    ----------
+    audio_scale : float
+        The actual audio scale to encode.
+        
+    Returns
+    -------
+    int
+        Encoded audio scale bits (0-3).
+    """
+    audio_scale_bits = int((log2(audio_scale) + 1) / 8) - 1
+    return audio_scale_bits
+
+def decode_audio_scale_bits(audio_scale_bits: int = int(log2(AUDIO_SCALE_DEFAULT) / 8) - 1) -> float:
+    """
+    Decode audio scale from 2 bits (0-3) where actual audio scale = 2^((8*(x+1))-1).
+    
+    Parameters
+    ----------
+    audio_scale_bits : int, default = int(log2(AUDIO_SCALE_DEFAULT) / 8) - 1
+        Encoded audio scale bits (0-3).
+        
+    Returns
+    -------
+    float
+        Actual audio scale.
+    """
+    return 2 ** ((8 * (audio_scale_bits + 1)) - 1)
+
+##################################################
+
+
+# FRAME OPERATIONS FUNCTIONS
+##################################################
+
+def pad_to_batch_size(items: List, target_batch_size: int, pad_item: Any = None) -> List:
+    """
+    Pad a list to the target batch size with padding items.
+    
+    Parameters
+    ----------
+    items : List
+        List of items to pad.
+    target_batch_size : int
+        Target batch size.
+    pad_item : Any, default = None
+        Item to use for padding.
+        
+    Returns
+    -------
+    List
+        Padded list.
+    """
+
+    # truncate if too long
+    if len(items) >= target_batch_size:
+        return items[:target_batch_size]
+    
+    # add padding
+    padding_needed = target_batch_size - len(items)
+    padded_items = items + ([pad_item] * padding_needed)
+    
+    return padded_items
 
 def partition_data_into_frames(data: np.ndarray, block_size: int = BLOCK_SIZE_DEFAULT) -> List[np.ndarray]:
     """
@@ -241,7 +367,7 @@ def collect_subframes_for_batch_processing(frames: List[np.ndarray]) -> Tuple[Li
 # DAC ENCODING/DECODING FUNCTIONS
 ##################################################
 
-def batch_dac_encode_full(subframes_batch: np.ndarray, model: dac.model.dac.DAC, sample_rate: int, codebook_level: int) -> Tuple[np.ndarray, np.ndarray]:
+def batch_dac_encode_full(subframes_batch: np.ndarray, model: dac.model.dac.DAC, sample_rate: int, codebook_level: int, audio_scale: float) -> Tuple[np.ndarray, np.ndarray]:
     """
     Encode batch of subframes through DAC and return both codes and reconstructions.
     
@@ -255,6 +381,8 @@ def batch_dac_encode_full(subframes_batch: np.ndarray, model: dac.model.dac.DAC,
         Sample rate of the audio.
     codebook_level : int
         The number of codebooks to use for DAC encoding.
+    audio_scale : float
+        The audio scale to use for DAC encoding.
         
     Returns
     -------
@@ -268,7 +396,7 @@ def batch_dac_encode_full(subframes_batch: np.ndarray, model: dac.model.dac.DAC,
     
     # preprocess batch
     x = model.preprocess(
-        audio_data = torch.from_numpy(convert_audio_fixed_to_floating(waveform = batch_audio.audio_data.numpy())).to(model.device), # convert to float with correct audio scaling
+        audio_data = torch.from_numpy(convert_audio_fixed_to_floating(waveform = batch_audio.audio_data.numpy(), audio_scale = audio_scale)).to(model.device), # convert to float with correct audio scaling
         sample_rate = sample_rate,
     ).float()
     
@@ -286,7 +414,7 @@ def batch_dac_encode_full(subframes_batch: np.ndarray, model: dac.model.dac.DAC,
     
     return codes_batch, approximate_batch
 
-def batch_dac_encode_codes_only(subframes_batch: np.ndarray, model: dac.model.dac.DAC, sample_rate: int, codebook_level: int) -> np.ndarray:
+def batch_dac_encode_codes_only(subframes_batch: np.ndarray, model: dac.model.dac.DAC, sample_rate: int, codebook_level: int, audio_scale: float) -> np.ndarray:
     """
     Encode batch of subframes through DAC and return only codes.
     
@@ -300,6 +428,8 @@ def batch_dac_encode_codes_only(subframes_batch: np.ndarray, model: dac.model.da
         Sample rate of the audio.
     codebook_level : int
         The number of codebooks to use for DAC encoding.
+    audio_scale : float
+        The audio scale to use for DAC encoding.
         
     Returns
     -------
@@ -313,7 +443,7 @@ def batch_dac_encode_codes_only(subframes_batch: np.ndarray, model: dac.model.da
     
     # preprocess batch
     x = model.preprocess(
-        audio_data = torch.from_numpy(convert_audio_fixed_to_floating(waveform = batch_audio.audio_data.numpy())).to(model.device), # convert to float with correct audio scaling
+        audio_data = torch.from_numpy(convert_audio_fixed_to_floating(waveform = batch_audio.audio_data.numpy(), audio_scale = audio_scale)).to(model.device), # convert to float with correct audio scaling
         sample_rate = sample_rate,
     ).float()
     
@@ -326,17 +456,20 @@ def batch_dac_encode_codes_only(subframes_batch: np.ndarray, model: dac.model.da
     
     return codes_batch
 
-def batch_dac_decode(codes_batch: np.ndarray, model: dac.model.dac.DAC) -> np.ndarray:
+def batch_dac_decode(
+    codes_batch: np.array,
+    model: dac.model.dac.DAC,
+) -> np.ndarray:
     """
-    Decode batch of DAC codes.
-    
+    Batch decode multiple codes using the DAC model.
+
     Parameters
     ----------
-    codes_batch : np.ndarray
-        Batch of DAC codes.
+    codes_batch : np.array
+        Batch of codes to decode. Shape: (batch_size, codebook_level, time_dimension).
     model : dac.model.dac.DAC
-        The DAC model to use for reconstruction.
-        
+        The DAC model to use for decoding.
+
     Returns
     -------
     np.ndarray
@@ -489,6 +622,39 @@ def validate_input_data(data: np.ndarray) -> None:
     if len(data.shape) == 2:
         assert data.shape[1] == 2, "Data must be 2D with 2 channels."
     assert data.dtype == np.int32, "Data must be int32."
+
+def validate_input_args(
+    sample_rate: int,
+    model: dac.model.dac.DAC,
+    block_size: int = BLOCK_SIZE_DEFAULT,
+    codebook_level: int = None,
+    batch_size: int = BATCH_SIZE_DEFAULT,
+    audio_scale: float = AUDIO_SCALE_DEFAULT,
+) -> None:
+    """
+    Validate input arguments.
+    
+    Parameters
+    ----------
+    sample_rate : int
+        The sample rate of the data.
+    model : dac.model.dac.DAC
+        The DAC model to use.
+    block_size : int, default = BLOCK_SIZE_DEFAULT
+        The block size to use for partitioning data into frames.
+    codebook_level : int, default = None
+        The number of codebooks to use for DAC encoding.
+    batch_size : int, default = BATCH_SIZE_DEFAULT
+        The batch size to use for encoding.
+    audio_scale : float, default = AUDIO_SCALE_DEFAULT
+        The audio scale to use for encoding.
+    """
+    assert sample_rate == model.sample_rate, f"Sample rate must match the sample rate of the model. Model sample rate: {model.sample_rate}, provided sample rate: {sample_rate}."
+    assert block_size > 0 and block_size <= MAXIMUM_BLOCK_SIZE_ASSUMPTION, f"Block size must be positive and less than or equal to {MAXIMUM_BLOCK_SIZE_ASSUMPTION}."
+    assert batch_size > 0 and batch_size <= MAXIMUM_BATCH_SIZE and log2(batch_size) % 1 == 0, f"Batch size must be a power of 2 between 1 and {MAXIMUM_BATCH_SIZE}."
+    assert audio_scale > 0 and audio_scale <= MAXIMUM_AUDIO_SCALE and ((log2(audio_scale) + 1) / 8) % 1 == 0, f"Audio scale must be less than or equal to {MAXIMUM_AUDIO_SCALE} and satisfy 2^((8*x)-1) = audio_scale for some integer x."
+    if codebook_level is not None: # if codebook level is provided, validate it
+        assert codebook_level > 0 and codebook_level <= MAXIMUM_CODEBOOK_LEVEL, f"Codebook level must be between 1 and {MAXIMUM_CODEBOOK_LEVEL}."
 
 def validate_output_data(reconstructed_data: np.ndarray) -> None:
     """

@@ -36,7 +36,7 @@ BOTTLENECK_SUBFRAME_TYPE = Tuple[int, int, np.ndarray, bytes] # bottleneck subfr
 BOTTLENECK_FRAME_TYPE = List[BOTTLENECK_SUBFRAME_TYPE] # bottleneck frame type is a list of subframes
 
 # type of bottleneck
-BOTTLENECK_TYPE = Tuple[int, int, List[BOTTLENECK_FRAME_TYPE]] # bottleneck type is a tuple of the codebook level, serialized entropy coder, and list of frames
+BOTTLENECK_TYPE = Tuple[int, int, int, int, List[BOTTLENECK_FRAME_TYPE]] # bottleneck type is a tuple of the codebook level, batch size bits, audio scale bits, serialized entropy coder, and list of frames
 
 ##################################################
 
@@ -52,6 +52,7 @@ def encode_subframes_batch_optimized(
     sample_rate: int,
     codebook_level: int = CODEBOOK_LEVEL_DEFAULT,
     batch_size: int = BATCH_SIZE_DEFAULT,
+    audio_scale: float = AUDIO_SCALE_DEFAULT,
 ) -> List[BOTTLENECK_SUBFRAME_TYPE]:
     """
     Encode multiple subframes using batched DAC processing.
@@ -72,6 +73,8 @@ def encode_subframes_batch_optimized(
         Number of codebooks to use.
     batch_size : int
         Batch size for processing
+    audio_scale : float, default = AUDIO_SCALE_DEFAULT
+        The audio scale to use for encoding.
         
     Returns
     -------
@@ -90,6 +93,14 @@ def encode_subframes_batch_optimized(
         batch_subframes = subframes_data[i:batch_end] # batch of subframes
         batch_metadata = subframes_metadata[i:batch_end] # batch of metadata
         
+        # pad batch to exact batch size to ensure consistent batch processing
+        if len(batch_subframes) < batch_size: # pad with zeros to match batch_size
+            padding_needed = batch_size - len(batch_subframes)
+            dummy_subframe = np.zeros_like(batch_subframes[0])
+            dummy_metadata = {"original_length": 0, "frame_idx": -1, "channel_idx": -1}
+            batch_subframes = batch_subframes + ([dummy_subframe] * padding_needed)
+            batch_metadata = batch_metadata + ([dummy_metadata] * padding_needed)
+        
         # pad subframes to same length
         padded_batch = pad_subframes_to_batch(subframes = batch_subframes)
         
@@ -99,10 +110,15 @@ def encode_subframes_batch_optimized(
             model = model,
             sample_rate = sample_rate,
             codebook_level = codebook_level,
+            audio_scale = audio_scale,
         )
         
-        # process each item in the batch
+        # process each item in the batch (only non-dummy items)
         for j, (codes, approximate, metadata) in enumerate(zip(codes_batch, approximate_batch, batch_metadata)):
+
+            # skip dummy padding items
+            if metadata["frame_idx"] == -1:
+                continue
 
             # get original length and subframe
             original_length = metadata["original_length"]
@@ -113,6 +129,7 @@ def encode_subframes_batch_optimized(
             approximate_truncated = convert_audio_floating_to_fixed(
                 waveform = approximate_truncated,
                 output_dtype = original_subframe.dtype,
+                audio_scale = audio_scale,
             )
             
             # compute residuals
@@ -138,6 +155,7 @@ def decode_subframes_batch_optimized(
     entropy_coder: EntropyCoder,
     model: dac.model.dac.DAC,
     batch_size: int = BATCH_SIZE_DEFAULT,
+    audio_scale: float = AUDIO_SCALE_DEFAULT,
 ) -> List[np.ndarray]:
     """
     Decode multiple subframes using batched DAC processing.
@@ -152,6 +170,8 @@ def decode_subframes_batch_optimized(
         The DAC model to use for reconstruction.
     batch_size : int, default = BATCH_SIZE_DEFAULT
         Batch size for processing.
+    audio_scale : float, default = AUDIO_SCALE_DEFAULT
+        The audio scale to use for decoding.
         
     Returns
     -------
@@ -169,6 +189,19 @@ def decode_subframes_batch_optimized(
         batch_end = min(i + batch_size, len(bottleneck_subframes)) # batch end index
         batch_bottlenecks = bottleneck_subframes[i:batch_end] # batch of bottleneck subframes
         
+        # pad batch to exact batch size to ensure consistent batch processing
+        if len(batch_bottlenecks) < batch_size:
+            
+            # get reference shape from existing codes
+            ref_bottleneck = batch_bottlenecks[0]
+            _, ref_dac_time_dimension, ref_codes, _ = ref_bottleneck
+            codebook_level = ref_codes.shape[0]  # get codebook level from shape
+            dummy_codes = np.zeros((codebook_level, ref_dac_time_dimension), dtype = ref_codes.dtype)
+            
+            # pad with dummy bottleneck subframes
+            dummy_bottleneck = (0, dummy_codes.shape[-1], dummy_codes, bytes())  # dummy bottleneck subframe
+            batch_bottlenecks = batch_bottlenecks + ([dummy_bottleneck] * (batch_size - len(batch_bottlenecks)))
+        
         # extract codes and prepare for batching
         lengths_list = []
         dac_time_dimensions_list = []
@@ -178,7 +211,7 @@ def decode_subframes_batch_optimized(
             lengths_list.append(n_samples) # append length
             dac_time_dimensions_list.append(dac_time_dimension) # append DAC time dimension
             codes_list.append(codes) # append codes
-            residuals = entropy_coder.decode(stream = encoded_residuals, num_samples = n_samples) # decode residuals
+            residuals = entropy_coder.decode(stream = encoded_residuals, num_samples = n_samples) if n_samples > 0 else np.array([], dtype = np.int32) # decode residuals
             residuals_list.append(residuals) # append residuals
         
         # stack codes for batch processing
@@ -187,14 +220,19 @@ def decode_subframes_batch_optimized(
         # batch decode through DAC
         approximate_batch = batch_dac_decode(codes_batch = codes_batch, model = model)
         
-        # process each item in the batch
+        # process each item in the batch (only non-dummy items)
         for j, (approximate, residuals, length, dac_time_dimension) in enumerate(zip(approximate_batch, residuals_list, lengths_list, dac_time_dimensions_list)):
+
+            # skip dummy padding items
+            if length == 0:
+                continue
 
             # truncate and convert approximate
             approximate_truncated = approximate[:length]
             approximate_truncated = convert_audio_floating_to_fixed(
                 waveform = approximate_truncated, 
                 output_dtype = np.int32, # use int32 for compatibility
+                audio_scale = audio_scale,
             )
             
             # reconstruct subframe
@@ -208,6 +246,7 @@ def decode_frames_batch_optimized(
     entropy_coder: EntropyCoder,
     model: dac.model.dac.DAC,
     batch_size: int = BATCH_SIZE_DEFAULT,
+    audio_scale: float = AUDIO_SCALE_DEFAULT,
 ) -> List[np.ndarray]:
     """
     Decode frames using batched DAC processing.
@@ -222,6 +261,8 @@ def decode_frames_batch_optimized(
         DAC model.
     batch_size : int, default = BATCH_SIZE_DEFAULT
         Batch size for processing.
+    audio_scale : float, default = AUDIO_SCALE_DEFAULT
+        The audio scale to use for decoding.
         
     Returns
     -------
@@ -238,6 +279,7 @@ def decode_frames_batch_optimized(
         entropy_coder = entropy_coder,
         model = model,
         batch_size = batch_size,
+        audio_scale = audio_scale,
     )
     
     # organize back into frames
@@ -276,10 +318,10 @@ def get_compressed_subframe_size(
     n_samples, dac_time_dimension, codes, encoded_residuals = bottleneck_subframe
 
     # add size for storing number of samples
-    total_size = MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES
+    total_size = MAXIMUM_BLOCK_SIZE_ASSUMPTION_BITS * 8
 
     # add size for DAC codes
-    total_size += MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BYTES # we can store the DAC time dimension as one byte, as a 1-byte unsigned integer
+    total_size += MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BITS * 8 # we can store the DAC time dimension as one byte, as a 1-byte unsigned integer
     total_size += get_numpy_dtype_bit_size(dtype = codes.dtype) # number of bits per sample for dtype
     total_size += codes.nbytes
 
@@ -324,8 +366,9 @@ def encode(
     entropy_coder: EntropyCoder,
     model: dac.model.dac.DAC,
     sample_rate: int,
-    block_size: int = BLOCK_SIZE_DEFAULT,
     codebook_level: int = CODEBOOK_LEVEL_DEFAULT,
+    audio_scale: float = None,
+    block_size: int = BLOCK_SIZE_DEFAULT,
     batch_size: int = BATCH_SIZE_DEFAULT,
 ) -> BOTTLENECK_TYPE:
     """
@@ -341,10 +384,12 @@ def encode(
         The DAC model to use.
     sample_rate : int
         The sample rate of the data.
-    block_size : int, default = BLOCK_SIZE_DEFAULT
-        The block size to use for encoding.
     codebook_level : int, default = CODEBOOK_LEVEL_DEFAULT
         The number of codebooks to use for DAC encoding.
+    audio_scale : float, default = None
+        The audio scale to use for encoding. If None, will be calculated using the data. If provided, will be used as is.
+    block_size : int, default = BLOCK_SIZE_DEFAULT
+        The block size to use for encoding.
     batch_size : int, default = BATCH_SIZE_DEFAULT
         The batch size to use for encoding.
 
@@ -353,13 +398,22 @@ def encode(
     BOTTLENECK_TYPE
         The bottleneck.
     """
+
+    # calculate audio scale if not provided
+    if audio_scale is None:
+        audio_scale = get_optimal_audio_scale(waveform = data)
     
     # ensure input is valid
     validate_input_data(data = data)
-    assert sample_rate == model.sample_rate, f"Sample rate must match the sample rate of the model. Model sample rate: {model.sample_rate}, provided sample rate: {sample_rate}."
-    assert block_size > 0 and block_size <= MAXIMUM_BLOCK_SIZE_ASSUMPTION, f"Block size must be positive and less than or equal to {MAXIMUM_BLOCK_SIZE_ASSUMPTION}."
-    assert codebook_level > 0 and codebook_level <= MAXIMUM_CODEBOOK_LEVEL, f"Codebook level must be between 1 and {MAXIMUM_CODEBOOK_LEVEL}."
-    assert batch_size > 0, "Batch size must be positive."
+    validate_input_args(
+        sample_rate = sample_rate,
+        model = model,
+        block_size = block_size,
+        codebook_level = codebook_level,
+        batch_size = batch_size,
+        audio_scale = audio_scale,
+    )
+    assert codebook_level > 0, "Codebook level must be positive for Naive DAC."
     
     # split data into frames
     frames = partition_data_into_frames(data = data, block_size = block_size)
@@ -377,6 +431,7 @@ def encode(
             sample_rate = sample_rate,
             codebook_level = codebook_level,
             batch_size = batch_size,
+            audio_scale = audio_scale,
         )
     
     # organize subframes back into frame structure
@@ -386,15 +441,18 @@ def encode(
         n_frames = len(frames),
     )
 
+    # encode metadata
+    batch_size_bits = encode_batch_size_bits(batch_size = batch_size)
+    audio_scale_bits = encode_audio_scale_bits(audio_scale = audio_scale)
+
     # pack final bottleneck
-    bottleneck = (codebook_level, serialize(entropy_coder = entropy_coder), bottleneck)
+    bottleneck = (codebook_level, batch_size_bits, audio_scale_bits, serialize(entropy_coder = entropy_coder), bottleneck)
     
     return bottleneck
 
 def decode(
     bottleneck: BOTTLENECK_TYPE,
     model: dac.model.dac.DAC,
-    batch_size: int = BATCH_SIZE_DEFAULT,
 ) -> np.ndarray:
     """
     Decode the bottleneck into the original data.
@@ -405,8 +463,6 @@ def decode(
         The bottleneck to decode.
     model : dac.model.dac.DAC
         The DAC model to use.
-    batch_size : int, default = BATCH_SIZE_DEFAULT
-        The batch size to use for decoding.
 
     Returns
     -------
@@ -415,8 +471,12 @@ def decode(
     """
 
     # unpack bottleneck
-    codebook_level, serialized_entropy_coder, bottleneck = bottleneck
+    codebook_level, batch_size_bits, audio_scale_bits, serialized_entropy_coder, bottleneck = bottleneck
     entropy_coder = deserialize(header_byte = serialized_entropy_coder)
+    
+    # decode metadata
+    batch_size = decode_batch_size_bits(batch_size_bits = batch_size_bits)
+    audio_scale = decode_audio_scale_bits(audio_scale_bits = audio_scale_bits)
 
     # batch decode frames
     with torch.no_grad():
@@ -425,6 +485,7 @@ def decode(
             entropy_coder = entropy_coder,
             model = model,
             batch_size = batch_size,
+            audio_scale = audio_scale,
         )
     
     # concatenate all decoded frames
@@ -464,10 +525,10 @@ def write_subframe(
     n_samples, dac_time_dimension, codes, encoded_residuals = subframe
     
     # write number of samples
-    bitstream.write_bits(bits = n_samples, n = MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES * 8)
+    bitstream.write_bits(bits = n_samples, n = MAXIMUM_BLOCK_SIZE_ASSUMPTION_BITS)
     
     # write dac_time_dimension
-    bitstream.write_bits(bits = dac_time_dimension, n = MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BYTES * 8)
+    bitstream.write_bits(bits = dac_time_dimension, n = MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BITS)
     
     # write codes array
     codes_bits_per_sample = get_numpy_dtype_bit_size(dtype = codes.dtype)
@@ -530,13 +591,21 @@ def write_bottleneck(
     """
 
     # unpack bottleneck
-    codebook_level, serialized_entropy_coder, bottleneck = bottleneck
+    codebook_level, batch_size_bits, audio_scale_bits, serialized_entropy_coder, bottleneck = bottleneck
 
     # create bitstream
     bit_output = bitstream.BitOutputStream(path = path)
 
     # write codebook level
     bit_output.write_bits(bits = codebook_level, n = MAXIMUM_CODEBOOK_LEVEL_BITS)
+    
+    # write batch size bits
+    bit_output.write_bits(bits = batch_size_bits, n = MAXIMUM_BATCH_SIZE_BITS)
+    
+    # write audio scale bits
+    bit_output.write_bits(bits = audio_scale_bits, n = MAXIMUM_AUDIO_SCALE_BITS)
+    
+    # align to byte
     bit_output.align_to_byte()
 
     # write serialized entropy coder
@@ -582,10 +651,10 @@ def read_subframe(
     """
 
     # read n_samples
-    n_samples = bitstream.read_bits(n = MAXIMUM_BLOCK_SIZE_ASSUMPTION_BYTES * 8)
+    n_samples = bitstream.read_bits(n = MAXIMUM_BLOCK_SIZE_ASSUMPTION_BITS)
     
     # read dac_time_dimension
-    dac_time_dimension = bitstream.read_bits(n = MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BYTES * 8)
+    dac_time_dimension = bitstream.read_bits(n = MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BITS)
     
     # read codes array
     codes_bits_per_sample = bitstream.read_bits(n = 8)
@@ -655,6 +724,14 @@ def read_bottleneck(
 
     # read codebook level
     codebook_level = bit_input.read_bits(n = MAXIMUM_CODEBOOK_LEVEL_BITS)
+    
+    # read batch size bits
+    batch_size_bits = bit_input.read_bits(n = MAXIMUM_BATCH_SIZE_BITS)
+    
+    # read audio scale bits
+    audio_scale_bits = bit_input.read_bits(n = MAXIMUM_AUDIO_SCALE_BITS)
+    
+    # align to byte
     bit_input.align_to_byte()
 
     # read serialized entropy coder
@@ -670,7 +747,7 @@ def read_bottleneck(
         bottleneck[i] = frame
 
     # pack bottleneck
-    bottleneck = (codebook_level, serialized_entropy_coder, bottleneck)
+    bottleneck = (codebook_level, batch_size_bits, audio_scale_bits, serialized_entropy_coder, bottleneck)
     
     return bottleneck
 
@@ -686,8 +763,9 @@ def encode_to_file(
     entropy_coder: EntropyCoder,
     model: dac.model.dac.DAC,
     sample_rate: int,
-    block_size: int = BLOCK_SIZE_DEFAULT,
     codebook_level: int = CODEBOOK_LEVEL_DEFAULT,
+    audio_scale: float = None,
+    block_size: int = BLOCK_SIZE_DEFAULT,
     batch_size: int = BATCH_SIZE_DEFAULT,
 ) -> None:
     """
@@ -705,10 +783,12 @@ def encode_to_file(
         The DAC model to use.
     sample_rate : int
         The sample rate of the data.
-    block_size : int, default = BLOCK_SIZE_DEFAULT
-        The block size to use for encoding.
     codebook_level : int, default = CODEBOOK_LEVEL_DEFAULT
         The number of codebooks to use for DAC encoding.
+    audio_scale : float, default = None
+        The audio scale to use for encoding. If None, will be calculated using the data. If provided, will be used as is.
+    block_size : int, default = BLOCK_SIZE_DEFAULT
+        The block size to use for encoding.
     batch_size : int, default = BATCH_SIZE_DEFAULT
         The batch size to use for encoding.
 
@@ -723,8 +803,9 @@ def encode_to_file(
         entropy_coder = entropy_coder,
         model = model,
         sample_rate = sample_rate,
-        block_size = block_size,
         codebook_level = codebook_level,
+        audio_scale = audio_scale,
+        block_size = block_size,
         batch_size = batch_size,
     )
 
@@ -739,7 +820,6 @@ def encode_to_file(
 def decode_from_file(
     path: str,
     model: dac.model.dac.DAC,
-    batch_size: int = BATCH_SIZE_DEFAULT,
 ) -> np.ndarray:
     """
     Decode the data from a file.
@@ -750,8 +830,6 @@ def decode_from_file(
         The path to the file to read.
     model : dac.model.dac.DAC
         The DAC model to use.
-    batch_size : int, default = BATCH_SIZE_DEFAULT
-        The batch size to use for decoding.
 
     Returns
     -------
@@ -768,7 +846,6 @@ def decode_from_file(
     data = decode(
         bottleneck = bottleneck,
         model = model,
-        batch_size = batch_size,
     )
 
     return data

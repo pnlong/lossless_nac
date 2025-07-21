@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, dirname(realpath(__file__)))
 
 from entropy_coder import EntropyCoder
+from factory import TYPES
 from verbatim import VerbatimCoder
 from naive_rice import NaiveRiceCoder
 from adaptive_rice import AdaptiveRiceCoder
@@ -22,7 +23,7 @@ from adaptive_rice import AdaptiveRiceCoder
 # CONSTANTS
 ##################################################
 
-TYPE_TO_INDEX = {"verbatim": 0, "naive_rice": 1, "adaptive_rice": 2} # type to index mapping
+TYPE_TO_INDEX = {type_: i for i, type_ in enumerate(TYPES)} # type to index mapping
 INDEX_TO_TYPE = {v: k for k, v in TYPE_TO_INDEX.items()} # index to type mapping
 
 ##################################################
