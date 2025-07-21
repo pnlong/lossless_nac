@@ -15,7 +15,7 @@ import argparse
 import multiprocessing
 from typing import List
 from tqdm import tqdm
-from os import makedirs, mkdir
+from os import makedirs, mkdir, listdir
 from os.path import basename, exists, isdir
 from shutil import rmtree
 from glob import iglob
@@ -39,6 +39,16 @@ def get_mixes_only_mask(paths: pd.Series) -> List[bool]:
     where only the audio files that are mixes (not just stems) are True.
     """
     return list(map(lambda path: path.split(".")[-2] == "0", paths))
+
+def get_test_only_mask(paths: pd.Series, musdb18_dir: str = utils.MUSDB18_DIR) -> List[bool]:
+    """
+    Given the list of paths to the preprocessed MUSDB18 dataset, return a boolean mask array 
+    where only the audio files that are stems are from the test set are True.
+    """
+    test_stems = listdir(f"{musdb18_dir}/test") # get test stems
+    test_stems = set(map(lambda stem: stem[:-len(".stem.mp4")], test_stems)) # get test stems without extension
+    assert len(test_stems) == 50, f"Expected 50 test stems, got {len(test_stems)}."
+    return list(map(lambda path: basename(path)[:-len(".stem.0.npy")] in test_stems, paths))
 
 ##################################################
 

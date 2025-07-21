@@ -29,7 +29,7 @@ sys.path.insert(0, dirname(dirname(realpath(__file__)))) # needs to be after so 
 from lossless_compressors import ldac
 from lossless_compressors import ldac_compressor
 import entropy_coders
-from preprocess_musdb18 import get_mixes_only_mask
+from preprocess_musdb18 import get_mixes_only_mask, get_test_only_mask
 import dac
 
 # ignore deprecation warning from pytorch
@@ -94,29 +94,33 @@ if __name__ == "__main__":
     device = torch.device(f"cuda:{abs(args.gpu)}" if using_gpu else "cpu")
     model = dac.DAC.load(location = args.model_path).to(device)
     model.eval() # turn on evaluate mode
-    
-    # write output columns if necessary
-    if not exists(output_filepath) or args.reset: # write column names
-        pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = True, index = False, mode = "w")
-        already_completed_paths = set() # no paths have been already completed
-    else: # determine already completed paths
-        results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
-        results = results[
-            (results["model_path"] == args.model_path) & 
-            (results["entropy_coder"] == args.entropy_coder) & 
-            (results["codebook_level"] == args.codebook_level) & 
-            (results["audio_scale"] == args.audio_scale) & 
-            (results["block_size"] == args.block_size) & 
-            (results["batch_size"] == args.batch_size) & 
-            (results["using_gpu"] == using_gpu)
-        ]
-        already_completed_paths = set(results["path"])
-        del results # free up memory
 
     # parse entropy coder
     entropy_coder_type, entropy_coder_kwargs = args.entropy_coder.split("-")
     entropy_coder_kwargs = json.loads(entropy_coder_kwargs) # parse entropy coder kwargs
     entropy_coder = entropy_coders.factory.get_entropy_coder(type_ = entropy_coder_type, **entropy_coder_kwargs)
+    serialized_entropy_coder = entropy_coders.serialize.serialize(entropy_coder = entropy_coder)
+    
+    # write output columns if necessary
+    if not exists(output_filepath): # write column names
+        pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = True, index = False, mode = "w")
+    results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
+    results_mask = (
+        (results["model_path"] == args.model_path) & 
+        (results["entropy_coder"] == serialized_entropy_coder) & 
+        (results["codebook_level"] == args.codebook_level) & 
+        (results["audio_scale"] == args.audio_scale) & 
+        (results["block_size"] == args.block_size) & 
+        (results["batch_size"] == args.batch_size) & 
+        (results["using_gpu"] == using_gpu))
+    if args.reset:
+        results = results[~results_mask]
+        results.to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = True, index = False, mode = "w")
+        already_completed_paths = set() # no paths have been already completed
+    else: # determine already completed paths
+        results = results[results_mask]
+        already_completed_paths = set(results["path"])
+    del results, results_mask # free up memory
 
     ##################################################
 
@@ -125,101 +129,104 @@ if __name__ == "__main__":
     ##################################################
 
     # read in paths to evaluate
-    sample_rate_by_path = pd.read_csv(filepath_or_buffer = args.input_filepath, sep = ",", header = 0, index_col = False, usecols = ["path", "sample_rate", "original_path"])
-    sample_rate_by_path["is_test"] = list(map(lambda x: basename(dirname(x)) == "test", sample_rate_by_path["original_path"])) # determine whether each path is in the test set
-    sample_rate_by_path = sample_rate_by_path[sample_rate_by_path["is_test"]] # filter to just the test set
-    sample_rate_by_path = sample_rate_by_path.drop(columns = ["original_path", "is_test"]) # drop unnecessary columns
+    sample_rate_by_path = pd.read_csv(filepath_or_buffer = args.input_filepath, sep = ",", header = 0, index_col = False, usecols = ["path", "sample_rate"])
+    sample_rate_by_path = sample_rate_by_path[get_test_only_mask(paths = sample_rate_by_path["path"])] # filter to just the test set
     sample_rate_by_path = sample_rate_by_path.set_index(keys = "path", drop = True)["sample_rate"].to_dict() # dictionary where keys are paths and values are sample rates of those paths
     paths = list(sample_rate_by_path.keys()) # get paths to NPY audio files
+    paths = list(filter(lambda path: path not in already_completed_paths, paths)) # filter out paths that have already been evaluated
 
-    # helper function for determining compression rate
-    def evaluate(path: str):
-        """
-        Determine compression rate given the absolute filepath to an input audio file (stored as a pickled numpy object, NPY).
-        Expects the input audio to be of shape (n_samples, n_channels) for multi-channel audio or (n_samples,) for mono audio.
-        """
+    # only run if there are paths to evaluate
+    if len(paths) > 0:
 
-        # save time by avoiding unnecessary calculations
-        if path in already_completed_paths and not args.reset:
-            return # return nothing, stop execution here
-        
-        # load in waveform
-        waveform = np.load(file = path)
-        waveform = waveform.astype(np.int32) # ensure waveform is stored as int32 for ldac
-        sample_rate = sample_rate_by_path[path]
+        # helper function for determining compression rate
+        def evaluate(path: str):
+            """
+            Determine compression rate given the absolute filepath to an input audio file (stored as a pickled numpy object, NPY).
+            Expects the input audio to be of shape (n_samples, n_channels) for multi-channel audio or (n_samples,) for mono audio.
+            """
 
-        # create temporary LDAC file
-        with tempfile.NamedTemporaryFile(suffix = ".ldac", delete = True) as f:
+            # save time by avoiding unnecessary calculations
+            if path in already_completed_paths and not args.reset:
+                return # return nothing, stop execution here
+            
+            # load in waveform
+            waveform = np.load(file = path)
+            waveform = waveform.astype(np.int32) # ensure waveform is stored as int32 for ldac
+            sample_rate = sample_rate_by_path[path]
 
-            # output filepath
-            path_compressed = f.name
-        
-            # encode and decode
-            with torch.no_grad():
-                duration_audio = len(waveform) / sample_rate
-                start_time = time.perf_counter()
-                ldac.encode_to_file(
-                    path = path_compressed,
-                    data = waveform,
-                    entropy_coder = entropy_coder,
-                    model = model,
-                    sample_rate = sample_rate,
-                    codebook_level = args.codebook_level,
-                    audio_scale = args.audio_scale,
-                    block_size = args.block_size,
-                    batch_size = args.batch_size,
-                )
-                duration_encoding = time.perf_counter() - start_time # measure speed of compression
-                round_trip = ldac.decode_from_file(
-                    path = path_compressed,
-                    model = model,
-                ) # reconstruct waveform from bottleneck to ensure losslessness
-                assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
-                del round_trip, start_time # free up memory
+            # create temporary LDAC file
+            with tempfile.NamedTemporaryFile(suffix = ".ldac", delete = True) as f:
 
-            # compute size in bytes of original waveform
-            size_original = waveform.nbytes
+                # output filepath
+                path_compressed = f.name
+            
+                # encode and decode
+                with torch.no_grad():
+                    duration_audio = len(waveform) / sample_rate
+                    start_time = time.perf_counter()
+                    ldac.encode_to_file(
+                        path = path_compressed,
+                        data = waveform,
+                        entropy_coder = entropy_coder,
+                        model = model,
+                        sample_rate = sample_rate,
+                        codebook_level = args.codebook_level,
+                        audio_scale = args.audio_scale,
+                        block_size = args.block_size,
+                        batch_size = args.batch_size,
+                    )
+                    duration_encoding = time.perf_counter() - start_time # measure speed of compression
+                    round_trip = ldac.decode_from_file(
+                        path = path_compressed,
+                        model = model,
+                    ) # reconstruct waveform from bottleneck to ensure losslessness
+                    assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
+                    del round_trip, start_time # free up memory
 
-            # compute size in bytes of compressed bottleneck
-            size_compressed = getsize(path_compressed)
+                # compute size in bytes of original waveform
+                size_original = waveform.nbytes
 
-            # compute other final statistics
-            compression_rate = size_original / size_compressed
-            compression_speed = duration_audio / duration_encoding
+                # compute size in bytes of compressed bottleneck
+                size_compressed = getsize(path_compressed)
 
-            # output
-            pd.DataFrame(data = [{
-                "path": path,
-                "size_original": size_original,
-                "size_compressed": size_compressed,
-                "compression_rate": compression_rate,
-                "duration_audio": duration_audio,
-                "duration_encoding": duration_encoding,
-                "compression_speed": compression_speed,
-                "model_path": args.model_path,
-                "entropy_coder": entropy_coders.serialize.serialize(entropy_coder = entropy_coder),
-                "codebook_level": args.codebook_level,
-                "audio_scale": args.audio_scale,
-                "block_size": args.block_size,
-                "batch_size": args.batch_size,
-            }]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = False, index = False, mode = "a")
+                # compute other final statistics
+                compression_rate = size_original / size_compressed
+                compression_speed = duration_audio / duration_encoding
 
-        return
+                # output
+                pd.DataFrame(data = [{
+                    "path": path,
+                    "size_original": size_original,
+                    "size_compressed": size_compressed,
+                    "compression_rate": compression_rate,
+                    "duration_audio": duration_audio,
+                    "duration_encoding": duration_encoding,
+                    "compression_speed": compression_speed,
+                    "model_path": args.model_path,
+                    "entropy_coder": serialized_entropy_coder,
+                    "codebook_level": args.codebook_level,
+                    "audio_scale": args.audio_scale,
+                    "block_size": args.block_size,
+                    "batch_size": args.batch_size,
+                    "using_gpu": using_gpu,
+                }]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = False, index = False, mode = "a")
 
-    # evaluate over testbed
-    if using_gpu: # cannot use multiprocessing with GPU
-        for path in tqdm(iterable = paths, desc = "Evaluating", total = len(paths)):
-            _ = evaluate(path = path)
-    else: # we can use multiprocessing if not using GPU
-        with multiprocessing.Pool(processes = args.jobs) as pool:
-            _ = list(tqdm(iterable = pool.imap_unordered(
-                    func = evaluate,
-                    iterable = paths,
-                    chunksize = 1,
-                ),
-                desc = "Evaluating",
-                total = len(paths),
-            ))
+            return
+
+        # evaluate over testbed
+        if using_gpu: # cannot use multiprocessing with GPU
+            for path in tqdm(iterable = paths, desc = "Evaluating", total = len(paths)):
+                _ = evaluate(path = path)
+        else: # we can use multiprocessing if not using GPU
+            with multiprocessing.Pool(processes = args.jobs) as pool:
+                _ = list(tqdm(iterable = pool.imap_unordered(
+                        func = evaluate,
+                        iterable = paths,
+                        chunksize = 1,
+                    ),
+                    desc = "Evaluating",
+                    total = len(paths),
+                ))
         
     # free up memory
     del already_completed_paths, paths, sample_rate_by_path
@@ -235,7 +242,7 @@ if __name__ == "__main__":
         results = results[get_mixes_only_mask(paths = results["path"])]
     results = results[
         (results["model_path"] == args.model_path) & 
-        (results["entropy_coder"] == args.entropy_coder) & 
+        (results["entropy_coder"] == serialized_entropy_coder) & 
         (results["codebook_level"] == args.codebook_level) & 
         (results["audio_scale"] == args.audio_scale) & 
         (results["block_size"] == args.block_size) & 

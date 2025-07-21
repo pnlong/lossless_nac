@@ -15,8 +15,8 @@ from audiotools import AudioSignal
 # Add paths for imports
 from os.path import dirname, realpath
 import sys
-sys.path.insert(0, dirname(realpath(__file__)))
-sys.path.insert(0, f"{dirname(realpath(__file__))}/lossless_compressors")
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
+sys.path.insert(0, f"{dirname(dirname(dirname(realpath(__file__))))}/dac")
 
 from lossless_compressors.ldac_compressor import *
 from lossless_compressors import adaptive_dac

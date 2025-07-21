@@ -15,8 +15,8 @@ from audiotools import AudioSignal
 # Add paths for imports
 from os.path import dirname, realpath
 import sys
-sys.path.insert(0, dirname(realpath(__file__)))
-sys.path.insert(0, f"{dirname(realpath(__file__))}/lossless_compressors")
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
+sys.path.insert(0, f"{dirname(dirname(dirname(realpath(__file__))))}/dac")
 
 from lossless_compressors.ldac_compressor import *
 from lossless_compressors import naive_dac
@@ -36,7 +36,8 @@ OUTPUT_COMPRESSED_PATH = "/tmp/test_naive_dac.ldac"
 OUTPUT_DECODED_PATH = "/tmp/test_naive_dac_decoded.wav"
 
 # Model path (from ldac_compressor.py)
-MODEL_PATH = DAC_PATH
+# MODEL_PATH = DAC_PATH
+MODEL_PATH = "/data3/pnlong/zachdac/latest/dac/weights.pth"
 
 # Encoding parameters
 CODEBOOK_LEVEL = 6  # Use 6 instead of max 9 for faster processing
