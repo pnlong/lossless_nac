@@ -224,10 +224,11 @@ def decode_from_file(
     """
 
     # parse codebook level from file
-    with open(path, "rb") as f:
+    with open(path, mode = "rb") as f:
         first_byte = f.read(1) # read first byte
-        bitstream = bitstream.BitInputStream(stream = first_byte)
-        codebook_level = bitstream.read_bits(n = MAXIMUM_CODEBOOK_LEVEL_BITS)
+    input_stream = bitstream.BitInputStream(stream = first_byte)
+    codebook_level = input_stream.read_bits(n = MAXIMUM_CODEBOOK_LEVEL_BITS)
+    del first_byte, input_stream
 
     # decode using adaptive dac if codebook level is 0
     if codebook_level == 0:

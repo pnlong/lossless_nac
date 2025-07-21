@@ -45,7 +45,7 @@ MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION = (2 ** 8) - 1 # maximum DAC time dimensio
 MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BITS = ceil(log2(MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION + 1) / 8) * 8 # convert into number of bits
 MAXIMUM_BATCH_SIZE = (2 ** 7) # maximum batch size for GPU processing
 MAXIMUM_BATCH_SIZE_BITS = ceil(log2(log2(MAXIMUM_BATCH_SIZE) + 1)) # convert into number of bits
-BATCH_SIZE_DEFAULT = 32 # optimal batch size for GPU processing
+BATCH_SIZE_DEFAULT = 128 # optimal batch size for GPU processing
 
 ##################################################
 

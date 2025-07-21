@@ -13,17 +13,18 @@ import argparse
 import multiprocessing
 from tqdm import tqdm
 from os.path import exists, dirname, basename, getsize
-from os import makedirs, mkdir
+from os import makedirs
 import time
 import torch
 import warnings
 import json
+import tempfile
 
 from os.path import dirname, realpath
 import sys
-sys.path.insert(0, dirname(dirname(realpath(__file__))))
 sys.path.insert(0, dirname(dirname(dirname(realpath(__file__))))) # for preprocess_musdb18
 sys.path.insert(0, f"{dirname(dirname(dirname(realpath(__file__))))}/dac") # import dac package
+sys.path.insert(0, dirname(dirname(realpath(__file__)))) # needs to be after so that lossless_compressors is correctly imported
 
 from lossless_compressors import ldac
 from lossless_compressors import ldac_compressor
@@ -41,11 +42,11 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 ##################################################
 
 # filepaths
-INPUT_FILEPATH = "/deepfreeze/pnlong/lnac/test_data/musdb18_preprocessed/data.csv"
+INPUT_FILEPATH = "/deepfreeze/pnlong/lnac/test_data/musdb18_preprocessed-44100/data.csv"
 OUTPUT_DIR = "/deepfreeze/pnlong/lnac/eval/ldac_new"
 
 # output file
-OUTPUT_COLUMNS = ["path", "path_compressed", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "model_path", "entropy_coder", "codebook_level", "audio_scale", "block_size", "batch_size", "using_gpu"]
+OUTPUT_COLUMNS = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "model_path", "entropy_coder", "codebook_level", "audio_scale", "block_size", "batch_size", "using_gpu"]
 NA_STRING = "NA"
 
 ##################################################
@@ -66,7 +67,7 @@ if __name__ == "__main__":
         parser.add_argument("--input_filepath", type = str, default = INPUT_FILEPATH, help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
         parser.add_argument("--output_dir", type = str, default = OUTPUT_DIR, help = "Absolute filepath to the output directory.")
         parser.add_argument("-mp", "--model_path", type = str, default = ldac_compressor.DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
-        parser.add_argument("--entropy_coder", type = str, default = "naive_rice", help = "Entropy coder to use. Please enter in the following format: <entropy_coder_type>-{\"param\": val, ..., \"param\": val}")
+        parser.add_argument("--entropy_coder", type = str, default = "adaptive_rice", help = "Entropy coder to use. Please enter in the following format: '<entropy_coder_type>-{\"param\": val, ..., \"param\": val}'")
         parser.add_argument("--codebook_level", type = int, default = 0, help = "Codebook level for DAC model. Use 0 for Adaptive DAC.")
         parser.add_argument("--audio_scale", type = float, default = None, help = "Audio scale. If None, determine the optimal audio scale for each waveform.")
         parser.add_argument("--block_size", type = int, default = ldac_compressor.BLOCK_SIZE_DEFAULT, help = "Block size.")
@@ -87,9 +88,6 @@ if __name__ == "__main__":
     if not exists(args.output_dir):
         makedirs(args.output_dir, exist_ok = True)
     output_filepath = f"{args.output_dir}/test.csv"
-    data_dir = f"{args.output_dir}/data"
-    if not exists(data_dir):
-        mkdir(data_dir)
 
     # load descript audio codec
     using_gpu = torch.cuda.is_available() and args.gpu != -1
@@ -127,7 +125,10 @@ if __name__ == "__main__":
     ##################################################
 
     # read in paths to evaluate
-    sample_rate_by_path = pd.read_csv(filepath_or_buffer = args.input_filepath, sep = ",", header = 0, index_col = False, usecols = ["path", "sample_rate"])
+    sample_rate_by_path = pd.read_csv(filepath_or_buffer = args.input_filepath, sep = ",", header = 0, index_col = False, usecols = ["path", "sample_rate", "original_path"])
+    sample_rate_by_path["is_test"] = list(map(lambda x: basename(dirname(x)) == "test", sample_rate_by_path["original_path"])) # determine whether each path is in the test set
+    sample_rate_by_path = sample_rate_by_path[sample_rate_by_path["is_test"]] # filter to just the test set
+    sample_rate_by_path = sample_rate_by_path.drop(columns = ["original_path", "is_test"]) # drop unnecessary columns
     sample_rate_by_path = sample_rate_by_path.set_index(keys = "path", drop = True)["sample_rate"].to_dict() # dictionary where keys are paths and values are sample rates of those paths
     paths = list(sample_rate_by_path.keys()) # get paths to NPY audio files
 
@@ -144,61 +145,64 @@ if __name__ == "__main__":
         
         # load in waveform
         waveform = np.load(file = path)
+        waveform = waveform.astype(np.int32) # ensure waveform is stored as int32 for ldac
         sample_rate = sample_rate_by_path[path]
 
-        # output filepath
-        path_compressed = f"{data_dir}/{basename(path)[:-len('.npy')]}.ldac" # remove .npy extension and add .ldac extension
+        # create temporary LDAC file
+        with tempfile.NamedTemporaryFile(suffix = ".ldac", delete = True) as f:
+
+            # output filepath
+            path_compressed = f.name
         
-        # encode and decode
-        with torch.no_grad():
-            duration_audio = len(waveform) / sample_rate
-            start_time = time.perf_counter()
-            ldac.encode_to_file(
-                path = path_compressed,
-                data = waveform,
-                entropy_coder = entropy_coder,
-                model = model,
-                sample_rate = sample_rate,
-                codebook_level = args.codebook_level,
-                audio_scale = args.audio_scale,
-                block_size = args.block_size,
-                batch_size = args.batch_size,
-            )
-            duration_encoding = time.perf_counter() - start_time # measure speed of compression
-            round_trip = ldac.decode_from_file(
-                path = path_compressed,
-                model = model,
-            ) # reconstruct waveform from bottleneck to ensure losslessness
-            assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
-            del round_trip, start_time # free up memory
+            # encode and decode
+            with torch.no_grad():
+                duration_audio = len(waveform) / sample_rate
+                start_time = time.perf_counter()
+                ldac.encode_to_file(
+                    path = path_compressed,
+                    data = waveform,
+                    entropy_coder = entropy_coder,
+                    model = model,
+                    sample_rate = sample_rate,
+                    codebook_level = args.codebook_level,
+                    audio_scale = args.audio_scale,
+                    block_size = args.block_size,
+                    batch_size = args.batch_size,
+                )
+                duration_encoding = time.perf_counter() - start_time # measure speed of compression
+                round_trip = ldac.decode_from_file(
+                    path = path_compressed,
+                    model = model,
+                ) # reconstruct waveform from bottleneck to ensure losslessness
+                assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
+                del round_trip, start_time # free up memory
 
-        # compute size in bytes of original waveform
-        size_original = waveform.nbytes
+            # compute size in bytes of original waveform
+            size_original = waveform.nbytes
 
-        # compute size in bytes of compressed bottleneck
-        size_compressed = getsize(path_compressed)
+            # compute size in bytes of compressed bottleneck
+            size_compressed = getsize(path_compressed)
 
-        # compute other final statistics
-        compression_rate = size_original / size_compressed
-        compression_speed = duration_audio / duration_encoding
+            # compute other final statistics
+            compression_rate = size_original / size_compressed
+            compression_speed = duration_audio / duration_encoding
 
-        # output
-        pd.DataFrame(data = [{
-            "path": path,
-            "path_compressed": path_compressed,
-            "size_original": size_original,
-            "size_compressed": size_compressed,
-            "compression_rate": compression_rate,
-            "duration_audio": duration_audio,
-            "duration_encoding": duration_encoding,
-            "compression_speed": compression_speed,
-            "model_path": args.model_path,
-            "entropy_coder": entropy_coders.serialize.serialize(entropy_coder = entropy_coder),
-            "codebook_level": args.codebook_level,
-            "audio_scale": args.audio_scale,
-            "block_size": args.block_size,
-            "batch_size": args.batch_size,
-        }]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = False, index = False, mode = "a")
+            # output
+            pd.DataFrame(data = [{
+                "path": path,
+                "size_original": size_original,
+                "size_compressed": size_compressed,
+                "compression_rate": compression_rate,
+                "duration_audio": duration_audio,
+                "duration_encoding": duration_encoding,
+                "compression_speed": compression_speed,
+                "model_path": args.model_path,
+                "entropy_coder": entropy_coders.serialize.serialize(entropy_coder = entropy_coder),
+                "codebook_level": args.codebook_level,
+                "audio_scale": args.audio_scale,
+                "block_size": args.block_size,
+                "batch_size": args.batch_size,
+            }]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = False, index = False, mode = "a")
 
         return
 
@@ -254,6 +258,14 @@ if __name__ == "__main__":
     print(f"Standard Deviation of Compression Speeds: {np.std(compression_speeds):.2f}%")
     print(f"Best Compression Speed: {np.max(compression_speeds):.2f}%")
     print(f"Worst Compression Speed: {np.min(compression_speeds):.2f}%")
+
+    # output statistics on bitrate
+    bitrates = (results["size_compressed"] * 8) / results["duration_audio"]
+    print(f"Mean Bitrate: {np.mean(bitrates):.2f} bps")
+    print(f"Median Bitrate: {np.median(bitrates):.2f} bps")
+    print(f"Standard Deviation of Bitrates: {np.std(bitrates):.2f} bps")
+    print(f"Best Bitrate: {np.max(bitrates):.2f} bps")
+    print(f"Worst Bitrate: {np.min(bitrates):.2f} bps")
 
     ##################################################
 
