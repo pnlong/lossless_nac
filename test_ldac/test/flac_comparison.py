@@ -167,82 +167,6 @@ def pretty_df(df: pd.DataFrame) -> str:
 # FUNCTION TO PLOT STATISTICS
 ##################################################
 
-def plot_compression_statistics_percentiles(df: pd.DataFrame, facet_columns: List[str], output_filepath: str):
-    """
-    Plot compression statistics with a percentile plot.
-    """
-
-    # compute percentiles (0 to 100)
-    percentiles = np.linspace(start = 0, stop = 100, num = 101)
-
-    # set up the matplotlib figure
-    fig, (ax_rate, ax_speed) = plt.subplots(nrows = 2, ncols = 1, figsize = (8, 10), sharex = True, constrained_layout = True)
-
-    # enable seaborn style
-    sns.set_theme(style = "whitegrid")
-
-    # handle case with no facet columns
-    if len(facet_columns) == 0:
-
-        # simple case: no grouping, just compute percentiles for entire dataset
-        compression_rate_percentiles = np.percentile(a = df["compression_rate"], q = percentiles)
-        compression_speed_percentiles = np.percentile(a = df["compression_speed"], q = percentiles)
-        
-        # plot percentiles
-        ax_rate.plot(percentiles, compression_rate_percentiles, label = "All Data")
-        ax_speed.plot(percentiles, compression_speed_percentiles, label = "All Data")
-        
-        # styling
-        ax_rate.legend(fontsize = "small", title_fontsize = "small")
-
-    else:
-
-        # construct data frame with percentiles data
-        data = pd.DataFrame(columns = ["percentile", "compression_rate", "compression_speed"] + facet_columns)
-        get_facet_column = lambda facet_value: rep(x = formatter(facet_value), times = len(percentiles))
-        grouped = df.groupby(by = facet_columns)
-        for facet_values, group in grouped:
-            facet_data = {
-                "percentile": percentiles,
-                "compression_rate": np.percentile(a = group["compression_rate"], q = percentiles), # percentile values for compression rate
-                "compression_speed": np.percentile(a = group["compression_speed"], q = percentiles), # percentile values for compression rate
-            }
-            facet_data.update(dict(zip(facet_columns, map(get_facet_column, facet_values))) if isinstance(facet_values, tuple) else {facet_columns[0]: get_facet_column(facet_value = facet_values)}) # repeat facet values in facet columns
-            data = pd.concat((data, pd.DataFrame(data = facet_data)), axis = 0, ignore_index = True)
-            del facet_data
-        del get_facet_column, grouped
-
-        # plot data
-        facetting_attributes = ["hue"] if len(facet_columns) == 1 else (["hue", "style"] if len(facet_columns) == 2 else ["hue", "style", "size"])
-        if len(facet_columns) > 3:
-            warnings.warn(message = "Only facetting on the first 3 facet columns.", category = RuntimeWarning)
-        legend_facets = dict(zip(facetting_attributes, facet_columns))
-        sns.lineplot(ax = ax_rate, data = data, x = "percentile", y = "compression_rate", legend = "auto", **legend_facets)
-        sns.lineplot(ax = ax_speed, data = data, x = "percentile", y = "compression_speed", legend = False, **legend_facets)
-
-    # styling the plots
-    ax_rate.set_title("Compression Rate")
-    ax_rate.set_ylabel("Compression Rate (%)")
-    ax_speed.set_title("Encoding Speed")
-    ax_speed.set_ylabel("Encoding Speed (audio seconds compressed per second)")
-    ax_speed.set_xlabel("Percentile")
-    ax_rate.legend(fontsize = "small", title_fontsize = "small")
-    # ax_speed.legend().remove() # remove legend from bottom panel
-
-    # add grid
-    ax_rate.grid(True, alpha = 0.3)
-    ax_speed.grid(True, alpha = 0.3)
-
-    # remove x-axis tick labels for top plot
-    ax_rate.tick_params(labelbottom = False)
-
-    # save the figure
-    fig.savefig(output_filepath, dpi = FIGURE_DPI)
-    plt.close(fig)
-
-    return
-
-
 def plot_compression_statistics_boxplots(df: pd.DataFrame, facet_columns: List[str], output_filepath: str):
     """
     Plot compression statistics with box plots.
@@ -321,76 +245,6 @@ def plot_compression_statistics_boxplots(df: pd.DataFrame, facet_columns: List[s
 # COMPARISON PLOT
 ##################################################
 
-def plot_comparison_percentiles(dfs: Dict[str, pd.DataFrame], facet_columns: Dict[str, List[str]], output_filepath: str):
-    """
-    Plot comparison of different lossless compressors with a percentile plot.
-    """
-
-    # compute percentiles (0 to 100)
-    percentiles = np.linspace(start = 0, stop = 100, num = 101)
-
-    # set up the matplotlib figure
-    fig, (ax_rate, ax_speed) = plt.subplots(nrows = 2, ncols = 1, figsize = (8, 10), sharex = True, constrained_layout = True)
-    fig.suptitle("Comparing Lossless Compressors")
-
-    # enable seaborn style
-    sns.set_theme(style = "whitegrid")
-
-    # construct data frame with percentiles data
-    data = pd.DataFrame(columns = ["percentile", "compression_rate", "compression_speed", "lossless_compressor"])
-    for lossless_compressor, df in dfs.items():
-        current_facet_columns = facet_columns[lossless_compressor]
-        if len(current_facet_columns) == 0:
-            data = pd.concat((data, pd.DataFrame(data = {
-                "percentile": percentiles,
-                "compression_rate": np.percentile(a = df["compression_rate"], q = percentiles), # percentile values for compression rate
-                "compression_speed": np.percentile(a = df["compression_speed"], q = percentiles), # percentile values for compression rate
-                "lossless_compressor": rep(x = lossless_compressor.upper(), times = len(percentiles)),
-            })), axis = 0, ignore_index = True)
-        else:
-            grouped = df.groupby(by = current_facet_columns)
-            for _, group in grouped:
-                data = pd.concat((data, pd.DataFrame(data = {
-                    "percentile": percentiles,
-                    "compression_rate": np.percentile(a = group["compression_rate"], q = percentiles), # percentile values for compression rate
-                    "compression_speed": np.percentile(a = group["compression_speed"], q = percentiles), # percentile values for compression rate
-                    "lossless_compressor": rep(x = lossless_compressor.upper(), times = len(percentiles)),
-                })), axis = 0, ignore_index = True)
-            del grouped
-
-    # get average across different facets for each lossless compressor
-    averaged_data = data.groupby(by = ["percentile", "lossless_compressor"]).mean().reset_index(drop = False)
-
-    # plot data
-    dots_alpha = 0.4
-    sns.scatterplot(ax = ax_rate, data = data, x = "percentile", y = "compression_rate", hue = "lossless_compressor", legend = False, alpha = dots_alpha)
-    sns.lineplot(ax = ax_rate, data = averaged_data, x = "percentile", y = "compression_rate", hue = "lossless_compressor", legend = "auto")
-    sns.scatterplot(ax = ax_speed, data = data, x = "percentile", y = "compression_speed", hue = "lossless_compressor", legend = False, alpha = dots_alpha)
-    sns.lineplot(ax = ax_speed, data = averaged_data, x = "percentile", y = "compression_speed", hue = "lossless_compressor", legend = False)
-
-    # styling the plots
-    ax_rate.set_title("Compression Rate")
-    ax_rate.set_ylabel("Compression Rate (%)")
-    ax_speed.set_title("Encoding Speed")
-    ax_speed.set_ylabel("Encoding Speed (audio seconds compressed per second)")
-    ax_speed.set_xlabel("Percentile")
-    ax_rate.legend(title = "Lossless Compressor", fontsize = "small", title_fontsize = "small")
-    # ax_speed.legend().remove() # remove legend from bottom panel
-
-    # add grid
-    ax_rate.grid(True, alpha = GRID_ALPHA)
-    ax_speed.grid(True, alpha = GRID_ALPHA)
-
-    # remove x-axis tick labels for top plot
-    ax_rate.tick_params(labelbottom = False)
-
-    # save the figure
-    fig.savefig(output_filepath, dpi = FIGURE_DPI)
-    plt.close(fig)
-
-    return
-
-
 def plot_comparison_boxplots(dfs: Dict[str, pd.DataFrame], facet_columns: Dict[str, List[str]], output_filepath: str):
     """
     Plot comparison of different lossless compressors with a box plot, where the box plot is for the best configuration according to best compression rate.
@@ -443,7 +297,7 @@ def plot_comparison_boxplots(dfs: Dict[str, pd.DataFrame], facet_columns: Dict[s
     summary["lossless_compressor"] = list(map(lambda descriptor: descriptor + (" " * (max_descriptor_length - len(descriptor))), summary["lossless_compressor"])) # end pad so that they are left aligned
     summary = summary.drop(columns = "parameters") # because parameters is baked into the lossless_compressor column
     summary = summary.groupby(by = "lossless_compressor").mean().reset_index(drop = False)
-    print(pretty_dataframe_string(df = summary, max_colwidth = 100, border_style = "simple"))
+    print(pretty_dataframe_string(df = summary, max_colwidth = 200, border_style = "simple"))
     del summary, longest_lossless_compressor_string_length, max_descriptor_length # free up memory
 
     # plot data
@@ -575,10 +429,9 @@ if __name__ == "__main__":
             mkdir(compressor_output_dir)
             
         # construct filepaths with suffix
-        percentiles_filepath = f"{compressor_output_dir}/percentiles{suffix}.pdf"
         boxplots_filepath = f"{compressor_output_dir}/boxplots{suffix}.pdf"
         
-        plot_compression_statistics_percentiles(df = df, facet_columns = facet_columns[lossless_compressor], output_filepath = percentiles_filepath)
+        # plot boxplots
         plot_compression_statistics_boxplots(df = df, facet_columns = facet_columns[lossless_compressor], output_filepath = boxplots_filepath)
 
     ##################################################
@@ -590,10 +443,9 @@ if __name__ == "__main__":
     print("Creating comparison plots...")
 
     # construct comparison filepaths with suffix
-    percentiles_comparison_filepath = f"{args.output_dir}/percentiles_comparison{suffix}.pdf"
     boxplots_comparison_filepath = f"{args.output_dir}/boxplots_comparison{suffix}.pdf"
 
-    plot_comparison_percentiles(dfs = dfs, facet_columns = facet_columns, output_filepath = percentiles_comparison_filepath)
+    # plot comparison boxplots
     plot_comparison_boxplots(dfs = dfs, facet_columns = facet_columns, output_filepath = boxplots_comparison_filepath)
 
     print(f"Comparison plots saved to: {args.output_dir}")

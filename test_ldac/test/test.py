@@ -90,8 +90,8 @@ if __name__ == "__main__":
     output_filepath = f"{args.output_dir}/test.csv"
 
     # load descript audio codec
-    using_gpu = torch.cuda.is_available() and args.gpu != -1
-    device = torch.device(f"cuda:{abs(args.gpu)}" if using_gpu else "cpu")
+    using_gpu = (torch.cuda.is_available() and args.gpu > -1)
+    device = torch.device(f"cuda:{args.gpu}" if using_gpu else "cpu")
     model = dac.DAC.load(location = args.model_path).to(device)
     model.eval() # turn on evaluate mode
 

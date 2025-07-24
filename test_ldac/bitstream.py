@@ -12,6 +12,14 @@
 ##################################################
 
 
+# CONSTANTS
+##################################################
+
+DEFAULT_BUFFER_SIZE = (1024 ** 2) # initialize bytes buffer to 1MB by default
+
+##################################################
+
+
 # BIT INPUT STREAM
 ##################################################
 
@@ -151,7 +159,7 @@ class BitOutputStream:
     Stream object for writing bits and bytes to a bytes stream.
     """
 
-    def __init__(self, path: str = None):
+    def __init__(self, path: str = None, buffer_size: int = DEFAULT_BUFFER_SIZE):
         """
         Initialize the bit output stream.
 
@@ -161,10 +169,18 @@ class BitOutputStream:
             The path to the file to write to. If None, calling the `write` method will do nothing.
         """
         self.path = path
-        self.stream = []
+        self.buffer_size = buffer_size
+        self.stream = bytearray(self.buffer_size)
+        self.stream_index = 0 # index of the current byte in the stream
         self.bit_buffer = 0 # buffer to accumulate bits
         self.bit_buffer_position = 0 # how many bits are currently in the buffer
         self.is_byte_aligned = True
+
+    def _extend_buffer_if_necessary(self):
+        """Extend the buffer if necessary."""
+        if self.stream_index >= self.buffer_size: # only extend if necessary
+            self.stream.extend(bytearray(self.buffer_size)) # extend the buffer
+            self.buffer_size *= 2 # double the buffer size
 
     def write_bit(self, bit: bool):
         """
@@ -209,7 +225,9 @@ class BitOutputStream:
             The byte to write.
         """
         assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!" # ensure byte alignment
-        self.stream.append(byte)
+        self.stream[self.stream_index] = byte
+        self.stream_index += 1
+        self._extend_buffer_if_necessary()
 
     def write_uint(self, value: int):
         """
@@ -246,7 +264,9 @@ class BitOutputStream:
     def flush_byte(self):
         """Flush current buffer."""
         assert self.bit_buffer_position <= 8, "Bit buffer too large (must be <= 8 bits)!"
-        self.stream.append(self.bit_buffer)
+        self.stream[self.stream_index] = self.bit_buffer
+        self.stream_index += 1
+        self._extend_buffer_if_necessary()
         self.bit_buffer = 0
         self.bit_buffer_position = 0
         self.is_byte_aligned = True
@@ -261,7 +281,7 @@ class BitOutputStream:
             The stream contents.
         """
         self.align_to_byte()
-        return bytes(self.stream)
+        return bytes(self.stream[:self.stream_index])
 
     def close(self):
         """Write the stream to a file."""

@@ -367,11 +367,54 @@ def get_compressed_frame_size(
         The size of the compressed frame in bytes
     """
 
+    # add size for bit for number of subframes in frame
+    total_size = 1 / 8
+
     # add size for each subframe
-    total_size = 1 / 8 # 1 bit for number of subframes in frame
     for bottleneck_subframe in bottleneck_frame:
         total_size += get_compressed_subframe_size(bottleneck_subframe = bottleneck_subframe)
     
+    return total_size
+
+def get_compressed_bottleneck_size(
+    bottleneck: BOTTLENECK_TYPE,
+) -> float:
+    """
+    Get the size of a compressed bottleneck in bytes.
+
+    Parameters
+    ----------
+    bottleneck : BOTTLENECK_TYPE
+        The compressed bottleneck.
+        
+    Returns
+    -------
+    float
+        The size of the compressed bottleneck in bytes
+    """
+
+    # unpack bottleneck
+    codebook_level, batch_size_bits, audio_scale_bits, serialized_entropy_coder, bottleneck = bottleneck
+
+    # add size for codebook level
+    total_size = MAXIMUM_CODEBOOK_LEVEL_BITS / 8
+    
+    # add size for batch size bits
+    total_size += MAXIMUM_BATCH_SIZE_BITS / 8
+    
+    # add size for audio scale bits
+    total_size += MAXIMUM_AUDIO_SCALE_BITS / 8
+    
+    # add size for serialized entropy coder
+    total_size += 1 # 1 byte for serialized entropy coder
+
+    # add size for number of frames
+    total_size += 4 # 4 bytes for the number of frames as 32 bit unsigned integer
+    
+    # add size for each frame
+    for frame in bottleneck:
+        total_size += get_compressed_frame_size(bottleneck_frame = frame)
+
     return total_size
 
 ##################################################
@@ -546,13 +589,13 @@ def write_subframe(
     bitstream.write_bits(bits = dac_time_dimension, n = MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BITS)
     
     # write codes array
-    codes_bits_per_sample = get_numpy_dtype_bit_size(dtype = codes.dtype)
-    bitstream.write_bits(bits = codes_bits_per_sample, n = 8) # number of bits per sample for dtype
+    codes_bits_per_sample = get_minimum_number_of_bits_for_sample(sample = codes.max()) # get_numpy_dtype_bit_size(dtype = codes.dtype)
+    bitstream.write_bits(bits = codes_bits_per_sample, n = BITS_PER_SAMPLE_BITS) # number of bits per sample for dtype
     for code in codes.flatten():
         bitstream.write_bits(bits = int(code), n = codes_bits_per_sample)
     
     # write encoded residuals
-    bitstream.write_bits(bits = len(encoded_residuals), n = 32) # number of bytes for encoded residuals as 32 bit unsigned integer
+    bitstream.write_bits(bits = len(encoded_residuals), n = ENCODED_RESIDUALS_SIZE_BITS) # number of bytes for encoded residuals as 32 bit unsigned integer
     for byte in encoded_residuals:
         bitstream.write_bits(bits = byte, n = 8)
 
@@ -606,10 +649,11 @@ def write_bottleneck(
     """
 
     # unpack bottleneck
+    expected_size = get_compressed_bottleneck_size(bottleneck = bottleneck)
     _, batch_size_bits, audio_scale_bits, serialized_entropy_coder, bottleneck = bottleneck
 
     # create bitstream
-    bit_output = bitstream.BitOutputStream(path = path)
+    bit_output = bitstream.BitOutputStream(path = path, buffer_size = int(expected_size * 1.2)) # buffer size is 1.2x the size of the bottleneck to avoid reallocating memory
 
     # write codebook level
     bit_output.write_bit(bit = False) # we don't use codebook level for adaptive dac, so we write 0, but we include this first byte to make it easily compatible with Naive DAC
@@ -674,7 +718,7 @@ def read_subframe(
     # read codes array
     codes_bits_per_sample = bitstream.read_bits(n = 8)
     codes = [bitstream.read_bits(n = codes_bits_per_sample) for _ in range(codebook_level * dac_time_dimension)]
-    codes = np.array(codes).astype(get_numpy_dtype_from_bit_size(bit_size = codes_bits_per_sample))
+    codes = np.array(codes).astype(np.int64) # np.array(codes).astype(get_numpy_dtype_from_bit_size(bit_size = codes_bits_per_sample))
     codes = codes.reshape(codebook_level, dac_time_dimension)
 
     # read encoded residuals

@@ -46,6 +46,50 @@ MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BITS = ceil(log2(MAXIMUM_DAC_TIME_DIMENSIO
 MAXIMUM_BATCH_SIZE = (2 ** 7) # maximum batch size for GPU processing
 MAXIMUM_BATCH_SIZE_BITS = ceil(log2(log2(MAXIMUM_BATCH_SIZE) + 1)) # convert into number of bits
 BATCH_SIZE_DEFAULT = 128 # optimal batch size for GPU processing
+BITS_PER_SAMPLE_BITS = 8 # number of bits per sample for dtype
+ENCODED_RESIDUALS_SIZE_BITS = 32 # number of bits for encoded residuals size
+
+##################################################
+
+
+# HELPER FUNCTIONS
+##################################################
+
+def get_optimal_audio_scale(waveform: np.ndarray) -> float:
+    """
+    Get the optimal audio scale for a waveform.
+    
+    Parameters
+    ----------
+    waveform : np.ndarray
+        The waveform to get the optimal audio scale for.
+        
+    Returns
+    -------
+    float
+        The optimal audio scale.
+    """
+    max_abs = np.max(np.abs(waveform))
+    optimal_audio_scale = ceil((log2(max_abs) + 1) / 8)
+    optimal_audio_scale = 2 ** ((8 * optimal_audio_scale) - 1)
+    optimal_audio_scale = float(optimal_audio_scale)
+    return optimal_audio_scale
+
+def get_minimum_number_of_bits_for_sample(sample: int) -> int:
+    """
+    Get the minimum number of bits required to represent a sample.
+    
+    Parameters
+    ----------
+    sample : int
+        The sample to get the minimum number of bits for.
+
+    Returns
+    -------
+    int
+        The minimum number of bits required to represent the sample.
+    """
+    return ceil(log2(sample + 1))
 
 ##################################################
 
@@ -90,26 +134,6 @@ def convert_audio_floating_to_fixed(waveform: np.ndarray, output_dtype: type = n
         The converted waveform
     """
     return np.round(waveform * audio_scale).astype(output_dtype)
-
-def get_optimal_audio_scale(waveform: np.ndarray) -> float:
-    """
-    Get the optimal audio scale for a waveform.
-    
-    Parameters
-    ----------
-    waveform : np.ndarray
-        The waveform to get the optimal audio scale for.
-        
-    Returns
-    -------
-    float
-        The optimal audio scale.
-    """
-    max_abs = np.max(np.abs(waveform))
-    optimal_audio_scale = ceil((log2(max_abs) + 1) / 8)
-    optimal_audio_scale = 2 ** ((8 * optimal_audio_scale) - 1)
-    optimal_audio_scale = float(optimal_audio_scale)
-    return optimal_audio_scale
 
 def get_numpy_dtype_bit_size(dtype: np.dtype) -> int:
     """
