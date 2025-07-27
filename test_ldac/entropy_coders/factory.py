@@ -13,6 +13,7 @@ from entropy_coder import EntropyCoder
 from verbatim import VerbatimCoder
 from naive_rice import NaiveRiceCoder
 from adaptive_rice import AdaptiveRiceCoder
+from partitioned_rice import PartitionedRiceCoder
 
 ##################################################
 
@@ -20,7 +21,7 @@ from adaptive_rice import AdaptiveRiceCoder
 # CONSTANTS
 ##################################################
 
-TYPES = ["verbatim", "naive_rice", "adaptive_rice"]
+TYPES = ["verbatim", "naive_rice", "adaptive_rice", "partitioned_rice"]
 
 ##################################################
 
@@ -55,6 +56,8 @@ def get_entropy_coder(
             return NaiveRiceCoder(**kwargs)
         case "adaptive_rice":
             return AdaptiveRiceCoder(**kwargs)
+        case "partitioned_rice":
+            return PartitionedRiceCoder(**kwargs)
         case _:
             raise ValueError(f"Invalid entropy coder type: {type_}")
 

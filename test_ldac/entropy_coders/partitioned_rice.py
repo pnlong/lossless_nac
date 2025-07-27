@@ -1,21 +1,21 @@
 # README
 # Phillip Long
-# July 6, 2025
+# July 26, 2025
 
-# Adaptive Rice Coder.
+# Partitioned Rice Coder.
 
 # IMPORTS
 ##################################################
 
 import numpy as np
+from math import log2
 
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
 
 from entropy_coder import EntropyCoder
-import verbatim
-import naive_rice
+import adaptive_rice
 
 ##################################################
 
@@ -23,7 +23,9 @@ import naive_rice
 # CONSTANTS
 ##################################################
 
-PHI = (1 + np.sqrt(5)) / 2 # golden ratio
+MINIMUM_PARTITION_SIZE = 2 ** 8 # 256 samples
+MINIMUM_PARTITION_SIZE_LOG = int(log2(MINIMUM_PARTITION_SIZE))
+PARTITION_SIZE_DEFAULT = 2 ** 12 # 4096 samples
 
 ##################################################
 
@@ -31,44 +33,73 @@ PHI = (1 + np.sqrt(5)) / 2 # golden ratio
 # HELPER FUNCTIONS
 ##################################################
 
-# get optimal rice parameter
-def get_optimal_rice_parameter(
-    nums: np.ndarray,
-) -> int:
+# validate partition size factor
+def validate_partition_size_factor(
+    partition_size_factor: int,
+) -> None:
     """
-    Get the optimal rice parameter for the data.
-    Uses formula described in section III, part A, equation 8 (page 6) of https://tda.jpl.nasa.gov/progress_report/42-159/159E.pdf.
+    Validate a partition size factor.
 
     Parameters
     ----------
-    nums : np.ndarray
-        The data to get the optimal rice parameter for.
+    partition_size_factor : int
+        The partition size factor to validate.
+    """
+    assert partition_size_factor >= 0, f"Partition size factor must be non-negative, but got {partition_size_factor}"
+    assert partition_size_factor % 1 == 0, f"Partition size factor must be an integer, but got {partition_size_factor}"
+
+# convert partition size factor to partition size
+def convert_partition_size_factor_to_partition_size(
+    partition_size_factor: int,
+) -> int:
+    """
+    Convert a partition size factor to a partition size.
+
+    Parameters
+    ----------
+    partition_size_factor : int
+        The partition size factor to convert.
+
+    Returns
+    ------- 
+    int
+        The partition size.
+    """
+    validate_partition_size_factor(partition_size_factor = partition_size_factor)
+    partition_size = 2 ** (partition_size_factor + MINIMUM_PARTITION_SIZE_LOG)
+    return partition_size
+
+# convert partition size to partition size factor
+def convert_partition_size_to_partition_size_factor(
+    partition_size: int,
+) -> int:
+    """
+    Convert a partition size to a partition size factor.
+
+    Parameters
+    ----------
+    partition_size : int
+        The partition size to convert.
 
     Returns
     -------
     int
-        The optimal rice parameter.
+        The partition size factor.
     """
-
-    # get mean of data
-    mu = np.mean(np.array(list(map(naive_rice.zigzag_encode, nums))))
-
-    # determine optimal rice parameter
-    if mu < PHI:
-        k = 0
-    else: # uses formula described in section III, part A, equation 8 (page 6) of https://tda.jpl.nasa.gov/progress_report/42-159/159E.pdf
-        k = 1 + int(np.log2(np.log(PHI - 1) / np.log(mu / (mu + 1))))
-
-    return k
+    partition_size_factor = log2(partition_size) - MINIMUM_PARTITION_SIZE_LOG
+    validate_partition_size_factor(partition_size_factor = partition_size_factor)
+    partition_size_factor = int(partition_size_factor) # ensure integer
+    return partition_size_factor
 
 ##################################################
 
 
-# ADAPTIVE RICE ENTROPY CODING FUNCTIONS
+# PARTITIONED RICE ENTROPY CODING FUNCTIONS
 ##################################################
 
 def encode(
     nums: np.ndarray,
+    partition_size: int,
 ) -> bytes:
     """
     Encode the data.
@@ -77,6 +108,8 @@ def encode(
     ----------
     nums : np.ndarray
         The data to encode.
+    partition_size : int
+        The partition size to use.
 
     Returns
     -------
@@ -101,6 +134,7 @@ def encode(
 def decode(
     stream: bytes,
     num_samples: int,
+    partition_size: int,
 ) -> np.ndarray:
     """
     Decode the data.
@@ -111,6 +145,8 @@ def decode(
         The encoded data to decode.
     num_samples : int
         The number of samples to decode.
+    partition_size : int
+        The partition size to use.
 
     Returns
     -------
@@ -135,9 +171,9 @@ def decode(
 # ENTROPY CODER INTERFACE
 ##################################################
 
-class AdaptiveRiceCoder(EntropyCoder):
+class PartitionedRiceCoder(EntropyCoder):
     """
-    Adaptive Rice Coder.
+    Partitioned Rice Coder.
     """
 
     @property
@@ -150,15 +186,22 @@ class AdaptiveRiceCoder(EntropyCoder):
         str
             The type of the entropy coder.
         """
-        return "adaptive_rice"
+        return "partitioned_rice"
 
     def __init__(
         self,
+        partition_size_factor: int = PARTITION_SIZE_DEFAULT,
     ):
         """
-        Initialize the Adaptive Rice Coder.
+        Initialize the Partitioned Rice Coder.
+
+        Parameters
+        ----------
+        partition_size_factor : int, default = PARTITION_SIZE_DEFAULT
+            The partition size factor to use.
         """
-        pass
+        self.partition_size_factor = partition_size_factor
+        self.partition_size = convert_partition_size_factor_to_partition_size(partition_size_factor = self.partition_size_factor) # in calling this, validates partition size factor
     
     def encode(
         self,
@@ -177,7 +220,7 @@ class AdaptiveRiceCoder(EntropyCoder):
         bytes
             The encoded data.
         """
-        return encode(nums = nums)
+        return encode(nums = nums, partition_size = self.partition_size)
 
     def decode(
         self,
@@ -199,6 +242,6 @@ class AdaptiveRiceCoder(EntropyCoder):
         np.ndarray
             The decoded data.
         """
-        return decode(stream = stream, num_samples = num_samples)
+        return decode(stream = stream, num_samples = num_samples, partition_size = self.partition_size)
 
 ##################################################

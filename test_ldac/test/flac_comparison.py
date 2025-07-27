@@ -30,7 +30,7 @@ from preprocess_musdb18 import get_mixes_only_mask, get_test_only_mask
 ##################################################
 
 FLAC_CSV = "/deepfreeze/pnlong/lnac/eval/flac/test.csv"
-LDAC_CSV = "/deepfreeze/pnlong/lnac/eval/ldac_new/test.csv"
+LDAC_CSV_PREFIX = "/deepfreeze/pnlong/lnac/eval/ldac_new/test"
 OUTPUT_DIR = "/deepfreeze/pnlong/lnac/eval/ldac_new/flac_comparison"
 
 MAJOR_SEPARATOR_LINE = "=" * get_terminal_size().columns
@@ -347,14 +347,16 @@ if __name__ == "__main__":
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "FLAC vs LDAC Comparison", description = "Compare FLAC and LDAC Lossless Compressors") # create argument parser
         parser.add_argument("--flac_csv", type = str, default = FLAC_CSV, help = "Path to FLAC test results CSV file.")
-        parser.add_argument("--ldac_csv", type = str, default = LDAC_CSV, help = "Path to LDAC test results CSV file.")
+        parser.add_argument("--ldac_csv_prefix", type = str, default = LDAC_CSV_PREFIX, help = "Prefix for LDAC test results CSV files.")
         parser.add_argument("--output_dir", type = str, default = OUTPUT_DIR, help = "Output directory for comparison plots.")
         parser.add_argument("--mixes_only", action = "store_true", help = "Only use mixes in MUSDB18, not all stems.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         if not exists(args.flac_csv):
             raise FileNotFoundError(f"FLAC CSV file not found: {args.flac_csv}")
-        elif not exists(args.ldac_csv):
-            raise FileNotFoundError(f"LDAC CSV file not found: {args.ldac_csv}")
+        elif not exists(f"{args.ldac_csv_prefix}_blocked.csv"):
+            raise FileNotFoundError(f"Blocked LDAC CSV file not found: {args.ldac_csv_prefix}_blocked.csv")
+        elif not exists(f"{args.ldac_csv_prefix}_full.csv"):
+            raise FileNotFoundError(f"Full LDAC CSV file not found: {args.ldac_csv_prefix}_full.csv")
         return args # return parsed arguments
     args = parse_args()
 
@@ -391,12 +393,14 @@ if __name__ == "__main__":
     facet_columns["flac"] = list(filter(lambda column: column not in standard_columns, dfs["flac"].columns))
         
     # load LDAC data
-    ldac = pd.read_csv(filepath_or_buffer = args.ldac_csv, sep = ",", header = 0, index_col = False)
-    dfs["ldac"] = filter_df(df = ldac[ldac["model_path"] == "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth"]).drop(columns = ["model_path"])
-    dfs["lzac"] = filter_df(df = ldac[ldac["model_path"] == "/data3/pnlong/zachdac/latest/dac/weights.pth"]).drop(columns = ["model_path"])
-    del ldac # free up memory
-    facet_columns["ldac"] = list(filter(lambda column: column not in standard_columns, dfs["ldac"].columns))
-    facet_columns["lzac"] = list(filter(lambda column: column not in standard_columns, dfs["lzac"].columns))
+    for ldac_type in ("blocked", "full"):
+        ldac_csv = f"{args.ldac_csv_prefix}_{ldac_type}.csv"
+        ldac = pd.read_csv(filepath_or_buffer = ldac_csv, sep = ",", header = 0, index_col = False)
+        dfs[f"ldac {ldac_type}"] = filter_df(df = ldac[ldac["model_path"] == "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth"]).drop(columns = ["model_path"])
+        dfs[f"lzac {ldac_type}"] = filter_df(df = ldac[ldac["model_path"] == "/data3/pnlong/zachdac/latest/dac/weights.pth"]).drop(columns = ["model_path"])
+        del ldac # free up memory
+        facet_columns[f"ldac {ldac_type}"] = list(filter(lambda column: column not in standard_columns, dfs[f"ldac {ldac_type}"].columns))
+        facet_columns[f"lzac {ldac_type}"] = list(filter(lambda column: column not in standard_columns, dfs[f"lzac {ldac_type}"].columns))
 
     ##################################################
 

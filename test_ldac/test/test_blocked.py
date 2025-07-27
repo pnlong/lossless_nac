@@ -2,7 +2,7 @@
 # Phillip Long
 # July 21, 2025
 
-# Test compression rate of LDAC. We use the MusDB18 dataset as a testbed.
+# Test compression rate of Blocked LDAC. We use the MusDB18 dataset as a testbed.
 
 # IMPORTS
 ##################################################
@@ -24,11 +24,13 @@ from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(dirname(dirname(realpath(__file__))))) # for preprocess_musdb18
 sys.path.insert(0, f"{dirname(dirname(dirname(realpath(__file__))))}/dac") # import dac package
-sys.path.insert(0, dirname(dirname(realpath(__file__)))) # needs to be after so that lossless_compressors is correctly imported
+sys.path.insert(0, dirname(dirname(realpath(__file__)))) # needs to be after so that blocked_lossless_compressors is correctly imported
 
-from lossless_compressors import ldac
-from lossless_compressors import ldac_compressor
-import entropy_coders
+from blocked_lossless_compressors import ldac
+from blocked_lossless_compressors import ldac_compressor
+from entropy_coders.factory import get_entropy_coder
+from entropy_coders.serialize import serialize
+from constants import INPUT_FILEPATH, OUTPUT_DIR, NA_STRING
 from preprocess_musdb18 import get_mixes_only_mask, get_test_only_mask
 import dac
 
@@ -41,13 +43,7 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 # CONSTANTS
 ##################################################
 
-# filepaths
-INPUT_FILEPATH = "/deepfreeze/pnlong/lnac/test_data/musdb18_preprocessed-44100/data.csv"
-OUTPUT_DIR = "/deepfreeze/pnlong/lnac/eval/ldac_new"
-
-# output file
 OUTPUT_COLUMNS = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "model_path", "entropy_coder", "codebook_level", "audio_scale", "block_size", "batch_size", "using_gpu"]
-NA_STRING = "NA"
 
 ##################################################
 
@@ -87,7 +83,7 @@ if __name__ == "__main__":
     # create output directory if necessary
     if not exists(args.output_dir):
         makedirs(args.output_dir, exist_ok = True)
-    output_filepath = f"{args.output_dir}/test.csv"
+    output_filepath = f"{args.output_dir}/test_blocked.csv"
 
     # load descript audio codec
     using_gpu = (torch.cuda.is_available() and args.gpu > -1)
@@ -98,8 +94,8 @@ if __name__ == "__main__":
     # parse entropy coder
     entropy_coder_type, entropy_coder_kwargs = args.entropy_coder.split("-")
     entropy_coder_kwargs = json.loads(entropy_coder_kwargs) # parse entropy coder kwargs
-    entropy_coder = entropy_coders.factory.get_entropy_coder(type_ = entropy_coder_type, **entropy_coder_kwargs)
-    serialized_entropy_coder = entropy_coders.serialize.serialize(entropy_coder = entropy_coder)
+    entropy_coder = get_entropy_coder(type_ = entropy_coder_type, **entropy_coder_kwargs)
+    serialized_entropy_coder = serialize(entropy_coder = entropy_coder)
     
     # write output columns if necessary
     if not exists(output_filepath): # write column names

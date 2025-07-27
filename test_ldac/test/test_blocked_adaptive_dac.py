@@ -1,5 +1,5 @@
 # README
-# Test script for Adaptive DAC encoder
+# Test script for Blocked Adaptive DAC encoder
 # Phillip Long
 # July 12, 2025
 
@@ -18,8 +18,8 @@ import sys
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
 sys.path.insert(0, f"{dirname(dirname(dirname(realpath(__file__))))}/dac")
 
-from lossless_compressors.ldac_compressor import *
-from lossless_compressors import adaptive_dac
+from blocked_lossless_compressors.ldac_compressor import *
+from blocked_lossless_compressors import adaptive_dac
 from entropy_coders.entropy_coder import EntropyCoder
 from entropy_coders.factory import get_entropy_coder
 import dac
