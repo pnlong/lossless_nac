@@ -45,6 +45,17 @@ class BitInputStream:
         self.original_stream = stream
         self.reset()
 
+    def get_position(self) -> int:
+        """
+        Get the current position in the stream.
+
+        Returns
+        -------
+        int
+            The current position in the stream.
+        """
+        return self.position
+
     def read_bit(self) -> bool:
         """
         Read a single bit.
@@ -54,10 +65,11 @@ class BitInputStream:
         bool
             The bit.
         """
-        if self.position >= len(self.stream):
+        position_after = self.position + 1
+        if position_after > len(self.stream):
             raise RuntimeError("End of stream reached.")
         bit = bool(self.stream[self.position])
-        self.position += 1
+        self.position = position_after
         self.is_byte_aligned = (self.position % 8 == 0)
         return bit
     
@@ -75,10 +87,11 @@ class BitInputStream:
         int
             The bits.
         """
-        if self.position + n > len(self.stream):
+        position_after = self.position + n
+        if position_after > len(self.stream):
             raise RuntimeError("End of stream reached.")
-        value = ba2int(self.stream[self.position:(self.position + n)])
-        self.position += n
+        value = ba2int(self.stream[self.position:position_after])
+        self.position = position_after
         self.is_byte_aligned = (self.position % 8 == 0)
         return value
 
@@ -91,8 +104,30 @@ class BitInputStream:
         int
             The byte.
         """
-        assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!"
         return self.read_bits(n = 8)
+
+    def read_bytes(self, n: int) -> bytes:
+        """
+        Read `n` bytes.
+
+        Parameters
+        ----------
+        n : int
+            The number of bytes to read.
+
+        Returns
+        -------
+        bytes
+            The bytes.
+        """
+        position_after = self.position + (n * 8)
+        if position_after > len(self.stream):
+            raise RuntimeError("End of stream reached.")
+        bytes_ = self.stream[self.position:position_after]
+        bytes_ = bytes_.tobytes()
+        self.position = position_after
+        self.is_byte_aligned = (self.position % 8 == 0)
+        return bytes_
 
     def read_uint(self) -> int:
         """
@@ -103,7 +138,6 @@ class BitInputStream:
         int
             The unsigned integer.
         """
-        assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!"
         return self.read_bits(n = 32)
 
     def align_to_byte(self):
@@ -156,9 +190,29 @@ class BitOutputStream:
         self.position = 0 # current bit position in stream
         self.is_byte_aligned = True
 
-    def _extend_buffer(self):
-        """Extend the buffer if necessary."""
-        self.stream.extend(bitarray(self.buffer_size_bits, endian = ENDIANESS))
+    def get_position(self) -> int:
+        """
+        Get the current position in the stream.
+
+        Returns
+        -------
+        int
+            The current position in the stream.
+        """
+        return self.position
+
+    def _extend_buffer(self, n: int = None):
+        """
+        Extend the buffer if necessary.
+        
+        Parameters
+        ----------
+        n : int, optional
+            The number of bits to extend the buffer by. If None, extend the buffer by the buffer size.
+        """
+        if n is None:
+            n = self.buffer_size_bits
+        self.stream.extend(bitarray(n, endian = ENDIANESS))
 
     def write_bit(self, bit: bool):
         """
@@ -204,8 +258,25 @@ class BitOutputStream:
         byte : int
             The byte to write.
         """
-        assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!"
         self.write_bits(bits = byte, n = 8)
+
+    def write_bytes(self, bytes_: bytes):
+        """
+        Special case for writing a sequence of bytes.
+
+        Parameters
+        ----------
+        bytes_ : bytes
+            The bytes to write.
+        """
+        bytes_ = bitarray(bytes_, endian = ENDIANESS)
+        n = len(bytes_)
+        position_after = self.position + n
+        if position_after > len(self.stream):
+            self._extend_buffer(n = n)
+        self.stream[self.position:position_after] = bytes_
+        self.position = position_after
+        self.is_byte_aligned = (self.position % 8 == 0)
 
     def write_uint(self, value: int):
         """
@@ -216,7 +287,6 @@ class BitOutputStream:
         value : int
             The unsigned integer to write.
         """
-        assert self.is_byte_aligned, "Please ensure that the cursor is aligned to a byte (call `align_to_byte`)!"
         self.write_bits(bits = value, n = 32)
 
     def align_to_byte(self):

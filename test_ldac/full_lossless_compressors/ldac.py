@@ -37,6 +37,7 @@ def encode(
     sample_rate: int,
     codebook_level: int = 0, # default to 0 for adaptive dac
     audio_scale: float = None,
+    window_duration: float = WINDOW_DURATION_DEFAULT,
 ) -> Union[naive_dac.BOTTLENECK_TYPE, adaptive_dac.BOTTLENECK_TYPE]:
     """
     Encode the original data into the bottleneck.
@@ -55,6 +56,8 @@ def encode(
         The number of codebooks to use for DAC encoding. Default to 0 for Adaptive DAC.
     audio_scale : float, default = None
         The audio scale to use for encoding. If None, will be calculated using the data. If provided, will be used as is.
+    window_duration : float, default = WINDOW_DURATION_DEFAULT
+        The window duration to use for encoding.
 
     Returns
     -------
@@ -70,6 +73,7 @@ def encode(
             model = model,
             sample_rate = sample_rate,
             audio_scale = audio_scale,
+            window_duration = window_duration,
         )
 
     # if valid codebook level, encode using naive dac
@@ -81,6 +85,7 @@ def encode(
             sample_rate = sample_rate,
             codebook_level = codebook_level,
             audio_scale = audio_scale,
+            window_duration = window_duration,
         )
 
 def decode(
@@ -134,7 +139,9 @@ def encode_to_file(
     sample_rate: int,
     codebook_level: int = 0, # default to 0 for adaptive dac
     audio_scale: float = None,
-) -> None:
+    window_duration: float = WINDOW_DURATION_DEFAULT,
+    return_statistics: bool = False,
+) -> Union[None, dict]:
     """
     Encode the data to a file.
 
@@ -154,10 +161,15 @@ def encode_to_file(
         The number of codebooks to use for DAC encoding. Default to 0 for Adaptive DAC.
     audio_scale : float, default = None
         The audio scale to use for encoding. If None, will be calculated using the data. If provided, will be used as is.
+    window_duration : float, default = WINDOW_DURATION_DEFAULT
+        The window duration to use for encoding.
+    return_statistics : bool, default = False
+        Whether to return statistics about the bottleneck.
 
     Returns
     -------
-    None
+    Union[None, dict]
+        None if return_statistics is False, otherwise a dictionary containing statistics about the bottleneck.
     """
 
      # encode using adaptive dac if codebook level is 0
@@ -169,6 +181,8 @@ def encode_to_file(
             model = model,
             sample_rate = sample_rate,
             audio_scale = audio_scale,
+            window_duration = window_duration,
+            return_statistics = return_statistics,
         )
 
     # if valid codebook level, encode using naive dac
@@ -181,6 +195,8 @@ def encode_to_file(
             sample_rate = sample_rate,
             codebook_level = codebook_level,
             audio_scale = audio_scale,
+            window_duration = window_duration,
+            return_statistics = return_statistics,
         )
 
 def decode_from_file(

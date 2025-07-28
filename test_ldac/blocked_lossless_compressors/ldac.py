@@ -146,7 +146,8 @@ def encode_to_file(
     audio_scale: float = None,
     block_size: int = BLOCK_SIZE_DEFAULT,
     batch_size: int = BATCH_SIZE_DEFAULT,
-) -> None:
+    return_statistics: bool = False,
+) -> Union[None, dict]:
     """
     Encode the data to a file.
 
@@ -170,13 +171,16 @@ def encode_to_file(
         The block size to use for encoding.
     batch_size : int, default = BATCH_SIZE_DEFAULT
         The batch size to use for encoding.
+    return_statistics : bool, default = False
+        Whether to return statistics about the bottleneck.
 
     Returns
     -------
-    None
+    Union[None, dict]
+        None if return_statistics is False, otherwise a dictionary containing statistics about the bottleneck.
     """
 
-     # encode using adaptive dac if codebook level is 0
+    # encode using adaptive dac if codebook level is 0
     if codebook_level == 0:
         return adaptive_dac.encode_to_file(
             path = path,
@@ -187,6 +191,7 @@ def encode_to_file(
             audio_scale = audio_scale,
             block_size = block_size,
             batch_size = batch_size,
+            return_statistics = return_statistics,
         )
 
     # if valid codebook level, encode using naive dac
@@ -201,6 +206,7 @@ def encode_to_file(
             audio_scale = audio_scale,
             block_size = block_size,
             batch_size = batch_size,
+            return_statistics = return_statistics,
         )
 
 def decode_from_file(

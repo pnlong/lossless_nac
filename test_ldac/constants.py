@@ -17,6 +17,7 @@ from math import ceil, log2
 ##################################################
 
 DAC_PATH = "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth" # path to descript audio codec pretrained model
+ZAC_PATH = "/data3/pnlong/zachdac/latest/dac/weights.pth" # path to zachdac pretrained model
 MAXIMUM_CODEBOOK_LEVEL = 9 # maximum codebook level for the pretrained descript audio codec model
 MAXIMUM_CODEBOOK_LEVEL_BITS = ceil(log2(MAXIMUM_CODEBOOK_LEVEL + 1)) # convert into number of bits
 CODEBOOK_LEVEL_DEFAULT = MAXIMUM_CODEBOOK_LEVEL # codebook level for descript audio codec model, use the upper bound as the default
@@ -224,7 +225,7 @@ def validate_output_data(reconstructed_data: np.ndarray) -> None:
 
 # filepaths
 INPUT_FILEPATH = "/deepfreeze/pnlong/lnac/test_data/musdb18_preprocessed-44100/data.csv"
-OUTPUT_DIR = "/deepfreeze/pnlong/lnac/eval/ldac_new"
+OUTPUT_DIR = "/deepfreeze/pnlong/lnac/eval/ldac_new2"
 
 # output file
 NA_STRING = "NA"

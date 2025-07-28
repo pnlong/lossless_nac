@@ -31,7 +31,7 @@ import dac
 ##################################################
 
 # File paths
-INPUT_AUDIO_PATH = "/home/pnlong/lnac/test.wav"
+INPUT_AUDIO_PATH = "/home/pnlong/lnac/offended.wav"
 OUTPUT_COMPRESSED_PATH = "/tmp/test_naive_dac.ldac"
 OUTPUT_DECODED_PATH = "/tmp/test_naive_dac_decoded.wav"
 

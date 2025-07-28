@@ -82,27 +82,22 @@ def zigzag_decode(
 ##################################################
 
 def encode(
+    out: bitstream.BitOutputStream,
     nums: np.ndarray,
     k: int = K_DEFAULT,
-) -> bytes:
+) -> None:
     """
     Encode the data.
 
     Parameters
     ----------
+    out : bitstream.BitOutputStream
+        The output stream to write to.
     nums : np.ndarray
         The data to encode.
     k : int, default = K_DEFAULT
         The Rice parameter k, defaults to K_DEFAULT.
-
-    Returns
-    -------
-    bytes
-        The encoded data.
     """
-
-    # helper for writing bits and bytes to an output stream
-    out = bitstream.BitOutputStream()
 
     # ensure nums is a numpy array
     nums = np.array(list(map(zigzag_encode, nums))) # convert from potentially negative number to non-negative
@@ -122,13 +117,10 @@ def encode(
         # encode the remainder with binary coding using k bits
         out.write_bits(bits = r, n = k)
 
-    # get bytes stream
-    stream = out.flush()
-
-    return stream
+    return
 
 def decode(
-    stream: bytes,
+    inp: bitstream.BitInputStream,
     num_samples: int,
     k: int = K_DEFAULT,
 ) -> np.ndarray:
@@ -137,8 +129,8 @@ def decode(
 
     Parameters
     ----------
-    stream : bytes
-        The encoded data to decode.
+    inp : bitstream.BitInputStream
+        The input stream to read from.
     num_samples : int
         The number of samples to decode.
     k : int, default = K_DEFAULT
@@ -149,15 +141,13 @@ def decode(
     np.ndarray
         The decoded data.
     """
-    
-    # helper for reading bits and bytes from an input stream
-    inp = bitstream.BitInputStream(stream = stream)
 
     # initialize numbers list
     nums = np.zeros(shape = num_samples)
 
     # read in numbers
     for i in range(num_samples):
+
         # read unary-coded quotient
         q = 0
         while inp.read_bit() == True:
@@ -230,7 +220,13 @@ class NaiveRiceCoder(EntropyCoder):
         bytes
             The encoded data.
         """
-        return encode(nums = nums, k = self.k)
+
+        # encode data with output stream
+        out = bitstream.BitOutputStream() # helper for writing bits and bytes to an output stream
+        encode(out = out, nums = nums, k = self.k) # encode data
+        stream = out.flush() # get bytes stream
+
+        return stream
 
     def decode(
         self,
@@ -252,6 +248,11 @@ class NaiveRiceCoder(EntropyCoder):
         np.ndarray
             The decoded data.
         """
-        return decode(stream = stream, num_samples = num_samples, k = self.k)
+
+        # decode data with input stream
+        inp = bitstream.BitInputStream(stream = stream) # helper for reading bits and bytes from an input stream
+        nums = decode(inp = inp, num_samples = num_samples, k = self.k) # decode data
+
+        return nums
 
 ##################################################

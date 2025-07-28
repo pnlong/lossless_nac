@@ -8,8 +8,9 @@
 ##################################################
 
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import torch
+from copy import deepcopy
 
 from os.path import dirname, realpath
 import sys
@@ -30,10 +31,10 @@ import dac
 ##################################################
 
 # type of bottleneck frames
-BOTTLENECK_FRAME_TYPE = Tuple[int, np.ndarray, bytes] # bottleneck frame type is a tuple of the codebook level, DAC codes and encoded residuals
+BOTTLENECK_FRAME_TYPE = Tuple[int, np.ndarray, bytes] # bottleneck frame type is a tuple of the codebook level, DAC codes, and encoded residuals
 
 # type of bottleneck
-BOTTLENECK_TYPE = Tuple[int, int, int, int, int, List[BOTTLENECK_FRAME_TYPE]] # bottleneck type is a tuple of the codebook level, number of samples, DAC time dimension, audio scale bits, serialized entropy coder, and list of frames
+BOTTLENECK_TYPE = Tuple[int, int, int, int, int, int, int, bool, List[BOTTLENECK_FRAME_TYPE]] # bottleneck type is a tuple of the codebook level, number of samples, DAC time dimension, audio scale bits, serialized entropy coder, chunk length, input dB bits, padding, and list of frames
 
 ##################################################
 
@@ -96,29 +97,41 @@ def get_compressed_bottleneck_size(
     """
 
     # unpack bottleneck
-    codebook_level, n_samples, dac_time_dimension, audio_scale_bits, serialized_entropy_coder, frames = bottleneck
+    codebook_level, n_samples, dac_time_dimension, audio_scale_bits, serialized_entropy_coder, chunk_length, input_db_bits, padding, frames = bottleneck
 
-    # add size for codebook level
-    total_size = MAXIMUM_CODEBOOK_LEVEL_BITS / 8
+    # add size for global codebook level, which is redundant for Adaptive DAC, but we include it to make it easily compatible with Naive DAC (this value is 0)
+    total_size = MAXIMUM_CODEBOOK_LEVEL_BITS
 
     # add size for number of samples
-    total_size += N_SAMPLES_BITS / 8
+    total_size += N_SAMPLES_BITS
 
     # add size for DAC time dimension
-    total_size += DAC_TIME_DIMENSION_BITS / 8
+    total_size += DAC_TIME_DIMENSION_BITS
     
     # add size for audio scale bits
-    total_size += MAXIMUM_AUDIO_SCALE_BITS / 8
-    
+    total_size += MAXIMUM_AUDIO_SCALE_BITS
+
     # add size for serialized entropy coder
-    total_size += SERIALIZED_ENTROPY_CODER_BITS / 8 # 1 byte for serialized entropy coder
+    total_size += SERIALIZED_ENTROPY_CODER_BITS # 1 byte for serialized entropy coder
+
+    # add size for chunk length
+    total_size += CHUNK_LENGTH_BITS
+
+    # add size for input dB bits
+    total_size += INPUT_DB_BITS
+
+    # add size for padding
+    total_size += 1 # boolean for whether there is padding
 
     # add size for bit for number of subframes in frame
-    total_size += 1 / 8 # boolean for whether there are two frames (stereo) or one (mono)
+    total_size += 1 # boolean for whether there are two frames (stereo) or one (mono)
     
     # add size for each frame
     for frame in frames:
-        total_size += get_compressed_frame_size(bottleneck_frame = frame)
+        total_size += get_compressed_frame_size(bottleneck_frame = frame) * 8
+
+    # convert total_size to bytes
+    total_size /= 8
 
     return total_size
 
@@ -134,6 +147,7 @@ def encode(
     model: dac.model.dac.DAC,
     sample_rate: int,
     audio_scale: float = None,
+    window_duration: float = WINDOW_DURATION_DEFAULT,
 ) -> BOTTLENECK_TYPE:
     """
     Encode the original data into the bottleneck.
@@ -150,6 +164,8 @@ def encode(
         The sample rate of the data.
     audio_scale : float, default = None
         The audio scale to use for encoding. If None, will be calculated using the data. If provided, will be used as is.
+    window_duration : float, default = WINDOW_DURATION_DEFAULT
+        The window duration to use for encoding.
 
     Returns
     -------
@@ -167,56 +183,80 @@ def encode(
         sample_rate = sample_rate,
         model = model,
         audio_scale = audio_scale,
+        window_duration = window_duration,
     )
     
     # batch encode frames
     with torch.no_grad():
 
         # get codes at maximum codebook level
-        maximum_codebook_level_codes = dac_encode_codes_only(
+        maximum_codebook_level_dac_file = dac_encode_codes_only(
             data = data,
             model = model,
             sample_rate = sample_rate,
             audio_scale = audio_scale,
+            window_duration = window_duration,
         )
 
-        # initialize frames and tracker for minimum compressed frame sizes
-        minimum_compressed_frame_sizes = [float("inf")] * len(maximum_codebook_level_codes)
-        frames = [None] * len(minimum_compressed_frame_sizes)
+        # get information to pack bottleneck
+        n_samples = len(data)
+        dac_time_dimension = maximum_codebook_level_dac_file.codes.shape[-1] # get dac time dimension from first frame
+        audio_scale_bits = encode_audio_scale_bits(audio_scale = audio_scale)
+        serialized_entropy_coder = serialize(entropy_coder = entropy_coder)
+        chunk_length = maximum_codebook_level_dac_file.chunk_length
+        input_db_bits = encode_input_db_bits(input_db = maximum_codebook_level_dac_file.input_db.item())
+        padding = maximum_codebook_level_dac_file.padding
 
-        # iterate over codebook levels
-        for codebook_level in range(1, MAXIMUM_CODEBOOK_LEVEL + 1):
+        # encode each channel independently
+        frames = [None] * maximum_codebook_level_dac_file.channels
+        for channel_idx in range(len(frames)):
 
-            # get candidate frames at codebook level
-            candidate_frames = dac_encode_codes_and_residuals(
-                data = data,
-                model = model,
-                sample_rate = sample_rate,
-                entropy_coder = entropy_coder,
-                audio_scale = audio_scale,
-                codebook_level = codebook_level,
-                codes = maximum_codebook_level_codes,
-            )
-            candidate_frames = [(codebook_level, candidate_codes, candidate_encoded_residuals) for candidate_codes, candidate_encoded_residuals in candidate_frames] # add codebook level to each candidate frame
+            # modify dac file to include only this channel
+            channel_dac_file = deepcopy(maximum_codebook_level_dac_file)
+            channel_dac_file.codes = channel_dac_file.codes[channel_idx, :, :].unsqueeze(dim = 0)
+            channel_dac_file.channels = 1
 
-            # check if candidate frame is an improvement over current most compressed frame
-            for i, candidate_frame in enumerate(candidate_frames):
-                candidate_frame_compressed_frame_size = get_compressed_frame_size(bottleneck_frame = candidate_frame)
-                if candidate_frame_compressed_frame_size < minimum_compressed_frame_sizes[i]:
-                    minimum_compressed_frame_sizes[i] = candidate_frame_compressed_frame_size
-                    frames[i] = candidate_frame
+            # try all codebook levels
+            best_frame = None
+            best_compressed_frame_size = float("inf")
+            for candidate_codebook_level in range(MAXIMUM_CODEBOOK_LEVEL, 0, -1):
+                candidate_dac_file = deepcopy(channel_dac_file)
+                candidate_dac_file, candidate_encoded_residuals = dac_encode_codes_and_residuals(
+                    data = data[:, channel_idx] if len(data.shape) == 2 else data,
+                    model = model,
+                    sample_rate = sample_rate,
+                    entropy_coder = entropy_coder,
+                    audio_scale = audio_scale,
+                    window_duration = window_duration,
+                    codebook_level = candidate_codebook_level,
+                    dac_file = candidate_dac_file,
+                )
+                candidate_frame = (candidate_codebook_level, candidate_dac_file.codes.detach().cpu().numpy(), candidate_encoded_residuals[0]) # pack candidate frame with codebook level, codes, and encoded residuals
+                candidate_compressed_frame_size = get_compressed_frame_size(bottleneck_frame = candidate_frame)
+                if candidate_compressed_frame_size < best_compressed_frame_size:
+                    best_compressed_frame_size = candidate_compressed_frame_size
+                    best_frame = deepcopy(candidate_frame)
+                del candidate_dac_file, candidate_encoded_residuals, candidate_frame, candidate_compressed_frame_size # delete to free memory
+
+            # add best frame to frames
+            frames[channel_idx] = deepcopy(best_frame)
+
+            # free up memory
+            del channel_dac_file, best_frame, best_compressed_frame_size
+
+        # free up memory
+        del maximum_codebook_level_dac_file
 
     # pack bottleneck
-    n_samples = len(data)
-    audio_scale_bits = encode_audio_scale_bits(audio_scale = audio_scale)
-    dac_time_dimension = frames[0][1].shape[-1] # get dac time dimension from first frame
-    serialized_entropy_coder = serialize(entropy_coder = entropy_coder)
     bottleneck = (
         0, # 0 global codebook level for Adaptive DAC
         n_samples,
         dac_time_dimension,
         audio_scale_bits,
         serialized_entropy_coder,
+        chunk_length,
+        input_db_bits,
+        padding,
         frames,
     )
     
@@ -243,47 +283,27 @@ def decode(
     """
 
     # unpack bottleneck
-    _, n_samples, dac_time_dimension, audio_scale_bits, serialized_entropy_coder, frames = bottleneck
+    _, n_samples, dac_time_dimension, audio_scale_bits, serialized_entropy_coder, chunk_length, input_db_bits, padding, frames = bottleneck
     audio_scale = decode_audio_scale_bits(audio_scale_bits = audio_scale_bits)
     entropy_coder = deserialize(header = serialized_entropy_coder)
-
-    # prepare data for batch decode frames
-    codebook_levels = [frame[0] for frame in frames] # get codebook levels from frames
-    codes = [frame[1] for frame in frames] # get codes from frames
-    encoded_residuals = [frame[2] for frame in frames] # get encoded residuals from frames
-    is_mono = len(frames) == 1 # check if there is only one frame (mono)
+    input_db = decode_input_db_bits(input_db_bits = input_db_bits)
+    is_mono = len(frames) == 1
 
     # batch decode frames
     with torch.no_grad():
-        if is_mono or (not is_mono and codebook_levels[0] == codebook_levels[1]):
-            reconstructed_data = dac_decode(
+        reconstructed_data = [None] * len(frames)
+        for i, (codebook_level, codes, encoded_residuals) in enumerate(frames):
+            reconstructed_data[i] = dac_decode(
                 codes = codes,
-                encoded_residuals = encoded_residuals,
+                encoded_residuals = [encoded_residuals],
                 model = model,
                 entropy_coder = entropy_coder,
                 n_samples = n_samples,
                 audio_scale = audio_scale,
-                is_mono = is_mono,
+                chunk_length = chunk_length,
+                input_db = input_db,
+                padding = padding,
             )
-        else: # stereo but different codebook levels
-            reconstructed_data = dac_decode(
-                codes = [codes[0]],
-                encoded_residuals = [encoded_residuals[0]],
-                model = model,
-                entropy_coder = entropy_coder,
-                n_samples = n_samples,
-                audio_scale = audio_scale,
-                is_mono = False,
-            ) + dac_decode(
-                codes = [codes[1]],
-                encoded_residuals = [encoded_residuals[1]],
-                model = model,
-                entropy_coder = entropy_coder,
-                n_samples = n_samples,
-                audio_scale = audio_scale,
-                is_mono = False,
-            )
-    
     # convert into a single numpy array
     if is_mono:
         reconstructed_data = reconstructed_data[0]
@@ -304,7 +324,7 @@ def decode(
 def write_frame(
     frame: BOTTLENECK_FRAME_TYPE,
     bitstream: bitstream.BitOutputStream,
-) -> None:
+) -> Tuple[int, int, int]:
     """
     Write a frame to a bitstream.
 
@@ -317,32 +337,42 @@ def write_frame(
 
     Returns
     -------
-    None
+    Tuple[int, int, int]
+        A tuple containing the number of metadata bits, estimator bits, and entropy bits.
     """
 
     # unpack frame
     codebook_level, codes, encoded_residuals = frame
     
     # write codebook level
+    metadata_bits_start = bitstream.get_position()
     bitstream.write_bits(bits = codebook_level, n = MAXIMUM_CODEBOOK_LEVEL_BITS)
+    metadata_bits_end = bitstream.get_position()
+    metadata_bits = metadata_bits_end - metadata_bits_start
 
     # write codes array
+    estimator_bits_start = bitstream.get_position()
     codes_bits_per_sample = get_minimum_number_of_bits_for_sample(sample = codes.max()) # get_numpy_dtype_bit_size(dtype = codes.dtype)
     bitstream.write_bits(bits = codes_bits_per_sample, n = BITS_PER_SAMPLE_BITS) # number of bits per sample for dtype
     for code in codes.flatten():
         bitstream.write_bits(bits = int(code), n = codes_bits_per_sample)
-    
+    estimator_bits_end = bitstream.get_position()
+    estimator_bits = estimator_bits_end - estimator_bits_start
+
     # write encoded residuals
+    entropy_bits_start = bitstream.get_position()
     bitstream.write_bits(bits = len(encoded_residuals), n = ENCODED_RESIDUALS_SIZE_BITS) # number of bytes for encoded residuals as 32 bit unsigned integer
     for byte in encoded_residuals:
         bitstream.write_bits(bits = byte, n = 8)
+    entropy_bits_end = bitstream.get_position()
+    entropy_bits = entropy_bits_end - entropy_bits_start
 
-    return
+    return (metadata_bits, estimator_bits, entropy_bits)
 
 def write_bottleneck(
     bottleneck: BOTTLENECK_TYPE,
     path: str,
-) -> None:
+) -> dict:
     """
     Write the bottleneck to a file.
 
@@ -355,21 +385,27 @@ def write_bottleneck(
 
     Returns
     -------
-    None
+    dict
+        A dictionary containing statistics about the bottleneck.
     """
 
     # unpack bottleneck
     expected_size = get_compressed_bottleneck_size(bottleneck = bottleneck)
-    _, n_samples, dac_time_dimension, audio_scale_bits, serialized_entropy_coder, frames = bottleneck
+    _, n_samples, dac_time_dimension, audio_scale_bits, serialized_entropy_coder, chunk_length, input_db_bits, padding, frames = bottleneck
 
     # create bitstream
     bit_output = bitstream.BitOutputStream(path = path, buffer_size = int(expected_size * 1.2)) # buffer size is 1.2x the size of the bottleneck to avoid reallocating memory
+    metadata_bits, estimator_bits, entropy_bits = 0, 0, 0
 
     # write codebook level
     bit_output.write_bits(bits = 0, n = MAXIMUM_CODEBOOK_LEVEL_BITS) # global codebook level is redundant for Adaptive DAC, but we include it to make it easily compatible with Naive DAC (this value is 0)
 
-    # write number of samples
-    bit_output.write_bits(bits = n_samples, n = N_SAMPLES_BITS)
+    # write number of samples (assumes N_SAMPLES_BITS is no larger than 64)
+    if N_SAMPLES_BITS > 32:
+        bit_output.write_bits(bits = (n_samples) & 0xFFFFFFFF, n = 32) # lower 32 bits
+        bit_output.write_bits(bits = (n_samples >> 32) & 0xFFFFFFFF, n = N_SAMPLES_BITS - 32) # upper 32 bits
+    else:
+        bit_output.write_bits(bits = n_samples, n = N_SAMPLES_BITS)
 
     # write dac time dimension
     bit_output.write_bits(bits = dac_time_dimension, n = DAC_TIME_DIMENSION_BITS)
@@ -379,22 +415,40 @@ def write_bottleneck(
 
     # write serialized entropy coder
     bit_output.write_bits(bits = serialized_entropy_coder, n = SERIALIZED_ENTROPY_CODER_BITS)
+
+    # write chunk length
+    bit_output.write_bits(bits = chunk_length, n = CHUNK_LENGTH_BITS)
+
+    # write input dB bits
+    bit_output.write_bits(bits = input_db_bits, n = INPUT_DB_BITS)
+
+    # write padding
+    bit_output.write_bit(bit = padding)
     
     # write bit for whether there are two frames (stereo) or one (mono)
     bit_output.write_bit(bit = len(frames) == 2)
 
     # align to byte
     bit_output.align_to_byte()  
+    metadata_bits += bit_output.get_position()
     
     # write each frame (each frame is a tuple of the DAC codes and encoded residuals)
     for frame in frames:
-        write_frame(frame = frame, bitstream = bit_output)
+        metadata_bits_frame, estimator_bits_frame, entropy_bits_frame = write_frame(frame = frame, bitstream = bit_output)
+        metadata_bits += metadata_bits_frame
+        estimator_bits += estimator_bits_frame
+        entropy_bits += entropy_bits_frame
     
     # close bitstream (writes to file)
     bit_output.flush()
     bit_output.close()
 
-    return
+    return {
+        "total_bits": bit_output.get_position(),
+        "metadata_bits": metadata_bits,
+        "estimator_bits": estimator_bits,
+        "entropy_bits": entropy_bits,
+    }
         
 ##################################################
 
@@ -429,7 +483,7 @@ def read_frame(
     codes_bits_per_sample = bitstream.read_bits(n = BITS_PER_SAMPLE_BITS)
     codes = [bitstream.read_bits(n = codes_bits_per_sample) for _ in range(codebook_level * dac_time_dimension)]
     codes = np.array(codes).astype(np.int64) # np.array(codes).astype(get_numpy_dtype_from_bit_size(bit_size = codes_bits_per_sample))
-    codes = codes.reshape(codebook_level, dac_time_dimension)
+    codes = codes.reshape(1, codebook_level, dac_time_dimension)
 
     # read encoded residuals
     encoded_residuals_len = bitstream.read_bits(n = ENCODED_RESIDUALS_SIZE_BITS)
@@ -463,8 +517,13 @@ def read_bottleneck(
     # read redundant codebook level
     _ = bit_input.read_bits(n = MAXIMUM_CODEBOOK_LEVEL_BITS) # global codebook level is redundant for Adaptive DAC, but we include it to make it easily compatible with Naive DAC (this value is 0)
     
-    # read number of samples
-    n_samples = bit_input.read_bits(n = N_SAMPLES_BITS)
+    # read number of samples (assumes N_SAMPLES_BITS is no larger than 64)
+    if N_SAMPLES_BITS > 32:
+        n_samples_lower = bit_input.read_bits(n = 32) # lower 32 bits
+        n_samples_upper = bit_input.read_bits(n = N_SAMPLES_BITS - 32) # upper 32 bits
+        n_samples = (n_samples_upper << 32) | n_samples_lower
+    else:
+        n_samples = bit_input.read_bits(n = N_SAMPLES_BITS)
 
     # read dac time dimension
     dac_time_dimension = bit_input.read_bits(n = DAC_TIME_DIMENSION_BITS)
@@ -474,15 +533,25 @@ def read_bottleneck(
 
     # read serialized entropy coder
     serialized_entropy_coder = bit_input.read_bits(n = SERIALIZED_ENTROPY_CODER_BITS)
+
+    # read chunk length
+    chunk_length = bit_input.read_bits(n = CHUNK_LENGTH_BITS)
+
+    # read input dB bits
+    input_db_bits = bit_input.read_bits(n = INPUT_DB_BITS)
+
+    # read padding
+    padding = bit_input.read_bit()
     
     # read bit for whether there are two frames (stereo) or one (mono)
     is_stereo = bit_input.read_bit()
+    n_channels = 2 if is_stereo else 1
 
     # align to byte
     bit_input.align_to_byte()
     
     # read each frame
-    frames = [None] * (2 if is_stereo else 1)
+    frames = [None] * n_channels
     for i in range(len(frames)):
         frames[i] = read_frame(
             bitstream = bit_input,
@@ -490,7 +559,7 @@ def read_bottleneck(
         )
 
     # pack bottleneck
-    bottleneck = (0, n_samples, dac_time_dimension, audio_scale_bits, serialized_entropy_coder, frames)
+    bottleneck = (0, n_samples, dac_time_dimension, audio_scale_bits, serialized_entropy_coder, chunk_length, input_db_bits, padding, frames)
     
     return bottleneck
 
@@ -507,7 +576,9 @@ def encode_to_file(
     model: dac.model.dac.DAC,
     sample_rate: int,
     audio_scale: float = None,
-) -> None:
+    window_duration: float = WINDOW_DURATION_DEFAULT,
+    return_statistics: bool = False,
+) -> Union[None, dict]:
     """
     Encode the data to a file.
 
@@ -525,10 +596,15 @@ def encode_to_file(
         The sample rate of the data.
     audio_scale : float, default = None
         The audio scale to use for encoding. If None, will be calculated using the data. If provided, will be used as is.
-
+    window_duration : float, default = WINDOW_DURATION_DEFAULT
+        The window duration to use for encoding.
+    return_statistics : bool, default = False
+        Whether to return statistics about the bottleneck.
+    
     Returns
     -------
-    None
+    Union[None, dict]
+        None if return_statistics is False, otherwise a dictionary containing statistics about the bottleneck.
     """
 
     # get bottleneck
@@ -538,14 +614,19 @@ def encode_to_file(
         model = model,
         sample_rate = sample_rate,
         audio_scale = audio_scale,
+        window_duration = window_duration,
     )
 
     # write bottleneck to file
-    write_bottleneck(
+    statistics = write_bottleneck(
         bottleneck = bottleneck,
         path = path,
     )
 
+    # return statistics if requested
+    if return_statistics:
+        return statistics
+    
     return
 
 def decode_from_file(

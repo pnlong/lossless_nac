@@ -12,10 +12,12 @@ import numpy as np
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 from entropy_coder import EntropyCoder
 import verbatim
 import naive_rice
+import bitstream
 
 ##################################################
 
@@ -24,6 +26,7 @@ import naive_rice
 ##################################################
 
 PHI = (1 + np.sqrt(5)) / 2 # golden ratio
+RICE_PARAMETER_BITS = 5 # bits to represent rice parameter
 
 ##################################################
 
@@ -68,38 +71,34 @@ def get_optimal_rice_parameter(
 ##################################################
 
 def encode(
+    out: bitstream.BitOutputStream,
     nums: np.ndarray,
-) -> bytes:
+) -> None:
     """
     Encode the data.
 
     Parameters
     ----------
+    out : bitstream.BitOutputStream
+        The output stream to write to.
     nums : np.ndarray
         The data to encode.
-
-    Returns
-    -------
-    bytes
-        The encoded data.
     """
     
-    # determine optimal rice parameter
+    # determine optimal rice parameter and write to stream
     k = get_optimal_rice_parameter(nums = nums)
+    out.write_bits(bits = k, n = RICE_PARAMETER_BITS) # write rice parameter
 
-    # encode data and return stream
+    # encode data
     if k == 0:
-        stream = verbatim.encode(nums = nums)
+        verbatim.encode(out = out, nums = nums)
     else:
-        stream = naive_rice.encode(nums = nums, k = k)
+        naive_rice.encode(out = out, nums = nums, k = k)
 
-    # add rice parameter to stream
-    stream = bytes([k]) + stream # prepend rice parameter to stream
-
-    return stream
+    return
 
 def decode(
-    stream: bytes,
+    inp: bitstream.BitInputStream,
     num_samples: int,
 ) -> np.ndarray:
     """
@@ -107,8 +106,8 @@ def decode(
 
     Parameters
     ----------
-    stream : bytes
-        The encoded data to decode.
+    inp : bitstream.BitInputStream
+        The input stream to read from.
     num_samples : int
         The number of samples to decode.
 
@@ -117,15 +116,15 @@ def decode(
     np.ndarray
         The decoded data. 
     """
-    
+
     # get rice parameter
-    k = stream[0]
+    k = inp.read_bits(n = RICE_PARAMETER_BITS)
 
     # decode data and return
     if k == 0:
-        nums = verbatim.decode(stream = stream[1:], num_samples = num_samples)
+        nums = verbatim.decode(inp = inp, num_samples = num_samples)
     else:
-        nums = naive_rice.decode(stream = stream[1:], num_samples = num_samples, k = k)
+        nums = naive_rice.decode(inp = inp, num_samples = num_samples, k = k)
 
     return nums
 
@@ -177,7 +176,13 @@ class AdaptiveRiceCoder(EntropyCoder):
         bytes
             The encoded data.
         """
-        return encode(nums = nums)
+
+        # encode data with output stream
+        out = bitstream.BitOutputStream() # helper for writing bits and bytes to an output stream
+        encode(out = out, nums = nums) # encode data
+        stream = out.flush() # get bytes stream
+
+        return stream
 
     def decode(
         self,
@@ -199,6 +204,11 @@ class AdaptiveRiceCoder(EntropyCoder):
         np.ndarray
             The decoded data.
         """
-        return decode(stream = stream, num_samples = num_samples)
+
+        # decode data with input stream
+        inp = bitstream.BitInputStream(stream = stream) # helper for reading bits and bytes from an input stream
+        nums = decode(inp = inp, num_samples = num_samples) # decode data
+
+        return nums
 
 ##################################################

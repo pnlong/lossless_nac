@@ -43,7 +43,7 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 # CONSTANTS
 ##################################################
 
-OUTPUT_COLUMNS = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "model_path", "entropy_coder", "codebook_level", "audio_scale", "block_size", "batch_size", "using_gpu"]
+OUTPUT_COLUMNS = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "model_path", "entropy_coder", "codebook_level", "audio_scale", "block_size", "batch_size", "using_gpu", "total_bits", "metadata_bits", "estimator_bits", "entropy_bits"]
 
 ##################################################
 
@@ -160,7 +160,7 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     duration_audio = len(waveform) / sample_rate
                     start_time = time.perf_counter()
-                    ldac.encode_to_file(
+                    statistics = ldac.encode_to_file(
                         path = path_compressed,
                         data = waveform,
                         entropy_coder = entropy_coder,
@@ -170,6 +170,7 @@ if __name__ == "__main__":
                         audio_scale = args.audio_scale,
                         block_size = args.block_size,
                         batch_size = args.batch_size,
+                        return_statistics = True,
                     )
                     duration_encoding = time.perf_counter() - start_time # measure speed of compression
                     round_trip = ldac.decode_from_file(
@@ -205,6 +206,10 @@ if __name__ == "__main__":
                     "block_size": args.block_size,
                     "batch_size": args.batch_size,
                     "using_gpu": using_gpu,
+                    "total_bits": statistics["total_bits"],
+                    "metadata_bits": statistics["metadata_bits"],
+                    "estimator_bits": statistics["estimator_bits"],
+                    "entropy_bits": statistics["entropy_bits"],
                 }]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = False, index = False, mode = "a")
 
             return
@@ -232,6 +237,8 @@ if __name__ == "__main__":
     # FINAL STATISTICS
     ##################################################
 
+    print("=" * 60)
+
     # read in results (just the compression rate column, we don't really care about anything else)
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
     if args.mixes_only: # filter for only mixes
@@ -254,6 +261,7 @@ if __name__ == "__main__":
     print(f"Standard Deviation of Compression Rates: {np.std(compression_rates):.2f}%")
     print(f"Best Compression Rate: {np.max(compression_rates):.2f}%")
     print(f"Worst Compression Rate: {np.min(compression_rates):.2f}%")
+    print("-" * 60)
 
     # output statistics on compression speed
     print(f"Mean Compression Speed: {np.mean(compression_speeds):.2f}%")
@@ -261,6 +269,7 @@ if __name__ == "__main__":
     print(f"Standard Deviation of Compression Speeds: {np.std(compression_speeds):.2f}%")
     print(f"Best Compression Speed: {np.max(compression_speeds):.2f}%")
     print(f"Worst Compression Speed: {np.min(compression_speeds):.2f}%")
+    print("-" * 60)
 
     # output statistics on bitrate
     bitrates = (results["size_compressed"] * 8) / results["duration_audio"]
@@ -269,6 +278,22 @@ if __name__ == "__main__":
     print(f"Standard Deviation of Bitrates: {np.std(bitrates):.2f} bps")
     print(f"Best Bitrate: {np.max(bitrates):.2f} bps")
     print(f"Worst Bitrate: {np.min(bitrates):.2f} bps")
+    print("-" * 60)
+
+    # output statistics on lossy bitrate
+    lossy_bitrates = results["estimator_bits"] / results["duration_audio"]
+    print(f"Mean Lossy Bitrate: {np.mean(lossy_bitrates):.2f} bps")
+    print(f"Median Lossy Bitrate: {np.median(lossy_bitrates):.2f} bps")
+    print(f"Standard Deviation of Lossy Bitrates: {np.std(lossy_bitrates):.2f} bps")
+    print(f"Best Lossy Bitrate: {np.max(lossy_bitrates):.2f} bps")
+    print(f"Worst Lossy Bitrate: {np.min(lossy_bitrates):.2f} bps")
+    print("-" * 60)
+
+    # output statistics on different bit types
+    print(f"Mean Metadata Bits Proportion: {100 * np.mean(results['metadata_bits'] / results['total_bits']):.2f}%")
+    print(f"Mean Estimator Bits Proportion: {100 * np.mean(results['estimator_bits'] / results['total_bits']):.2f}%")
+    print(f"Mean Entropy Bits Proportion: {100 * np.mean(results['entropy_bits'] / results['total_bits']):.2f}%")
+    print("-" * 60)
 
     ##################################################
 

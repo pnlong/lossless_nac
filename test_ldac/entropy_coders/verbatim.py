@@ -23,7 +23,7 @@ import bitstream
 # CONSTANTS
 ##################################################
 
-
+BYTES_PER_ELEMENT_BITS = 4
 
 ##################################################
 
@@ -57,44 +57,34 @@ def get_dtype_from_bytes_per_element(
 ##################################################
 
 def encode(
+    out: bitstream.BitOutputStream,
     nums: np.ndarray,
-) -> bytes:
+) -> None:
     """
     Encode the data.
 
     Parameters
     ----------
+    out : bitstream.BitOutputStream
+        The output stream to write to.
     nums : np.ndarray
         The data to encode.
-
-    Returns
-    -------
-    bytes
-        The encoded data.
     """
-
-    # helper for writing bits and bytes to an output stream
-    out = bitstream.BitOutputStream()
 
     # ensure nums is a numpy array
     nums = np.array(nums)
 
     # write header, which contains the number of bytes per element as a single byte
     bytes_per_element = nums.itemsize
-    out.write_byte(byte = bytes_per_element)
-    bits_per_element = 8 * bytes_per_element
+    out.write_bits(bits = bytes_per_element, n = BYTES_PER_ELEMENT_BITS) # write number of bytes per element
 
-    # iterate through nums
-    for x in nums:
-        out.write_bits(bits = x, n = bits_per_element) # write each element in the correct number of bits
+    # write nums
+    out.write_bytes(bytes_ = nums.tobytes())
 
-    # get bytes stream
-    stream = out.flush()
-
-    return stream
+    return
 
 def decode(
-    stream: bytes,
+    inp: bitstream.BitInputStream,
     num_samples: int,
 ) -> np.ndarray:
     """
@@ -102,8 +92,8 @@ def decode(
 
     Parameters
     ----------
-    stream : bytes
-        The encoded data to decode.
+    inp : bitstream.BitInputStream
+        The input stream to read from.
     num_samples : int
         The number of samples to decode.
 
@@ -113,26 +103,16 @@ def decode(
         The decoded data.
     """
 
-    # helper for reading bits and bytes from an input stream
-    inp = bitstream.BitInputStream(stream = stream)
-
     # initialize numbers list
     nums = np.zeros(shape = num_samples)
 
     # read in first byte, which is number of bytes per element
-    bytes_per_element = inp.read_byte()
-    bits_per_element = bytes_per_element * 8
+    bytes_per_element = inp.read_bits(n = BYTES_PER_ELEMENT_BITS)
 
-    # read in numbers
-    for i in range(num_samples):
-        x = inp.read_bits(n = bits_per_element)
-        if x >= (1 << (bits_per_element - 1)): # convert unsigned to signed using two's complement if the sign bit is set
-            x = x - (1 << bits_per_element) # convert to negative using two's complement
-        nums[i] = x
-
-    # convert results to numpy array with correct dtype (assuming signed integers)
+    # read nums
+    buffer = inp.read_bytes(n = num_samples * bytes_per_element)
     target_dtype = get_dtype_from_bytes_per_element(bytes_per_element = bytes_per_element)
-    nums = np.array(nums, dtype = target_dtype)
+    nums = np.frombuffer(buffer = buffer, dtype = target_dtype)
 
     return nums
 
@@ -184,7 +164,13 @@ class VerbatimCoder(EntropyCoder):
         bytes
             The encoded data.
         """
-        return encode(nums = nums)
+
+        # encode data with output stream
+        out = bitstream.BitOutputStream() # helper for writing bits and bytes to an output stream
+        encode(out = out, nums = nums) # encode data
+        stream = out.flush() # get bytes stream
+
+        return stream
 
     def decode(
         self,
@@ -206,6 +192,11 @@ class VerbatimCoder(EntropyCoder):
         np.ndarray
             The decoded data.
         """
-        return decode(stream = stream, num_samples = num_samples)
+
+        # decode data with input stream
+        inp = bitstream.BitInputStream(stream = stream) # helper for reading bits and bytes from an input stream
+        nums = decode(inp = inp, num_samples = num_samples) # decode data
+
+        return nums
         
 ##################################################

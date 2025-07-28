@@ -8,14 +8,17 @@
 ##################################################
 
 import numpy as np
-from math import log2
+from math import log2, ceil
 
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(realpath(__file__)))
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
 from entropy_coder import EntropyCoder
+import naive_rice
 import adaptive_rice
+import bitstream
 
 ##################################################
 
@@ -98,41 +101,37 @@ def convert_partition_size_to_partition_size_factor(
 ##################################################
 
 def encode(
+    out: bitstream.BitOutputStream,
     nums: np.ndarray,
     partition_size: int,
-) -> bytes:
+) -> None:
     """
     Encode the data.
 
     Parameters
     ----------
+    out : bitstream.BitOutputStream
+        The output stream to write to.
     nums : np.ndarray
         The data to encode.
     partition_size : int
         The partition size to use.
-
-    Returns
-    -------
-    bytes
-        The encoded data.
     """
+
+    # write partitions
+    for start_index in range(0, len(nums), partition_size):
+
+        # get partition
+        end_index = min(start_index + partition_size, len(nums))
+        partition = nums[start_index:end_index]
+
+        # write optimally-rice-coded partition
+        adaptive_rice.encode(out = out, nums = partition)
+
+    return
     
-    # determine optimal rice parameter
-    k = get_optimal_rice_parameter(nums = nums)
-
-    # encode data and return stream
-    if k == 0:
-        stream = verbatim.encode(nums = nums)
-    else:
-        stream = naive_rice.encode(nums = nums, k = k)
-
-    # add rice parameter to stream
-    stream = bytes([k]) + stream # prepend rice parameter to stream
-
-    return stream
-
 def decode(
-    stream: bytes,
+    inp: bitstream.BitInputStream,
     num_samples: int,
     partition_size: int,
 ) -> np.ndarray:
@@ -141,8 +140,8 @@ def decode(
 
     Parameters
     ----------
-    stream : bytes
-        The encoded data to decode.
+    inp : bitstream.BitInputStream
+        The input stream to read from.
     num_samples : int
         The number of samples to decode.
     partition_size : int
@@ -153,15 +152,22 @@ def decode(
     np.ndarray
         The decoded data. 
     """
-    
-    # get rice parameter
-    k = stream[0]
 
-    # decode data and return
-    if k == 0:
-        nums = verbatim.decode(stream = stream[1:], num_samples = num_samples)
-    else:
-        nums = naive_rice.decode(stream = stream[1:], num_samples = num_samples, k = k)
+    # initialize numbers list
+    nums = [None] * ceil(num_samples / partition_size)
+    
+    # decode partitions
+    for i, start_index in enumerate(range(0, num_samples, partition_size)):
+
+        # get partition info
+        end_index = min(start_index + partition_size, num_samples)
+        partition_length = end_index - start_index
+
+        # get results
+        nums[i] = adaptive_rice.decode(inp = inp, num_samples = partition_length)
+
+    # concatenate partitions
+    nums = np.concatenate(nums, axis = 0)
 
     return nums
 
@@ -220,7 +226,13 @@ class PartitionedRiceCoder(EntropyCoder):
         bytes
             The encoded data.
         """
-        return encode(nums = nums, partition_size = self.partition_size)
+
+        # encode data with output stream
+        out = bitstream.BitOutputStream() # helper for writing bits and bytes to an output stream
+        encode(out = out, nums = nums, partition_size = self.partition_size) # encode data
+        stream = out.flush() # get bytes stream
+
+        return stream
 
     def decode(
         self,
@@ -242,6 +254,11 @@ class PartitionedRiceCoder(EntropyCoder):
         np.ndarray
             The decoded data.
         """
-        return decode(stream = stream, num_samples = num_samples, partition_size = self.partition_size)
+
+        # decode data with input stream
+        inp = bitstream.BitInputStream(stream = stream) # helper for reading bits and bytes from an input stream
+        nums = decode(inp = inp, num_samples = num_samples, partition_size = self.partition_size) # decode data
+
+        return nums
 
 ##################################################

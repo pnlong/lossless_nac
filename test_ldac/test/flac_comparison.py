@@ -224,7 +224,7 @@ def plot_compression_statistics_boxplots(df: pd.DataFrame, facet_columns: List[s
     ax_rate.set_title("Compression Rate")
     ax_rate.set_ylabel("Compression Rate (%)")
     ax_speed.set_title("Encoding Speed")
-    ax_speed.set_ylabel("Encoding Speed (audio seconds compressed per second)")
+    ax_speed.set_ylabel("Encoding Speed (x Real-Time)")
 
     # remove x-axis tick labels for top plot
     ax_rate.tick_params(labelbottom = False)
@@ -309,7 +309,7 @@ def plot_comparison_boxplots(dfs: Dict[str, pd.DataFrame], facet_columns: Dict[s
     ax_rate.set_ylabel("Compression Rate (%)")
     ax_rate.set_xlabel("") # hide x label
     ax_speed.set_title("Encoding Speed")
-    ax_speed.set_ylabel("Encoding Speed (audio seconds compressed per second)")
+    ax_speed.set_ylabel("Encoding Speed (x Real-Time)")
     ax_speed.set_xlabel("Lossless Compressor")
 
     # rotate x-axis labels if any contain JSON (indicating multiple parameters)

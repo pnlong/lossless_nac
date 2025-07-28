@@ -43,7 +43,7 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 # CONSTANTS
 ##################################################
 
-OUTPUT_COLUMNS = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "model_path", "entropy_coder", "codebook_level", "audio_scale", "using_gpu"]
+OUTPUT_COLUMNS = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "model_path", "entropy_coder", "codebook_level", "audio_scale", "window_duration", "total_bits", "metadata_bits", "estimator_bits", "entropy_bits"]
 
 ##################################################
 
@@ -66,9 +66,9 @@ if __name__ == "__main__":
         parser.add_argument("--entropy_coder", type = str, default = "adaptive_rice", help = "Entropy coder to use. Please enter in the following format: '<entropy_coder_type>-{\"param\": val, ..., \"param\": val}'")
         parser.add_argument("--codebook_level", type = int, default = 0, help = "Codebook level for DAC model. Use 0 for Adaptive DAC.")
         parser.add_argument("--audio_scale", type = float, default = None, help = "Audio scale. If None, determine the optimal audio scale for each waveform.")
+        parser.add_argument("--window_duration", type = float, default = ldac_compressor.WINDOW_DURATION_DEFAULT, help = "Window duration in seconds.")
         parser.add_argument("--mixes_only", action = "store_true", help = "Compute statistics for only mixes in MUSDB18, not all stems.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
-        parser.add_argument("-g", "--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         if not exists(args.input_filepath): # ensure input_filepath exists
@@ -84,9 +84,7 @@ if __name__ == "__main__":
     output_filepath = f"{args.output_dir}/test_full.csv"
 
     # load descript audio codec
-    using_gpu = (torch.cuda.is_available() and args.gpu > -1)
-    device = torch.device(f"cuda:{args.gpu}" if using_gpu else "cpu")
-    model = dac.DAC.load(location = args.model_path).to(device)
+    model = dac.DAC.load(location = args.model_path)
     model.eval() # turn on evaluate mode
 
     # parse entropy coder
@@ -104,7 +102,8 @@ if __name__ == "__main__":
         (results["entropy_coder"] == serialized_entropy_coder) & 
         (results["codebook_level"] == args.codebook_level) & 
         (results["audio_scale"] == args.audio_scale) & 
-        (results["using_gpu"] == using_gpu))
+        (results["window_duration"] == args.window_duration)
+    )
     if args.reset:
         results = results[~results_mask]
         results.to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = True, index = False, mode = "w")
@@ -156,7 +155,7 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     duration_audio = len(waveform) / sample_rate
                     start_time = time.perf_counter()
-                    ldac.encode_to_file(
+                    statistics = ldac.encode_to_file(
                         path = path_compressed,
                         data = waveform,
                         entropy_coder = entropy_coder,
@@ -164,6 +163,8 @@ if __name__ == "__main__":
                         sample_rate = sample_rate,
                         codebook_level = args.codebook_level,
                         audio_scale = args.audio_scale,
+                        window_duration = args.window_duration,
+                        return_statistics = True,
                     )
                     duration_encoding = time.perf_counter() - start_time # measure speed of compression
                     round_trip = ldac.decode_from_file(
@@ -196,25 +197,25 @@ if __name__ == "__main__":
                     "entropy_coder": serialized_entropy_coder,
                     "codebook_level": args.codebook_level,
                     "audio_scale": args.audio_scale,
-                    "using_gpu": using_gpu,
+                    "window_duration": args.window_duration,
+                    "total_bits": statistics["total_bits"],
+                    "metadata_bits": statistics["metadata_bits"],
+                    "estimator_bits": statistics["estimator_bits"],
+                    "entropy_bits": statistics["entropy_bits"],
                 }]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = False, index = False, mode = "a")
 
             return
 
         # evaluate over testbed
-        if using_gpu: # cannot use multiprocessing with GPU
-            for path in tqdm(iterable = paths, desc = "Evaluating", total = len(paths)):
-                _ = evaluate(path = path)
-        else: # we can use multiprocessing if not using GPU
-            with multiprocessing.Pool(processes = args.jobs) as pool:
-                _ = list(tqdm(iterable = pool.imap_unordered(
-                        func = evaluate,
-                        iterable = paths,
-                        chunksize = 1,
-                    ),
-                    desc = "Evaluating",
-                    total = len(paths),
-                ))
+        with multiprocessing.Pool(processes = args.jobs) as pool:
+            _ = list(tqdm(iterable = pool.imap_unordered(
+                    func = evaluate,
+                    iterable = paths,
+                    chunksize = 1,
+                ),
+                desc = "Evaluating",
+                total = len(paths),
+            ))
         
     # free up memory
     del already_completed_paths, paths, sample_rate_by_path
@@ -223,6 +224,8 @@ if __name__ == "__main__":
         
     # FINAL STATISTICS
     ##################################################
+
+    print("=" * 60)
 
     # read in results (just the compression rate column, we don't really care about anything else)
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
@@ -233,7 +236,7 @@ if __name__ == "__main__":
         (results["entropy_coder"] == serialized_entropy_coder) & 
         (results["codebook_level"] == args.codebook_level) & 
         (results["audio_scale"] == args.audio_scale) & 
-        (results["using_gpu"] == using_gpu)
+        (results["window_duration"] == args.window_duration)
     ]
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()
@@ -244,6 +247,7 @@ if __name__ == "__main__":
     print(f"Standard Deviation of Compression Rates: {np.std(compression_rates):.2f}%")
     print(f"Best Compression Rate: {np.max(compression_rates):.2f}%")
     print(f"Worst Compression Rate: {np.min(compression_rates):.2f}%")
+    print("-" * 60)
 
     # output statistics on compression speed
     print(f"Mean Compression Speed: {np.mean(compression_speeds):.2f}%")
@@ -251,6 +255,7 @@ if __name__ == "__main__":
     print(f"Standard Deviation of Compression Speeds: {np.std(compression_speeds):.2f}%")
     print(f"Best Compression Speed: {np.max(compression_speeds):.2f}%")
     print(f"Worst Compression Speed: {np.min(compression_speeds):.2f}%")
+    print("-" * 60)
 
     # output statistics on bitrate
     bitrates = (results["size_compressed"] * 8) / results["duration_audio"]
@@ -259,6 +264,22 @@ if __name__ == "__main__":
     print(f"Standard Deviation of Bitrates: {np.std(bitrates):.2f} bps")
     print(f"Best Bitrate: {np.max(bitrates):.2f} bps")
     print(f"Worst Bitrate: {np.min(bitrates):.2f} bps")
+    print("-" * 60)
+
+    # output statistics on lossy bitrate
+    lossy_bitrates = results["estimator_bits"] / results["duration_audio"]
+    print(f"Mean Lossy Bitrate: {np.mean(lossy_bitrates):.2f} bps")
+    print(f"Median Lossy Bitrate: {np.median(lossy_bitrates):.2f} bps")
+    print(f"Standard Deviation of Lossy Bitrates: {np.std(lossy_bitrates):.2f} bps")
+    print(f"Best Lossy Bitrate: {np.max(lossy_bitrates):.2f} bps")
+    print(f"Worst Lossy Bitrate: {np.min(lossy_bitrates):.2f} bps")
+    print("-" * 60)
+
+    # output statistics on different bit types
+    print(f"Mean Metadata Bits Proportion: {100 * np.mean(results['metadata_bits'] / results['total_bits']):.2f}%")
+    print(f"Mean Estimator Bits Proportion: {100 * np.mean(results['estimator_bits'] / results['total_bits']):.2f}%")
+    print(f"Mean Entropy Bits Proportion: {100 * np.mean(results['entropy_bits'] / results['total_bits']):.2f}%")
+    print("-" * 60)
 
     ##################################################
 

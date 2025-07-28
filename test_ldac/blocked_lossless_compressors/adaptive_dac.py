@@ -8,7 +8,7 @@
 ##################################################
 
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import torch
 
 from os.path import dirname, realpath
@@ -564,7 +564,7 @@ def decode(
 def write_subframe(
     subframe: BOTTLENECK_SUBFRAME_TYPE,
     bitstream: bitstream.BitOutputStream,
-) -> None:
+) -> Tuple[int, int, int]:
     """
     Write a subframe to a bitstream.
 
@@ -577,13 +577,18 @@ def write_subframe(
 
     Returns
     -------
-    None
+    Tuple[int, int, int]
+        A tuple containing the number of metadata bits, estimator bits, and entropy bits.
     """
 
+    # initialize metadata, estimator, and entropy bits
+    metadata_bits, estimator_bits, entropy_bits = 0, 0, 0
+    
     # unpack subframe
     n_samples, codebook_level, dac_time_dimension, codes, encoded_residuals = subframe
     
     # write number of samples
+    metadata_bits_start = bitstream.get_position()
     bitstream.write_bits(bits = n_samples, n = MAXIMUM_BLOCK_SIZE_ASSUMPTION_BITS)
 
     # write codebook level
@@ -591,19 +596,27 @@ def write_subframe(
     
     # write dac_time_dimension (4-byte unsigned integer)  
     bitstream.write_bits(bits = dac_time_dimension, n = MAXIMUM_DAC_TIME_DIMENSION_ASSUMPTION_BITS)
+    metadata_bits_end = bitstream.get_position()
+    metadata_bits += metadata_bits_end - metadata_bits_start
     
     # write codes array
+    estimator_bits_start = bitstream.get_position()
     codes_bits_per_sample = get_minimum_number_of_bits_for_sample(sample = codes.max()) # get_numpy_dtype_bit_size(dtype = codes.dtype)
     bitstream.write_bits(bits = codes_bits_per_sample, n = BITS_PER_SAMPLE_BITS) # number of bits per sample for dtype
     for code in codes.flatten():
         bitstream.write_bits(bits = int(code), n = codes_bits_per_sample)
+    estimator_bits_end = bitstream.get_position()
+    estimator_bits += estimator_bits_end - estimator_bits_start
     
     # write encoded residuals
+    entropy_bits_start = bitstream.get_position()
     bitstream.write_bits(bits = len(encoded_residuals), n = ENCODED_RESIDUALS_SIZE_BITS) # number of bytes for encoded residuals as 32 bit unsigned integer
     for byte in encoded_residuals:
-        bitstream.write_bits(bits = byte, n = 8)
+        bitstream.write_bits(bits = byte, n = 8) # 8 bits per byte
+    entropy_bits_end = bitstream.get_position()
+    entropy_bits += entropy_bits_end - entropy_bits_start
 
-    return
+    return (metadata_bits, estimator_bits, entropy_bits)
 
 def write_frame(
     frame: BOTTLENECK_FRAME_TYPE,
@@ -623,20 +636,29 @@ def write_frame(
     -------
     None
     """
+
+    # initialize metadata, estimator, and entropy bits
+    metadata_bits, estimator_bits, entropy_bits = 0, 0, 0
     
     # write number of subframes in this frame
+    metadata_bits_start = bitstream.get_position()
     bitstream.write_bit(bit = len(frame) == 2) # there are either one or two subframes in a frame
+    metadata_bits_end = bitstream.get_position()
+    metadata_bits += metadata_bits_end - metadata_bits_start
     
     # write each subframe
     for subframe in frame:
-        write_subframe(subframe = subframe, bitstream = bitstream)
+        metadata_bits_subframe, estimator_bits_subframe, entropy_bits_subframe = write_subframe(subframe = subframe, bitstream = bitstream)
+        metadata_bits += metadata_bits_subframe
+        estimator_bits += estimator_bits_subframe
+        entropy_bits += entropy_bits_subframe
 
-    return
+    return (metadata_bits, estimator_bits, entropy_bits)
 
 def write_bottleneck(
     bottleneck: BOTTLENECK_TYPE,
     path: str,
-) -> None:
+) -> dict:
     """
     Write the bottleneck to a file.
 
@@ -649,7 +671,8 @@ def write_bottleneck(
 
     Returns
     -------
-    None
+    dict
+        A dictionary containing statistics about the bottleneck.
     """
 
     # unpack bottleneck
@@ -658,6 +681,7 @@ def write_bottleneck(
 
     # create bitstream
     bit_output = bitstream.BitOutputStream(path = path, buffer_size = int(expected_size * 1.2)) # buffer size is 1.2x the size of the bottleneck to avoid reallocating memory
+    metadata_bits, estimator_bits, entropy_bits = 0, 0, 0
 
     # write codebook level
     bit_output.write_bits(bits = 0, n = MAXIMUM_CODEBOOK_LEVEL_BITS) # global codebook level is redundant for Adaptive DAC, but we include it to make it easily compatible with Naive DAC (this value is 0)
@@ -676,16 +700,25 @@ def write_bottleneck(
 
     # write number of frames
     bit_output.write_uint(value = len(bottleneck))
+    metadata_bits += bit_output.get_position()
     
     # write each frame
     for frame in bottleneck:
-        write_frame(frame = frame, bitstream = bit_output)
+        metadata_bits_frame, estimator_bits_frame, entropy_bits_frame = write_frame(frame = frame, bitstream = bit_output)
+        metadata_bits += metadata_bits_frame
+        estimator_bits += estimator_bits_frame
+        entropy_bits += entropy_bits_frame
     
     # close bitstream (writes to file)
     bit_output.flush()
     bit_output.close()
 
-    return
+    return {
+        "total_bits": bit_output.get_position(),
+        "metadata_bits": metadata_bits,
+        "estimator_bits": estimator_bits,
+        "entropy_bits": entropy_bits,
+    }
         
 ##################################################
 
@@ -826,7 +859,8 @@ def encode_to_file(
     audio_scale: float = None,
     block_size: int = BLOCK_SIZE_DEFAULT,
     batch_size: int = BATCH_SIZE_DEFAULT,
-) -> None:
+    return_statistics: bool = False,
+) -> Union[None, dict]:
     """
     Encode the data to a file.
 
@@ -848,10 +882,13 @@ def encode_to_file(
         The block size to use for encoding.
     batch_size : int, default = BATCH_SIZE_DEFAULT
         The batch size to use for encoding.
+    return_statistics : bool, default = False
+        Whether to return statistics about the bottleneck.
 
     Returns
     -------
-    None
+    Union[None, dict]
+        None if return_statistics is False, otherwise a dictionary containing statistics about the bottleneck.
     """
 
     # get bottleneck
@@ -866,11 +903,15 @@ def encode_to_file(
     )
 
     # write bottleneck to file
-    write_bottleneck(
+    statistics = write_bottleneck(
         bottleneck = bottleneck,
         path = path,
     )
 
+    # return statistics if requested
+    if return_statistics:
+        return statistics
+    
     return
 
 def decode_from_file(
