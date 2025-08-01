@@ -126,8 +126,8 @@ if __name__ == "__main__":
         size_compressed = getsize(path) * 8
 
         # create temporary files for this specific evaluation
-        wav_fd, wav_filepath = tempfile.mkstemp(suffix=".wav", prefix=f"flac_eval_{path_prefix}_")
-        residuals_fd, residuals_filepath = tempfile.mkstemp(suffix=".bin", prefix=f"flac_residuals_{path_prefix}_")
+        wav_fd, wav_filepath = tempfile.mkstemp(suffix = ".wav", prefix = f"flac_eval_{path_prefix}_")
+        residuals_fd, residuals_filepath = tempfile.mkstemp(suffix = ".bin", prefix = f"flac_residuals_{path_prefix}_")
         
         # wrap in try statement to catch errors
         try:

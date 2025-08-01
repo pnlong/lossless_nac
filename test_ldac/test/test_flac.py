@@ -1,8 +1,6 @@
 # README
 # Phillip Long
-# July 21, 2025
-
-# Test compression rate of Full LDAC. We use the MusDB18 dataset as a testbed.
+# Analyze the makeup of FLAC files.
 
 # IMPORTS
 ##################################################
@@ -11,31 +9,22 @@ import numpy as np
 import pandas as pd
 import argparse
 import multiprocessing
+import scipy.io.wavfile
 from tqdm import tqdm
-from os.path import exists, dirname, basename, getsize
-from os import makedirs
-import time
-import torch
-import warnings
-import json
+from os.path import exists, basename, dirname, getsize
+from os import makedirs, remove
+import subprocess
 import tempfile
+import os
+import time
 
 from os.path import dirname, realpath
 import sys
 sys.path.insert(0, dirname(dirname(dirname(realpath(__file__))))) # for preprocess_musdb18
-sys.path.insert(0, f"{dirname(dirname(dirname(realpath(__file__))))}/dac") # import dac package
-sys.path.insert(0, dirname(dirname(realpath(__file__)))) # needs to be after so that full_lossless_compressors is correctly imported
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
 
-from full_lossless_compressors import ldac
-from full_lossless_compressors import ldac_compressor
-from entropy_coders.factory import get_entropy_coder
-from entropy_coders.serialize import serialize
 from constants import INPUT_FILEPATH, OUTPUT_DIR, NA_STRING
 from preprocess_musdb18 import get_mixes_only_mask, get_test_only_mask
-import dac
-
-# ignore deprecation warning from pytorch
-warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm")
 
 ##################################################
 
@@ -43,7 +32,8 @@ warnings.filterwarnings(action = "ignore", message = "torch.nn.utils.weight_norm
 # CONSTANTS
 ##################################################
 
-OUTPUT_COLUMNS = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "model_path", "entropy_coder", "codebook_level", "audio_scale", "window_duration", "using_gpu", "total_bits", "metadata_bits", "estimator_bits", "entropy_bits"]
+FLAC_PATH = f"{dirname(dirname(dirname(realpath(__file__))))}/flac/src/flac/flac"
+OUTPUT_COLUMNS = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "compression_level", "total_bits", "metadata_bits", "estimator_bits", "entropy_bits"]
 
 ##################################################
 
@@ -59,54 +49,33 @@ if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
-        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate LDAC Implementation") # create argument parser
+        parser = argparse.ArgumentParser(prog = "Evaluate", description = "Evaluate FLAC") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = INPUT_FILEPATH, help = "Absolute filepath to CSV file describing the preprocessed MusDB18 dataset (see `preprocess_musdb18.py`).")
         parser.add_argument("--output_dir", type = str, default = OUTPUT_DIR, help = "Absolute filepath to the output directory.")
-        parser.add_argument("-mp", "--model_path", type = str, default = ldac_compressor.DAC_PATH, help = "Absolute filepath to the Descript Audio Codec model weights.")
-        parser.add_argument("--entropy_coder", type = str, default = "adaptive_rice", help = "Entropy coder to use. Please enter in the following format: '<entropy_coder_type>-{\"param\": val, ..., \"param\": val}'")
-        parser.add_argument("--codebook_level", type = int, default = 0, help = "Codebook level for DAC model. Use 0 for Adaptive DAC.")
-        parser.add_argument("--audio_scale", type = float, default = None, help = "Audio scale. If None, determine the optimal audio scale for each waveform.")
-        parser.add_argument("--window_duration", type = float, default = ldac_compressor.WINDOW_DURATION_DEFAULT, help = "Window duration in seconds.")
+        parser.add_argument("--compression_level", type = int, default = 5, help = "Compression level for FLAC.")
+        parser.add_argument("--flac_path", type = str, default = FLAC_PATH, help = "Absolute filepath to the FLAC CLI.")
         parser.add_argument("--mixes_only", action = "store_true", help = "Compute statistics for only mixes in MUSDB18, not all stems.")
         parser.add_argument("--reset", action = "store_true", help = "Re-evaluate files.")
-        parser.add_argument("--gpu", type = int, default = -1, help = "GPU (-1 for CPU).")
         parser.add_argument("-j", "--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         if not exists(args.input_filepath): # ensure input_filepath exists
             raise RuntimeError(f"--input_filepath argument does not exist: {args.input_filepath}")
-        elif not exists(args.model_path):
-            raise RuntimeError(f"--model_path argument does not exist: {args.model_path}")
+        elif args.compression_level < 0 or args.compression_level > 8:
+            raise RuntimeError(f"--compression_level argument must be between 0 and 8: {args.compression_level}")
         return args # return parsed arguments
     args = parse_args()
-
+    
     # create output directory if necessary
+    output_filepath = f"{args.output_dir}/test_flac.csv"
     if not exists(args.output_dir):
         makedirs(args.output_dir, exist_ok = True)
-    output_filepath = f"{args.output_dir}/test_full.csv"
-
-    # load descript audio codec
-    using_gpu = (torch.cuda.is_available() and args.gpu > -1)
-    device = torch.device(f"cuda:{args.gpu}" if using_gpu else "cpu")
-    model = dac.DAC.load(location = args.model_path).to(device)
-    model.eval() # turn on evaluate mode
-
-    # parse entropy coder
-    entropy_coder_type, entropy_coder_kwargs = args.entropy_coder.split("-")
-    entropy_coder_kwargs = json.loads(entropy_coder_kwargs) # parse entropy coder kwargs
-    entropy_coder = get_entropy_coder(type_ = entropy_coder_type, **entropy_coder_kwargs)
-    serialized_entropy_coder = serialize(entropy_coder = entropy_coder)
     
     # write output columns if necessary
     if not exists(output_filepath): # write column names
         pd.DataFrame(columns = OUTPUT_COLUMNS).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = True, index = False, mode = "w")
     results = pd.read_csv(filepath_or_buffer = output_filepath, sep = ",", header = 0, index_col = False)
     results_mask = (
-        (results["model_path"] == args.model_path) & 
-        (results["entropy_coder"] == serialized_entropy_coder) & 
-        (results["codebook_level"] == args.codebook_level) & 
-        (results["audio_scale"] == args.audio_scale) & 
-        (results["window_duration"] == args.window_duration) & 
-        (results["using_gpu"] == using_gpu)
+        (results["compression_level"] == args.compression_level)
     )
     if args.reset:
         results = results[~results_mask]
@@ -120,7 +89,7 @@ if __name__ == "__main__":
     ##################################################
 
 
-    # DETERMINE COMPRESSION RATE
+    # EVALUATE ESTIMATION BITRATE
     ##################################################
 
     # read in paths to evaluate
@@ -143,48 +112,63 @@ if __name__ == "__main__":
             # save time by avoiding unnecessary calculations
             if path in already_completed_paths and not args.reset:
                 return # return nothing, stop execution here
+            path_prefix = basename(path)[:-len(".npy")] # get prefix of path
+
+            # create temporary files for this specific evaluation
+            wav_fd, wav_filepath = tempfile.mkstemp(suffix = ".wav", prefix = f"flac_eval_{path_prefix}_")
+            flac_fd, flac_filepath = tempfile.mkstemp(suffix = ".flac", prefix = f"flac_eval_{path_prefix}_")
             
-            # load in waveform
-            waveform = np.load(file = path)
-            size_original = waveform.nbytes # compute size in bytes of original waveform
-            waveform = waveform.astype(np.int32) # ensure waveform is stored as int32 for ldac
-            sample_rate = sample_rate_by_path[path]
+            # wrap in try statement to catch errors
+            try:
 
-            # create temporary LDAC file
-            with tempfile.NamedTemporaryFile(suffix = ".ldac", delete = True) as f:
+                # close file descriptors since we only need the file paths
+                os.close(wav_fd)
+                os.close(flac_fd)
 
-                # output filepath
-                path_compressed = f.name
-            
-                # encode and decode
-                with torch.no_grad():
-                    duration_audio = len(waveform) / sample_rate
-                    start_time = time.perf_counter()
-                    statistics = ldac.encode_to_file(
-                        path = path_compressed,
-                        data = waveform,
-                        entropy_coder = entropy_coder,
-                        model = model,
-                        sample_rate = sample_rate,
-                        codebook_level = args.codebook_level,
-                        audio_scale = args.audio_scale,
-                        window_duration = args.window_duration,
-                        return_statistics = True,
-                    )
-                    duration_encoding = time.perf_counter() - start_time # measure speed of compression
-                    round_trip = ldac.decode_from_file(
-                        path = path_compressed,
-                        model = model,
-                    ) # reconstruct waveform from bottleneck to ensure losslessness
-                    assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
-                    del round_trip, start_time # free up memory                
+                # first save the numpy array as a WAV file
+                waveform = np.load(file = path)
+                size_original = waveform.nbytes # compute size in bytes of original waveform
+                # waveform = waveform.astype(np.int32) # ensure waveform is stored as int32 for FLAC
+                sample_rate = sample_rate_by_path[path]
+                duration_audio = len(waveform) / sample_rate
+                scipy.io.wavfile.write(filename = wav_filepath, rate = sample_rate, data = waveform)
+                del waveform # free up memory
 
-                # compute size in bytes of compressed bottleneck
-                size_compressed = getsize(path_compressed)
+                # encode WAV file as FLAC
+                start_time = time.perf_counter()
+                _ = subprocess.run(args = [
+                    args.flac_path,
+                    "--force",
+                    f"--compression-level-{args.compression_level}",
+                    "-o",
+                    flac_filepath,
+                    wav_filepath
+                ], check = True, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL)
+                duration_encoding = time.perf_counter() - start_time # measure speed of compression
+                size_compressed = getsize(flac_filepath)
+                del start_time # free up memory
 
                 # compute other final statistics
                 compression_rate = size_original / size_compressed
                 compression_speed = duration_audio / duration_encoding
+                
+                # get statistics from FLAC decoder
+                result = subprocess.run(args = [
+                    args.flac_path,
+                    "--force",
+                    "--decode",
+                    "-o",
+                    wav_filepath,
+                    flac_filepath
+                ], check = True, stdout = subprocess.PIPE, stderr = subprocess.DEVNULL) # encode WAV file as FLAC
+                result = result.stdout.decode("utf-8") # read stdout as a string
+                result = next(filter(lambda line: line.startswith("FLAC Analysis Statistics: "), result.split("\n"))) # get the line that includes estimation bits
+                statistics = eval(result[len("FLAC Analysis Statistics: "):]) # statistics
+                estimator_bits = statistics["estimation_bits"]
+                entropy_bits = statistics["entropy_bits"]
+                metadata_bits = statistics["metadata_bits"]
+                total_bits = estimator_bits + entropy_bits + metadata_bits
+                del result # free up memory
 
                 # output
                 pd.DataFrame(data = [{
@@ -195,40 +179,42 @@ if __name__ == "__main__":
                     "duration_audio": duration_audio,
                     "duration_encoding": duration_encoding,
                     "compression_speed": compression_speed,
-                    "model_path": args.model_path,
-                    "entropy_coder": serialized_entropy_coder,
-                    "codebook_level": args.codebook_level,
-                    "audio_scale": args.audio_scale,
-                    "window_duration": args.window_duration,
-                    "using_gpu": using_gpu,
-                    "total_bits": statistics["total_bits"],
-                    "metadata_bits": statistics["metadata_bits"],
-                    "estimator_bits": statistics["estimator_bits"],
-                    "entropy_bits": statistics["entropy_bits"],
+                    "compression_level": args.compression_level,
+                    "total_bits": total_bits,
+                    "metadata_bits": metadata_bits,
+                    "estimator_bits": estimator_bits,
+                    "entropy_bits": entropy_bits,
                 }]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = NA_STRING, header = False, index = False, mode = "a")
 
+            finally:
+                # clean up temporary files
+                try:
+                    if exists(wav_filepath):
+                        remove(wav_filepath)
+                    if exists(flac_filepath):
+                        remove(flac_filepath)
+                except OSError:
+                    pass  # ignore cleanup errors
+
+            # return nothing
             return
 
-        # evaluate over testbed
-        if using_gpu: # cannot use multiprocessing with GPU
-            for path in tqdm(iterable = paths, desc = "Evaluating", total = len(paths)):
-                _ = evaluate(path = path)
-        else: # we can use multiprocessing if not using GPU
-            with multiprocessing.Pool(processes = args.jobs) as pool:
-                _ = list(tqdm(iterable = pool.imap_unordered(
-                        func = evaluate,
-                        iterable = paths,
-                        chunksize = 1,
-                    ),
-                    desc = "Evaluating",
-                    total = len(paths),
-                ))
+        # use multiprocessing
+        with multiprocessing.Pool(processes = args.jobs) as pool:
+            _ = list(tqdm(iterable = pool.imap_unordered(
+                    func = evaluate,
+                    iterable = paths,
+                    chunksize = 1
+                ),
+                desc = "Evaluating",
+                total = len(paths)))
         
     # free up memory
     del already_completed_paths, paths, sample_rate_by_path
-        
+
     ##################################################
-        
+
+
     # FINAL STATISTICS
     ##################################################
 
@@ -239,12 +225,7 @@ if __name__ == "__main__":
     if args.mixes_only: # filter for only mixes
         results = results[get_mixes_only_mask(paths = results["path"])]
     results = results[
-        (results["model_path"] == args.model_path) & 
-        (results["entropy_coder"] == serialized_entropy_coder) & 
-        (results["codebook_level"] == args.codebook_level) & 
-        (results["audio_scale"] == args.audio_scale) & 
-        (results["window_duration"] == args.window_duration) & 
-        (results["using_gpu"] == using_gpu)
+        (results["compression_level"] == args.compression_level)
     ]
     compression_rates = results["compression_rate"].to_numpy() * 100 # convert to percentages
     compression_speeds = results["compression_speed"].to_numpy()

@@ -14,7 +14,7 @@ import seaborn as sns
 import argparse
 from typing import Any, Dict, List
 from os import mkdir, get_terminal_size
-from os.path import exists
+from os.path import exists, dirname
 import warnings
 
 from os.path import dirname, realpath
@@ -30,8 +30,8 @@ from preprocess_musdb18 import get_mixes_only_mask, get_test_only_mask
 ##################################################
 
 FLAC_CSV = "/deepfreeze/pnlong/lnac/eval/flac/test.csv"
-LDAC_CSV_PREFIX = "/deepfreeze/pnlong/lnac/eval/ldac_new/test"
-OUTPUT_DIR = "/deepfreeze/pnlong/lnac/eval/ldac_new/flac_comparison"
+LDAC_CSV_PREFIX = "/deepfreeze/pnlong/lnac/eval/ldac_new2/test"
+OUTPUT_DIR = f"{dirname(LDAC_CSV_PREFIX)}/flac_comparison"
 
 MAJOR_SEPARATOR_LINE = "=" * get_terminal_size().columns
 MINOR_SEPARATOR_LINE = "-" * get_terminal_size().columns
@@ -171,10 +171,14 @@ def plot_compression_statistics_boxplots(df: pd.DataFrame, facet_columns: List[s
     """
     Plot compression statistics with box plots.
     """
+    
+    # calculate number of unique paths for caption
+    num_paths = len(df["path"].unique()) if "path" in df.columns else len(df)
 
     # set up the matplotlib figure
     fig, (ax_rate, ax_speed) = plt.subplots(nrows = 2, ncols = 1, figsize = (8, 10), sharex = True, constrained_layout = True)
-
+    fig.suptitle(f"Compression Statistics (N = {num_paths})")
+    
     # enable seaborn style
     sns.set_theme(style = "whitegrid")
 
@@ -255,13 +259,12 @@ def plot_comparison_boxplots(dfs: Dict[str, pd.DataFrame], facet_columns: Dict[s
 
     # set up the matplotlib figure
     fig, (ax_rate, ax_speed) = plt.subplots(nrows = 2, ncols = 1, figsize = (8, 10), sharex = True, constrained_layout = True)
-    fig.suptitle("Comparing Lossless Compressors")
 
     # enable seaborn style
     sns.set_theme(style = "whitegrid")
 
     # construct data frame
-    data_columns = ["lossless_compressor", "compression_rate", "compression_speed", "parameters"]
+    data_columns = ["lossless_compressor", "compression_rate", "compression_speed", "parameters", "path"]
     data = pd.DataFrame(columns = data_columns)
     for lossless_compressor, df in dfs.items():
         current_facet_columns = facet_columns[lossless_compressor]
@@ -288,6 +291,18 @@ def plot_comparison_boxplots(dfs: Dict[str, pd.DataFrame], facet_columns: Dict[s
             data = pd.concat((data, df_optimal_configuration), axis = 0, ignore_index = True)
             del optimal_configuration, df_optimal_configuration # free up memory
 
+    # filter to common paths across all best configurations
+    compressor_paths = []
+    for compressor in lossless_compressors:
+        compressor_data = data[data["lossless_compressor"] == compressor.upper()]
+        if len(compressor_data) > 0:
+            compressor_paths.append(set(compressor_data["path"]))
+    if len(compressor_paths) > 1:
+        common_paths = set.intersection(*compressor_paths)
+        data = data[data["path"].isin(common_paths)].reset_index(drop = True)
+    num_common_paths = len(data["path"].unique()) if "path" in data.columns else len(data)
+    fig.suptitle(f"Comparing Lossless Compressors (N = {num_common_paths})")
+
     # logging
     print("BEST CONFIGURATION PER LOSSLESS COMPRESSOR:")
     summary = data.copy()
@@ -295,7 +310,7 @@ def plot_comparison_boxplots(dfs: Dict[str, pd.DataFrame], facet_columns: Dict[s
     summary["lossless_compressor"] = list(map(lambda i: data.at[i, "lossless_compressor"] + ":" + (" " * (1 + (longest_lossless_compressor_string_length - len(data.at[i, "lossless_compressor"])))) + data.at[i, "parameters"], data.index))
     max_descriptor_length = max(map(len, summary["lossless_compressor"]))
     summary["lossless_compressor"] = list(map(lambda descriptor: descriptor + (" " * (max_descriptor_length - len(descriptor))), summary["lossless_compressor"])) # end pad so that they are left aligned
-    summary = summary.drop(columns = "parameters") # because parameters is baked into the lossless_compressor column
+    summary = summary.drop(columns = ["parameters", "path"]) # because parameters is baked into the lossless_compressor column
     summary = summary.groupby(by = "lossless_compressor").mean().reset_index(drop = False)
     print(pretty_dataframe_string(df = summary, max_colwidth = 200, border_style = "simple"))
     del summary, longest_lossless_compressor_string_length, max_descriptor_length # free up memory
@@ -350,6 +365,7 @@ if __name__ == "__main__":
         parser.add_argument("--ldac_csv_prefix", type = str, default = LDAC_CSV_PREFIX, help = "Prefix for LDAC test results CSV files.")
         parser.add_argument("--output_dir", type = str, default = OUTPUT_DIR, help = "Output directory for comparison plots.")
         parser.add_argument("--mixes_only", action = "store_true", help = "Only use mixes in MUSDB18, not all stems.")
+        parser.add_argument("--skip_common_path_filter", action = "store_true", help = "Skip filtering to common paths across all dataframes.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         if not exists(args.flac_csv):
             raise FileNotFoundError(f"FLAC CSV file not found: {args.flac_csv}")
@@ -375,7 +391,7 @@ if __name__ == "__main__":
     facet_columns = {}
     
     # standard columns that are not facet columns
-    standard_columns = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed"]
+    standard_columns = ["path", "size_original", "size_compressed", "compression_rate", "duration_audio", "duration_encoding", "compression_speed", "total_bits", "metadata_bits", "estimator_bits", "entropy_bits"]
 
     # filter data frame according to arguments
     def filter_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -396,11 +412,29 @@ if __name__ == "__main__":
     for ldac_type in ("blocked", "full"):
         ldac_csv = f"{args.ldac_csv_prefix}_{ldac_type}.csv"
         ldac = pd.read_csv(filepath_or_buffer = ldac_csv, sep = ",", header = 0, index_col = False)
-        dfs[f"ldac {ldac_type}"] = filter_df(df = ldac[ldac["model_path"] == "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth"]).drop(columns = ["model_path"])
-        dfs[f"lzac {ldac_type}"] = filter_df(df = ldac[ldac["model_path"] == "/data3/pnlong/zachdac/latest/dac/weights.pth"]).drop(columns = ["model_path"])
+        dfs[f"ldac_{ldac_type}"] = filter_df(df = ldac[ldac["model_path"] == "/home/pnlong/.cache/descript/dac/weights_44khz_8kbps_0.0.1.pth"]).drop(columns = ["model_path"])
+        dfs[f"lzac_{ldac_type}"] = filter_df(df = ldac[ldac["model_path"] == "/data3/pnlong/zachdac/latest/dac/weights.pth"]).drop(columns = ["model_path"])
         del ldac # free up memory
-        facet_columns[f"ldac {ldac_type}"] = list(filter(lambda column: column not in standard_columns, dfs[f"ldac {ldac_type}"].columns))
-        facet_columns[f"lzac {ldac_type}"] = list(filter(lambda column: column not in standard_columns, dfs[f"lzac {ldac_type}"].columns))
+        facet_columns[f"ldac_{ldac_type}"] = list(filter(lambda column: column not in standard_columns, dfs[f"ldac_{ldac_type}"].columns))
+        facet_columns[f"lzac_{ldac_type}"] = list(filter(lambda column: column not in standard_columns, dfs[f"lzac_{ldac_type}"].columns))
+
+    # optionally filter each dataframe to only include paths common across configurations within that dataframe
+    if not args.skip_common_path_filter:
+        for name, df in dfs.items():
+            original_size = len(df)
+            current_facet_columns = facet_columns[name]
+            
+            # no configurations, keep all paths
+            if len(current_facet_columns) == 0:
+                continue
+        
+            # find common paths across configurations
+            else:
+                configuration_groups = df.groupby(by = current_facet_columns)
+                configuration_paths = [set(group["path"]) for _, group in configuration_groups]
+                if len(configuration_paths) > 1:
+                    common_paths_within_df = set.intersection(*configuration_paths)
+                    dfs[name] = df[df["path"].isin(common_paths_within_df)].reset_index(drop = True)
 
     ##################################################
 
@@ -413,14 +447,22 @@ if __name__ == "__main__":
 
     print(MAJOR_SEPARATOR_LINE)
     for i, (lossless_compressor, df) in enumerate(dfs.items()):
+
+        # add new columns if possilbe
+        if "estimator_bits" in df.columns:
+            statistic_columns = ["compression_rate", "compression_speed", "lossy_bitrate", "estimator_percentage"]
+            df["lossy_bitrate"] = df["estimator_bits"] / df["duration_audio"]
+            df["estimator_percentage"] = 100 * (df["estimator_bits"] / df["total_bits"])
+        else:
+            statistic_columns = ["compression_rate", "compression_speed"]
         
         # pretty print the data frame summary
         current_facet_columns = facet_columns[lossless_compressor]
         if len(current_facet_columns) == 0:
-            summary = df[["compression_rate", "compression_speed"]].mean().to_frame().T
+            summary = df[statistic_columns].mean().to_frame().T
             summary.index = ["Overall"]
         else:
-            summary = df.groupby(by = current_facet_columns)[["compression_rate", "compression_speed"]].mean()
+            summary = df.groupby(by = current_facet_columns)[statistic_columns].mean()
             summary = summary.reset_index(drop = False) # make it so that group by columns are columns themselves
         print(f"{lossless_compressor.upper()} SUMMARY:")
         print(pretty_df(df = summary))

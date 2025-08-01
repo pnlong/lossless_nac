@@ -155,7 +155,6 @@ def dac_encode_codes_only(
         data = np.expand_dims(data.T, axis = 0) # add batch dimension so of size (1, 2, n_samples)
     data = convert_audio_fixed_to_floating(waveform = data, audio_scale = audio_scale) # convert to float with correct audio scaling
     data = AudioSignal(audio_path_or_array = data, sample_rate = sample_rate) # convert to AudioSignal format
-    data = data.to(model.device) # move to device
     
     # encode
     dac_file = model.compress(audio_path_or_signal = data, win_duration = window_duration)
@@ -282,7 +281,7 @@ def dac_decode(
     is_mono = len(codes) == 1
 
     # convert to tensor
-    codes_tensor = torch.from_numpy(codes).to(model.device) # stack codes into tensor of shape (n_channels, codebook_level, dac_time_dimension)
+    codes_tensor = torch.from_numpy(codes) # stack codes into tensor of shape (n_channels, codebook_level, dac_time_dimension)
 
     # recreate DAC file
     dac_file = dac.DACFile(

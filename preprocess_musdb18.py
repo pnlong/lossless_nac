@@ -15,10 +15,12 @@ import argparse
 import multiprocessing
 from typing import List
 from tqdm import tqdm
-from os import makedirs, mkdir, listdir
+from os import makedirs, mkdir, listdir, close
 from os.path import basename, exists, isdir
 from shutil import rmtree
 from glob import iglob
+import soundfile as sf
+import tempfile
 
 from os.path import dirname, realpath
 import sys
@@ -129,15 +131,24 @@ if __name__ == "__main__":
             stems = librosa.resample(y = stems, orig_sr = sample_rate, target_sr = args.sample_rate, axis = 1)
             sample_rate = args.sample_rate
 
-        # convert audio from floating to fixed point
-        stems = utils.convert_waveform_floating_to_fixed(waveform = stems, output_dtype = audio_data_type)
-
         # determine stem output paths
-        stem_paths = [output_dir + "/" + basename(path)[:-len("mp4")] + f"{i}.npy" for i in range(n_stems)]
+        stem_prefixes = [output_dir + "/" + basename(path)[:-len("mp4")] + str(i) for i in range(n_stems)]
+        stem_paths = [f"{stem_prefix}.npy" for stem_prefix in stem_prefixes]
 
         # save stems as pickled numpy arrays
-        for i, stem_path in enumerate(stem_paths):
-            np.save(file = stem_path, arr = stems[i])
+        for i, stem_prefix, stem_path in zip(range(n_stems), stem_prefixes, stem_paths):
+
+            # write as WAV file
+            wav_fd, wav_filepath = tempfile.mkstemp(suffix = ".wav", prefix = f"wav_eval_{basename(stem_prefix)}.")
+            close(wav_fd) # don't need file descriptor anymore
+            sf.write(file = wav_filepath, data = stems[i], samplerate = sample_rate, format = "WAV", subtype = f"PCM_{args.bit_depth}")
+
+            # load WAV file
+            waveform, _ = sf.read(file = wav_filepath, dtype = audio_data_type)
+
+            # save as NPY
+            np.save(file = stem_path, arr = waveform)
+            del waveform # free up memory
 
         # append to output file
         pd.DataFrame(data = dict(zip(

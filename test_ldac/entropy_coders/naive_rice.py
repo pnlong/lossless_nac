@@ -8,6 +8,7 @@
 ##################################################
 
 import numpy as np
+from tqdm import tqdm
 
 from os.path import dirname, realpath
 import sys
@@ -53,6 +54,8 @@ def zigzag_encode(
     else: # if x < 0 (x is negative)
         return (-2 * x) - 1 # map negative values onto odd numbers
 
+zigzag_encode_vectorized = np.vectorize(zigzag_encode, doc = "Zigzag encode a numpy array of integers.")
+
 # zigzag decode
 def zigzag_decode(
     x: int,
@@ -74,6 +77,8 @@ def zigzag_decode(
         return x // 2 # then x must be non-negative
     else: # if x is an odd number
         return (x + 1) // -2 # then x must be negative
+
+zigzag_decode_vectorized = np.vectorize(zigzag_decode, doc = "Zigzag decode a numpy array of integers.")
 
 ##################################################
 
@@ -100,10 +105,10 @@ def encode(
     """
 
     # ensure nums is a numpy array
-    nums = np.array(list(map(zigzag_encode, nums))) # convert from potentially negative number to non-negative
+    nums = zigzag_encode_vectorized(nums) # convert from potentially negative number to non-negative
 
     # iterate through numbers
-    for x in nums:
+    for x in tqdm(nums):
 
         # compute quotient and remainder
         q = x >> k # quotient = n // 2^k
@@ -161,7 +166,7 @@ def decode(
         nums[i] = x
 
     # convert results to numpy array
-    nums = np.array(list(map(zigzag_decode, nums))) # convert back to signed numbers
+    nums = zigzag_decode_vectorized(nums) # convert back to signed numbers
 
     return nums
 

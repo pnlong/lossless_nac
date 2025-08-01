@@ -147,6 +147,7 @@ if __name__ == "__main__":
             
             # load in waveform
             waveform = np.load(file = path)
+            size_original = waveform.nbytes # compute size in bytes of original waveform
             waveform = waveform.astype(np.int32) # ensure waveform is stored as int32 for ldac
             sample_rate = sample_rate_by_path[path]
 
@@ -178,10 +179,7 @@ if __name__ == "__main__":
                         model = model,
                     ) # reconstruct waveform from bottleneck to ensure losslessness
                     assert np.array_equal(waveform, round_trip), "Original and reconstructed waveforms do not match. The encoding is lossy."
-                    del round_trip, start_time # free up memory
-
-                # compute size in bytes of original waveform
-                size_original = waveform.nbytes
+                    del round_trip, start_time # free up memory                
 
                 # compute size in bytes of compressed bottleneck
                 size_compressed = getsize(path_compressed)
@@ -264,11 +262,11 @@ if __name__ == "__main__":
     print("-" * 60)
 
     # output statistics on compression speed
-    print(f"Mean Compression Speed: {np.mean(compression_speeds):.2f}%")
-    print(f"Median Compression Speed: {np.median(compression_speeds):.2f}%")
-    print(f"Standard Deviation of Compression Speeds: {np.std(compression_speeds):.2f}%")
-    print(f"Best Compression Speed: {np.max(compression_speeds):.2f}%")
-    print(f"Worst Compression Speed: {np.min(compression_speeds):.2f}%")
+    print(f"Mean Compression Speed: {np.mean(compression_speeds):.2f}")
+    print(f"Median Compression Speed: {np.median(compression_speeds):.2f}")
+    print(f"Standard Deviation of Compression Speeds: {np.std(compression_speeds):.2f}")
+    print(f"Best Compression Speed: {np.max(compression_speeds):.2f}")
+    print(f"Worst Compression Speed: {np.min(compression_speeds):.2f}")
     print("-" * 60)
 
     # output statistics on bitrate

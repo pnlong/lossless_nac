@@ -31,7 +31,7 @@ import dac
 ##################################################
 
 # File paths
-INPUT_AUDIO_PATH = "/home/pnlong/lnac/offended.wav"
+INPUT_AUDIO_PATH = "/home/pnlong/lnac/test.wav"
 OUTPUT_COMPRESSED_PATH = "/tmp/test_naive_dac.ldac"
 OUTPUT_DECODED_PATH = "/tmp/test_naive_dac_decoded.wav"
 
@@ -153,7 +153,7 @@ def setup_model_and_entropy_coder(sample_rate: int):
     print("Setting up DAC model...")
     
     # Load DAC model - use CPU for debugging CUDA errors
-    device = torch.device("cuda:0")  # Force CPU for debugging
+    device = torch.device("cuda")  # Force CPU for debugging
     print(f"Using device: {device}")
     
     model = dac.DAC.load(MODEL_PATH).to(device)
@@ -169,8 +169,8 @@ def setup_model_and_entropy_coder(sample_rate: int):
     # Set up entropy coder - using VerbatimCoder for testing
     print("Setting up entropy coder...")
     # entropy_coder = get_entropy_coder(type_ = "verbatim")
-    # entropy_coder = get_entropy_coder(type_ = "naive_rice", k = 12)
-    entropy_coder = get_entropy_coder(type_ = "adaptive_rice")
+    entropy_coder = get_entropy_coder(type_ = "naive_rice", k = 12)
+    # entropy_coder = get_entropy_coder(type_ = "adaptive_rice")
     
     return model, entropy_coder
 
