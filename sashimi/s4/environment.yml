@@ -1,0 +1,41 @@
+name: s4
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - cmake
+  - datasets
+  - einops
+  - hydra-core
+  - lightning-utilities
+  - lit
+  - matplotlib
+  - mkl=2022
+  - mkl-include
+  - natsort
+  - numba
+  - numpy
+  - omegaconf
+  - pandas
+  - pygments
+  - python=3.9
+  - pytorch=2.1
+  - pytorch-cuda=11.8
+  - pytorch-lightning=2.1.0
+  - rich=13.3.5
+  - scikit-learn
+  - scipy
+  - sktime
+  - timm=0.5.4
+  - torchaudio
+  - torchtext
+  - torchvision
+  - tqdm
+  - transformers
+  - wandb
+  - pip:
+    - docker-pycreds==0.4.0
+    - pytorch-lightning==2.0.4
+    - torchtext==0.14.1
+
+prefix: "/data3/pnlong/micromamba/envs/s4"

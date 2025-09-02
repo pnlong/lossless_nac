@@ -68,7 +68,7 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(prog = "Convert Residuals to WAV Files", description = "Convert residuals to WAV files.") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = INPUT_FILEPATH, help = "Path to input file.")
         parser.add_argument("--output_dir", type = str, default = OUTPUT_DIR, help = "Path to output directory.")
-        parser.add_argument("--clip_length", type = int, default = CLIP_LENGTH, help = "Length of each clip in seconds.")
+        parser.add_argument("--clip_length", type = int, default = None, help = "Length of each clip in seconds.")
         parser.add_argument("--pad_clips_to_fixed_length", action = "store_true", help = "Pad clips so they are all clip length.")
         parser.add_argument("--rename_simple", action = "store_true", help = "Rename files to be simple, e.g. out0.wav, out1.wav, etc.")
         parser.add_argument("--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of jobs to run in parallel.")
@@ -99,6 +99,9 @@ if __name__ == "__main__":
     # determine fixed width for output file names
     dataset_fixed_width = ceil(log10(len(dataset)))
 
+    # if clip length is not provided, don't partition into clips
+    use_clips = args.clip_length is not None
+
     ##################################################
 
 
@@ -127,17 +130,29 @@ if __name__ == "__main__":
 
         # write channels individually as mono files
         for channel_idx, channel in enumerate(data.T):
-            for clip_idx, start_index in enumerate(range(0, len(channel), args.clip_length)): # separate channel into clips
-                end_index = min(start_index + args.clip_length, len(channel)) # get end index
-                n_samples_in_clip = end_index - start_index # get number of samples in clip
-                clip = channel[start_index:end_index] # get clip
-                if args.pad_clips_to_fixed_length and n_samples_in_clip < args.clip_length: # pad if necessary
-                    clip = np.pad(array = clip, pad_width = (0, args.clip_length - n_samples_in_clip), mode = "constant") # end pad with zeros
-                filename = f"{args.output_dir}/out{i:0{dataset_fixed_width}}.{channel_idx}.{clip_idx}.wav" # generate unique filename based on dataset index, channel, and clip
+
+            # if using clips, partition into clips
+            if use_clips:
+                for clip_idx, start_index in enumerate(range(0, len(channel), args.clip_length)): # separate channel into clips
+                    end_index = min(start_index + args.clip_length, len(channel)) # get end index
+                    n_samples_in_clip = end_index - start_index # get number of samples in clip
+                    clip = channel[start_index:end_index] # get clip
+                    if args.pad_clips_to_fixed_length and n_samples_in_clip < args.clip_length: # pad if necessary
+                        clip = np.pad(array = clip, pad_width = (0, args.clip_length - n_samples_in_clip), mode = "constant") # end pad with zeros
+                    filename = f"{args.output_dir}/out{i:0{dataset_fixed_width}}.{channel_idx}.{clip_idx}.wav" # generate unique filename based on dataset index, channel, and clip
+                    scipy.io.wavfile.write( # write WAV file
+                        filename = filename,
+                        rate = sample_rate,
+                        data = clip,
+                    )
+
+            # otherwise, just write the channel as a mono file
+            else:
+                filename = f"{args.output_dir}/out{i:0{dataset_fixed_width}}.{channel_idx}.wav" # generate unique filename based on dataset index and channel
                 scipy.io.wavfile.write( # write WAV file
                     filename = filename,
                     rate = sample_rate,
-                    data = clip,
+                    data = channel,
                 )
 
     # use multiprocessing
