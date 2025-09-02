@@ -9,14 +9,14 @@
 
 import pandas as pd
 from os.path import exists
-from os import makedirs
+from os import makedirs, rename, listdir
 from shutil import rmtree
 import argparse
 import multiprocessing
 import numpy as np
 import scipy.io.wavfile
 from tqdm import tqdm
-from math import log10, ceil
+from math import ceil, log10
 
 ##################################################
 
@@ -26,41 +26,11 @@ from math import log10, ceil
 
 # filepaths
 INPUT_FILEPATH = "/deepfreeze/pnlong/lnac/test_data/musdb18_preprocessed-44100/data.csv"
-OUTPUT_DIR = "/deepfreeze/pnlong/lnac/sashimi/data/musdb18"
+OUTPUT_DIR = "/deepfreeze/pnlong/lnac/sashimi/data/musdb18mono"
 
-##################################################
-
-
-# FUNCTIONS
-##################################################
-
-def convert_npy_to_wav(
-    input_path: str,
-    output_path: str,
-    sample_rate: int,
-):
-    """
-    Convert a .npy file to a WAV file.
-
-    Parameters
-    ----------
-    input_path : str
-        Path to the .npy file.
-    output_path : str
-        Path to the output WAV file.
-    sample_rate : int
-        Sample rate of the WAV file.
-
-    Returns
-    -------
-    None
-    """
-
-    # read in NPY file
-    data = np.load(input_path)
-
-    # write NPY file as a WAV file
-    scipy.io.wavfile.write(filename = output_path, rate = sample_rate, data = data)
+# clip length
+CLIP_LENGTH = 60 * 44100 # make each clip 60 seconds
+PAD_CLIPS_TO_FIXED_LENGTH = False # pad clips so they are all clip length
 
 ##################################################
 
@@ -98,6 +68,9 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser(prog = "Convert Residuals to WAV Files", description = "Convert residuals to WAV files.") # create argument parser
         parser.add_argument("--input_filepath", type = str, default = INPUT_FILEPATH, help = "Path to input file.")
         parser.add_argument("--output_dir", type = str, default = OUTPUT_DIR, help = "Path to output directory.")
+        parser.add_argument("--clip_length", type = int, default = CLIP_LENGTH, help = "Length of each clip in seconds.")
+        parser.add_argument("--pad_clips_to_fixed_length", action = "store_true", help = "Pad clips so they are all clip length.")
+        parser.add_argument("--rename_simple", action = "store_true", help = "Rename files to be simple, e.g. out0.wav, out1.wav, etc.")
         parser.add_argument("--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of jobs to run in parallel.")
         parser.add_argument("--reset", action = "store_true", help = "Reset the output directory.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
@@ -111,16 +84,20 @@ if __name__ == "__main__":
     dataset = pd.read_csv(filepath_or_buffer = args.input_filepath, sep = ",", header = 0, index_col = False)
     dataset = dataset[["path", "sample_rate"]] # get only the path and sample rate columns, as that is all we care about
     assert len(dataset) > 0, "Dataset is empty."
-    fixed_width = ceil(log10(len(dataset)))
     print(f"Completed reading in input data.")
 
     # create output directory
     print("Creating output directory...")
     if exists(args.output_dir) and args.reset:
+        print(f"Removing old output directory {args.output_dir} because --reset was called...")
         rmtree(args.output_dir)
+        print(f"Removed old output directory {args.output_dir}.")
     if not exists(args.output_dir):
         makedirs(args.output_dir, exist_ok = True)
     print("Created output directory.")
+
+    # determine fixed width for output file names
+    dataset_fixed_width = ceil(log10(len(dataset)))
 
     ##################################################
 
@@ -143,21 +120,49 @@ if __name__ == "__main__":
         None
         """
 
-        # get row
+        # get data
         path, sample_rate = dataset.loc[i]
-        output_path = f"{args.output_dir}/out{i:0{fixed_width}}.wav"
-        
-        # convert input to WAV file
-        convert_npy_to_wav(input_path = path, output_path = output_path, sample_rate = sample_rate)
+        data = np.load(path) # loads in shape (n_samples, 2)
+        data = data.astype(np.int16) # ensure type is correct
+
+        # write channels individually as mono files
+        for channel_idx, channel in enumerate(data.T):
+            for clip_idx, start_index in enumerate(range(0, len(channel), args.clip_length)): # separate channel into clips
+                end_index = min(start_index + args.clip_length, len(channel)) # get end index
+                n_samples_in_clip = end_index - start_index # get number of samples in clip
+                clip = channel[start_index:end_index] # get clip
+                if args.pad_clips_to_fixed_length and n_samples_in_clip < args.clip_length: # pad if necessary
+                    clip = np.pad(array = clip, pad_width = (0, args.clip_length - n_samples_in_clip), mode = "constant") # end pad with zeros
+                filename = f"{args.output_dir}/out{i:0{dataset_fixed_width}}.{channel_idx}.{clip_idx}.wav" # generate unique filename based on dataset index, channel, and clip
+                scipy.io.wavfile.write( # write WAV file
+                    filename = filename,
+                    rate = sample_rate,
+                    data = clip,
+                )
 
     # use multiprocessing
+    print("Converting NPY Files to WAV Files...")
     with multiprocessing.Pool(processes = args.jobs) as pool:
         _ = list(tqdm(iterable = pool.imap_unordered(
             func = convert_helper,
             iterable = dataset.index,
             chunksize = 1,
         ), desc = "Converting NPY Files to WAV Files", total = len(dataset)))
-    
+    print("Completed converting NPY Files to WAV Files.")
+
+    # rename files if desired
+    if args.rename_simple:
+        print("Renaming Files to Simple Names because --rename_simple was called...")
+        counter = 0
+        bases = listdir(args.output_dir)
+        fixed_width = ceil(log10(len(bases)))
+        for base in tqdm(iterable = bases, desc = "Renaming Files to Simple Names", total = len(bases)):
+            input_path = f"{args.output_dir}/{base}"
+            output_path = f"{args.output_dir}/out{counter:0{fixed_width}}.wav"
+            rename(src = input_path, dst = output_path)
+            counter += 1
+        print("Completed renaming files to simple names.")
+
     ##################################################
 
 ##################################################
