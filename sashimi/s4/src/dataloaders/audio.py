@@ -282,7 +282,15 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
 
     @property
     def d_output(self):
-        return 1 << self.bits
+        """Output dimension depends on output head type"""
+        output_head = getattr(self, 'output_head', 'categorical')
+        if output_head == "categorical":
+            return 1 << self.bits  # Always calculate from bits for consistency
+        elif output_head == "dml":
+            n_mixtures = getattr(self, 'n_mixtures', 10)  # Default to 10 if not specified
+            return 3 * n_mixtures
+        else:
+            return 1 << self.bits  # Default fallback
 
     @property
     def l_output(self):
@@ -303,6 +311,8 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
             'drop_last': False,
             'context_len': None,
             'pad_len': None,
+            'output_head': 'categorical',  # New: output head type
+            'n_mixtures': 10,              # New: number of mixture components for DML
         }
 
     def setup(self):

@@ -23,6 +23,25 @@ import torchmetrics as tm
 from src.utils.config import to_list, instantiate
 
 
+class DummyMetric:
+    """Dummy metric that returns 0.0 for DML models since torchmetrics don't work with dictionary outputs."""
+
+    def __init__(self):
+        pass
+
+    def update(self, *args, **kwargs):
+        """Do nothing - DML doesn't use torchmetrics."""
+        pass
+
+    def compute(self):
+        """Return 0.0 as a placeholder."""
+        return 0.0
+
+    def reset(self):
+        """Do nothing."""
+        pass
+
+
 class BaseTask:
     """Abstract class for all tasks.
 
@@ -51,11 +70,40 @@ class BaseTask:
         # Wrap loss and metrics so that they accept kwargs and
 
         # Create loss function
+        # Check for DML loss BEFORE instantiation (loss is still the config dict/string)
+        is_dml_loss = False
+        if isinstance(loss, dict) and loss.get('_name_') == 'dml':
+            is_dml_loss = True
+        elif isinstance(loss, str) and loss == 'dml':
+            is_dml_loss = True
+
         self.loss = instantiate(M.output_metric_fns, loss, partial=True)
-        self.loss = U.discard_kwargs(self.loss)
+
+        # Special handling for DML loss which needs dataset parameter
+        if is_dml_loss:
+            # Create closure that captures dataset for DML loss
+            dml_loss_fn = self.loss
+            self.loss = lambda preds, targets, **kwargs: dml_loss_fn(preds, targets, dataset=self.dataset)
+        else:
+            self.loss = U.discard_kwargs(self.loss)
+
         if loss_val is not None:
+            # Check for DML loss_val BEFORE instantiation
+            is_dml_loss_val = False
+            if isinstance(loss_val, dict) and loss_val.get('_name_') == 'dml':
+                is_dml_loss_val = True
+            elif isinstance(loss_val, str) and loss_val == 'dml':
+                is_dml_loss_val = True
+
             self.loss_val = instantiate(M.output_metric_fns, loss_val, partial=True)
-            self.loss_val = U.discard_kwargs(self.loss_val)
+
+            # Special handling for DML loss_val
+            if is_dml_loss_val:
+                # Create closure that captures dataset for DML loss_val
+                dml_loss_val_fn = self.loss_val
+                self.loss_val = lambda preds, targets, **kwargs: dml_loss_val_fn(preds, targets, dataset=self.dataset)
+            else:
+                self.loss_val = U.discard_kwargs(self.loss_val)
 
     def _init_torchmetrics(self, prefix):
         """Instantiate torchmetrics."""
@@ -63,14 +111,20 @@ class BaseTask:
 
         self._tracked_torchmetrics[prefix] = {}
         for name in self.torchmetric_names:
-            if name in ['AUROC', 'StatScores', 'Precision', 'Recall', 'F1', 'F1Score']:
-                self._tracked_torchmetrics[prefix][name] = getattr(tm, name)(average='macro', num_classes=self.dataset.d_output, compute_on_step=False).to('cuda')
-            elif '@' in name:
-                k = int(name.split('@')[1])
-                mname = name.split('@')[0]
-                self._tracked_torchmetrics[prefix][name] = getattr(tm, mname)(average='macro', num_classes=self.dataset.d_output, compute_on_step=False, top_k=k).to('cuda')
+            # Skip torchmetrics for DML since it outputs dictionaries, not classification logits
+            if hasattr(self, 'model') and hasattr(self.model, 'output_head_type') and self.model.output_head_type == 'dml':
+                # For DML, create dummy metrics that return 0
+                self._tracked_torchmetrics[prefix][name] = DummyMetric()
             else:
-                self._tracked_torchmetrics[prefix][name] = getattr(tm, name)(compute_on_step=False).to('cuda')
+                # Normal torchmetrics initialization for categorical
+                if name in ['AUROC', 'StatScores', 'Precision', 'Recall', 'F1', 'F1Score']:
+                    self._tracked_torchmetrics[prefix][name] = getattr(tm, name)(average='macro', num_classes=self.dataset.d_output, compute_on_step=False).to('cuda')
+                elif '@' in name:
+                    k = int(name.split('@')[1])
+                    mname = name.split('@')[0]
+                    self._tracked_torchmetrics[prefix][name] = getattr(tm, mname)(average='macro', num_classes=self.dataset.d_output, compute_on_step=False, top_k=k).to('cuda')
+                else:
+                    self._tracked_torchmetrics[prefix][name] = getattr(tm, name)(compute_on_step=False).to('cuda')
 
     def _reset_torchmetrics(self, prefix=None):
         """Reset torchmetrics for a prefix associated with a particular dataloader (e.g. train, val, test).

@@ -50,18 +50,30 @@ def binary_accuracy(logits, y):
 
 
 def cross_entropy(logits, y):
+    # Handle DML output (dict) - return 0 since DML has its own loss
+    if isinstance(logits, dict):
+        return torch.tensor(0.0, device=y.device if hasattr(y, 'device') else None)
+
     logits = logits.view(-1, logits.shape[-1])
     y = y.view(-1)
     return F.cross_entropy(logits, y)
 
 
 def soft_cross_entropy(logits, y, label_smoothing=0.0):
+    # Handle DML output (dict) - return 0 since DML has its own loss
+    if isinstance(logits, dict):
+        return torch.tensor(0.0, device=y.device if hasattr(y, 'device') else None)
+
     logits = logits.view(-1, logits.shape[-1])
     # target is now 2d (no target flattening)
     return F.cross_entropy(logits, y, label_smoothing=label_smoothing)
 
 
 def accuracy(logits, y):
+    # Handle DML output (dict) - return 0 since DML has its own loss
+    if isinstance(logits, dict):
+        return torch.tensor(0.0, device=y.device if hasattr(y, 'device') else None)
+
     logits = logits.view(-1, logits.shape[-1])
     if y.numel() > logits.shape[0]:
         # Mixup leads to this case: use argmax class
@@ -71,6 +83,10 @@ def accuracy(logits, y):
 
 
 def accuracy_at_k(logits, y, k=1):
+    # Handle DML output (dict) - return 0 since DML has its own loss
+    if isinstance(logits, dict):
+        return torch.tensor(0.0, device=y.device if hasattr(y, 'device') else None)
+
     logits = logits.view(-1, logits.shape[-1])
     if y.numel() > logits.shape[0]:
         # Mixup leads to this case: use argmax class
@@ -80,6 +96,10 @@ def accuracy_at_k(logits, y, k=1):
 
 
 def f1_binary(logits, y):
+    # Handle DML output (dict) - return 0 since DML has its own loss
+    if isinstance(logits, dict):
+        return 0.0
+
     logits = logits.view(-1, logits.shape[-1])
     y = y.view(-1)
     y_hat = torch.argmax(logits, dim=-1)
@@ -163,17 +183,41 @@ def loss(x, y, loss_fn):
     """Metric that just returns the loss function.
 
     This metric may be useful because the training loss may add extra regularization (e.g. weight decay implemented as L2 penalty), while adding this as a metric skips the additional losses """
-    return loss_fn(x, y)
+    loss_output = loss_fn(x, y)
+    # Handle DML loss which returns a dictionary - extract the 'loss' key
+    if isinstance(loss_output, dict):
+        return loss_output['loss']
+    else:
+        return loss_output
 
 def bpb(x, y, loss_fn):
     """Bits per byte (for image density estimation, speech generation, char LM)."""
-    return loss_fn(x, y) / math.log(2)
+    loss_output = loss_fn(x, y)
+    # Handle DML loss which returns a dictionary
+    if isinstance(loss_output, dict):
+        loss_val = loss_output['loss']
+    else:
+        loss_val = loss_output
+    return loss_val / math.log(2)
 
 def ppl(x, y, loss_fn):
-    return torch.exp(loss_fn(x, y))
+    loss_output = loss_fn(x, y)
+    # Handle DML loss which returns a dictionary
+    if isinstance(loss_output, dict):
+        loss_val = loss_output['loss']
+    else:
+        loss_val = loss_output
+    return torch.exp(loss_val)
 
 
 # Should be a better way to do this
+# Import DML loss from sequence module
+try:
+    from src.models.sequence.loss import discretized_mix_logistic_loss
+    DML_AVAILABLE = True
+except ImportError:
+    DML_AVAILABLE = False
+
 output_metric_fns = {
     "binary_cross_entropy": binary_cross_entropy,
     "cross_entropy": cross_entropy,
@@ -195,6 +239,10 @@ output_metric_fns = {
     "student_t": student_t_loss,
     "gaussian_ll": gaussian_ll_loss,
 }
+
+# Add DML loss if available
+if DML_AVAILABLE:
+    output_metric_fns["dml"] = discretized_mix_logistic_loss
 
 try:
     from segmentation_models_pytorch.utils.functional import iou

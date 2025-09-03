@@ -1,3 +1,14 @@
+"""SaShiMi backbone with support for different output heads.
+
+The backbone processes sequences through a U-Net style architecture with:
+- Down blocks for downsampling
+- Center blocks for processing
+- Up blocks for upsampling
+- Skip connections between corresponding layers
+
+Supports both categorical and DML output heads.
+"""
+
 import math
 import torch
 import torch.nn as nn
@@ -6,7 +17,7 @@ import torch.nn.functional as F
 from src.models.sequence.base import SequenceModule
 from src.models.sequence.modules.pool import DownPool, UpPool
 from src.models.sequence.backbones.block import SequenceResidualBlock
-
+from src.models.sequence.modules.output_heads import get_output_head
 
 class Sashimi(SequenceModule):
     def __init__(
@@ -27,6 +38,9 @@ class Sashimi(SequenceModule):
         transposed=True,
         interp=0,
         act_pool=None,
+        output_head='categorical',  # New: output head type
+        n_mixtures=10,             # New: number of mixture components for DML
+        bits=None,                 # New: number of bits for quantization (determines n_classes)
     ):
         super().__init__()
 
@@ -35,6 +49,12 @@ class Sashimi(SequenceModule):
 
         self.interp = interp
         self.transposed = transposed
+
+        # Output head configuration
+        self.output_head_type = output_head
+        self.n_mixtures = n_mixtures
+        self.bits = bits if bits is not None else 8  # Default to 8 bits
+        self.n_classes = 1 << self.bits  # Calculate n_classes from bits
 
         # Layer arguments
         layer_cfg = layer.copy()
@@ -114,10 +134,27 @@ class Sashimi(SequenceModule):
                 interp_layers.append(nn.ModuleList(block))
 
             self.interp_layers = nn.ModuleList(interp_layers)
+            
+        # Initialize output head
+        head_kwargs = {
+            "n_mixtures": self.n_mixtures if output_head == "dml" else None,
+            "n_classes": self.n_classes if output_head == "categorical" else None,
+        }
+        self.output_head = get_output_head(
+            output_head, 
+            d_model, 
+            **{k: v for k, v in head_kwargs.items() if v is not None}
+        )
 
     @property
     def d_output(self):
-        return self.d_model
+        """Output dimension depends on output head type"""
+        if self.output_head_type == "categorical":
+            return self.n_classes
+        elif self.output_head_type == "dml":
+            return 3 * self.n_mixtures
+        else:
+            raise ValueError(f"Unknown output head type: {self.output_head_type}")
 
     def forward(self, x, state=None, **kwargs):
         """
@@ -177,7 +214,9 @@ class Sashimi(SequenceModule):
             y[:, self.interp - 1::self.interp, :] = x
             x = y
 
-        return x, None # required to return a state
+        # Apply output head
+        x = self.output_head(x)
+        return x, None
 
     def default_state(self, *args, **kwargs):
         """ x: (batch) """
@@ -229,6 +268,7 @@ class Sashimi(SequenceModule):
                     outputs.append(x)
             x = x + outputs.pop()
 
-        # feature projection
+        # feature projection and output head
         x = self.norm(x)
+        x = self.output_head(x)
         return x, next_state

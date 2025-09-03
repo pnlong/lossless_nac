@@ -2,13 +2,15 @@
 defaults:
   - /trainer: default
   - /loader: default
-  - /dataset: musdb18mono
+  - /dataset: youtubemix
   - /task: multiclass_classification
   - /optimizer: adamw
   - /scheduler: plateau
   - /model: sashimi
 
 model:
+  output_head: dml  # 🚀 USING DML (Discretized Mixture of Logistics) MODE
+  n_mixtures: 6
   n_layers: 8
   dropout: 0.0
 
@@ -35,8 +37,6 @@ loader:
 
 trainer:
   max_epochs: 1000
-  limit_train_batches: 2000
-  limit_val_batches: 200
 
 optimizer:
   lr: 0.004

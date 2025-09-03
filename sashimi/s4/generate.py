@@ -15,6 +15,7 @@ from tqdm.auto import tqdm
 from src import utils
 from src.dataloaders.audio import mu_law_decode
 from src.models.baselines.wavenet import WaveNetModel
+from src.models.sequence.loss import sample_from_discretized_mix_logistic
 from train import SequenceLightningModule
 
 def test_step(model):
@@ -84,21 +85,37 @@ def generate(
         if debug:
             y_raw.append(y_t.detach().cpu())
 
-        # Output distribution
-        probs = F.softmax(y_t, dim=-1)
+        # Check if model outputs DML predictions (dictionary format)
+        is_dml = isinstance(y_t, dict) and all(k in y_t for k in ['logit_probs', 'means', 'log_scales'])
 
-        # Optional: nucleus sampling
-        if top_p < 1.0:
-            sorted_probs = probs.sort(dim=-1, descending=True)
-            csum_probs = sorted_probs.values.cumsum(dim=-1) > top_p
-            csum_probs[..., 1:] = csum_probs[..., :-1].clone()
-            csum_probs[..., 0] = 0
-            indices_to_remove = torch.zeros_like(csum_probs)
-            indices_to_remove[torch.arange(sorted_probs.indices.shape[0])[:, None].repeat(1, sorted_probs.indices.shape[1]).flatten(), sorted_probs.indices.flatten()] = csum_probs.flatten()
-            y_t = y_t + indices_to_remove.int() * (-1e20)
+        if is_dml:
+            # DML sampling: use discretized mixture of logistics
+            num_classes = getattr(model.dataset, 'n_tokens', 256)  # Default to 256 for 8-bit audio
 
-        # Sample from the distribution
-        y_t = Categorical(logits=y_t/tau).sample()
+            # For DML, temperature affects the mixture component selection
+            # We use tau for temperature scaling of the mixture weights
+            y_t = sample_from_discretized_mix_logistic(
+                predictions=y_t,
+                num_classes=num_classes,
+                temperature=tau
+            )
+        else:
+            # Categorical sampling: use softmax + categorical distribution
+            # Output distribution
+            probs = F.softmax(y_t, dim=-1)
+
+            # Optional: nucleus sampling (only for categorical)
+            if top_p < 1.0:
+                sorted_probs = probs.sort(dim=-1, descending=True)
+                csum_probs = sorted_probs.values.cumsum(dim=-1) > top_p
+                csum_probs[..., 1:] = csum_probs[..., :-1].clone()
+                csum_probs[..., 0] = 0
+                indices_to_remove = torch.zeros_like(csum_probs)
+                indices_to_remove[torch.arange(sorted_probs.indices.shape[0])[:, None].repeat(1, sorted_probs.indices.shape[1]).flatten(), sorted_probs.indices.flatten()] = csum_probs.flatten()
+                y_t = y_t + indices_to_remove.int() * (-1e20)
+
+            # Sample from the distribution
+            y_t = Categorical(logits=y_t/tau).sample()
 
         # Feed back to the model
         if t < l_prefix-1:
@@ -108,12 +125,21 @@ def generate(
 
             # Calculate the log-likelihood
             if return_logprobs:
-                probs = probs.squeeze(1)
-                if len(y_t.shape) > 1:
-                    logprobs += torch.log(probs[torch.arange(probs.shape[0]), y_t.squeeze(1)]).cpu().numpy()
+                if is_dml:
+                    # For DML, we can't easily compute exact log probabilities during generation
+                    # This is a limitation - DML generation doesn't support exact logprob calculation
+                    # We could approximate this by running the loss function, but that's expensive
+                    # For now, we'll skip logprob calculation for DML
+                    logprobs += 0.0  # Placeholder
+                    entropy += 0.0    # Placeholder
                 else:
-                    logprobs += torch.log(probs[torch.arange(probs.shape[0]), y_t]).cpu().numpy()
-                entropy += -(probs * (probs + 1e-6).log()).sum(dim=-1).cpu().numpy()
+                    # Categorical case: calculate exact log probabilities
+                    probs = probs.squeeze(1)
+                    if len(y_t.shape) > 1:
+                        logprobs += torch.log(probs[torch.arange(probs.shape[0]), y_t.squeeze(1)]).cpu().numpy()
+                    else:
+                        logprobs += torch.log(probs[torch.arange(probs.shape[0]), y_t]).cpu().numpy()
+                    entropy += -(probs * (probs + 1e-6).log()).sum(dim=-1).cpu().numpy()
 
         y_all.append(x_t.cpu())
         # y_all.append(y_t.cpu())

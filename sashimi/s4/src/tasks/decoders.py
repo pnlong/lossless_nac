@@ -118,27 +118,59 @@ class SequenceDecoder(Decoder):
         # Restrict to actual length of sequence
         if self.use_lengths:
             assert lengths is not None
-            x = torch.stack(
-                [
-                    restrict(out[..., :length, :])
-                    for out, length in zip(torch.unbind(x, dim=0), lengths)
-                ],
-                dim=0,
-            )
+            if isinstance(x, dict):
+                # Handle DML output (dictionary of tensors)
+                x = {
+                    key: torch.stack(
+                        [
+                            restrict(tensor[..., :length, :])
+                            for tensor, length in zip(torch.unbind(tensor_val, dim=0), lengths)
+                        ],
+                        dim=0,
+                    )
+                    for key, tensor_val in x.items()
+                }
+            else:
+                # Handle categorical output (tensor)
+                x = torch.stack(
+                    [
+                        restrict(out[..., :length, :])
+                        for out, length in zip(torch.unbind(x, dim=0), lengths)
+                    ],
+                    dim=0,
+                )
         else:
-            x = restrict(x)
+            if isinstance(x, dict):
+                # Handle DML output (dictionary of tensors)
+                x = {key: restrict(tensor_val) for key, tensor_val in x.items()}
+            else:
+                # Handle categorical output (tensor)
+                x = restrict(x)
 
         if squeeze:
-            assert x.size(-2) == 1
-            x = x.squeeze(-2)
+            if isinstance(x, dict):
+                # Handle DML output (dictionary of tensors)
+                for key, tensor_val in x.items():
+                    assert tensor_val.size(-2) == 1
+                x = {key: tensor_val.squeeze(-2) for key, tensor_val in x.items()}
+            else:
+                # Handle categorical output (tensor)
+                assert x.size(-2) == 1
+                x = x.squeeze(-2)
 
-        x = self.output_transform(x)
+        # Apply output transform only for tensor inputs (categorical), not for dict inputs (DML)
+        if not isinstance(x, dict):
+            x = self.output_transform(x)
 
         return x
 
     def step(self, x, state=None):
         # Ignore all length logic
-        return self.output_transform(x)
+        # Apply output transform only for tensor inputs (categorical), not for dict inputs (DML)
+        if not isinstance(x, dict):
+            return self.output_transform(x)
+        else:
+            return x
 
 class NDDecoder(Decoder):
     """Decoder for single target (e.g. classification or regression)."""

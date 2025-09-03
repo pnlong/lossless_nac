@@ -4,6 +4,11 @@ defaults:
 _name_: sashimi
 d_model: 64
 n_layers: 8
+
+# Output head configuration (new)
+output_head: categorical  # ['categorical', 'dml']
+n_mixtures: 10            # Only used if output_head='dml'
+
 pool:
   - 4
   - 4

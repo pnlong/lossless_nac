@@ -166,7 +166,11 @@ class SequenceLightningModule(pl.LightningModule):
         ) + utils.to_list(self.hparams.decoder)
 
         # Instantiate model
-        self.model = utils.instantiate(registry.model, self.hparams.model)
+        # Pass bits parameter from dataset config to model for output head initialization
+        model_config = self.hparams.model.copy()
+        if 'bits' not in model_config and hasattr(self.dataset, 'bits'):
+            model_config['bits'] = self.dataset.bits
+        self.model = utils.instantiate(registry.model, model_config)
         if (name := self.hparams.train.post_init_hook['_name_']) is not None:
             kwargs = self.hparams.train.post_init_hook.copy()
             del kwargs['_name_']
@@ -174,9 +178,113 @@ class SequenceLightningModule(pl.LightningModule):
                 if hasattr(module, name):
                     getattr(module, name)(**kwargs)
 
-        # Instantiate the task
+        task_config = self.hparams.task.copy()
+        if hasattr(self.hparams.model, 'output_head') and self.hparams.model.output_head == 'dml':
+            task_config['loss'] = 'dml'
+            print("🚀 " + "="*50)
+            print("🚀 DML MODE ACTIVATED!")
+            print("🚀 Using Discretized Mixture of Logistics output head")
+            print("🚀 Model will output mixture parameters instead of class logits")
+            print("🚀 Loss function: discretized_mix_logistic_loss")
+            print("🚀 " + "="*50)
+
+        # Debug: Check if S4 layers are properly instantiated
+        print("🔍 DEBUG: Checking model architecture...")
+        print(f"🔍 DEBUG: Model type: {type(self.model)}")
+        print(f"🔍 DEBUG: Model class name: {self.model.__class__.__name__}")
+
+        # Check for S4/SSM layers (by both name and type)
+        s4_layers_found = []
+        ssm_layers_found = []
+        total_layers = 0
+
+        for name, module in self.model.named_modules():
+            total_layers += 1
+            # Check by module type (more reliable)
+            module_class_name = module.__class__.__name__
+            module_full_name = str(type(module))
+
+            # S4-related modules
+            if ('S4' in module_class_name or
+                'S4Block' in module_class_name or
+                'FFTConv' in module_class_name or
+                'SSMKernel' in module_class_name):
+                s4_layers_found.append((name, type(module)))
+
+            # SSM-related modules
+            if ('SSM' in module_class_name or
+                'SSMKernel' in module_class_name):
+                ssm_layers_found.append((name, type(module)))
+
+        print(f"🔍 DEBUG: Total model layers: {total_layers}")
+        print(f"🔍 DEBUG: S4 layers found: {len(s4_layers_found)}")
+        for name, layer_type in s4_layers_found[:5]:  # Show first 5
+            print(f"🔍 DEBUG:   - {name}: {layer_type}")
+
+        print(f"🔍 DEBUG: SSM layers found: {len(ssm_layers_found)}")
+        for name, layer_type in ssm_layers_found[:5]:  # Show first 5
+            print(f"🔍 DEBUG:   - {name}: {layer_type}")
+
+        # Show layer hierarchy for first few c_layers
+        print("🔍 DEBUG: Inspecting layer hierarchy...")
+        for name, module in list(self.model.named_modules())[:20]:  # First 20 modules
+            if 'c_layers' in name and name.count('.') <= 2:  # Top-level c_layers
+                print(f"🔍 DEBUG:   {name}: {type(module)}")
+                # Show children
+                for child_name, child_module in module.named_modules():
+                    if child_name and '.' not in child_name:  # Direct children only
+                        print(f"🔍 DEBUG:     └─ {child_name}: {type(child_module)}")
+
+        # Check model configuration
+        if hasattr(self.model, 'output_head_type'):
+            print(f"🔍 DEBUG: Model output_head_type: {self.model.output_head_type}")
+        if hasattr(self.model, 'n_mixtures'):
+            print(f"🔍 DEBUG: Model n_mixtures: {self.model.n_mixtures}")
+        if hasattr(self.model, 'bits'):
+            print(f"🔍 DEBUG: Model bits: {self.model.bits}")
+        if hasattr(self.model, 'n_classes'):
+            print(f"🔍 DEBUG: Model n_classes: {self.model.n_classes}")
+
+        # Check if model has the expected backbone structure
+        if hasattr(self.model, 'backbone') or hasattr(self.model, 'layers'):
+            backbone_attr = 'backbone' if hasattr(self.model, 'backbone') else 'layers'
+            backbone = getattr(self.model, backbone_attr)
+            print(f"🔍 DEBUG: Model {backbone_attr}: {type(backbone)}")
+            if hasattr(backbone, '__len__'):
+                print(f"🔍 DEBUG: Backbone length: {len(backbone)}")
+                for i, layer in enumerate(backbone):
+                    print(f"🔍 DEBUG:   Layer {i}: {type(layer)}")
+                    if i >= 3:  # Only show first few layers
+                        print(f"🔍 DEBUG:   ... and {len(backbone) - i - 1} more layers")
+                        break
+
+        # Check for kernel optimization modules
+        kernel_modules_found = []
+        for name, module in self.model.named_modules():
+            module_str = str(type(module)).lower()
+            if any(keyword in module_str for keyword in ['cauchy', 'vandermonde', 'fft', 'ssm', 's4']):
+                kernel_modules_found.append((name, type(module)))
+
+        print(f"🔍 DEBUG: Kernel-related modules found: {len(kernel_modules_found)}")
+        for name, module_type in kernel_modules_found[:5]:  # Show first 5
+            print(f"🔍 DEBUG:   - {name}: {module_type}")
+
+        # Check if any modules have been imported that would trigger kernel warnings
+        import sys
+        kernel_related_imports = []
+        for module_name, module in sys.modules.items():
+            if module and any(keyword in module_name.lower() for keyword in ['cauchy', 'vandermonde', 'extensions', 'kernels']):
+                kernel_related_imports.append(module_name)
+
+        print(f"🔍 DEBUG: Kernel-related imports: {len(kernel_related_imports)}")
+        for imp in kernel_related_imports[:5]:  # Show first 5
+            print(f"🔍 DEBUG:   - {imp}")
+
+        print("🔍 DEBUG: Model architecture check complete")
+        print("="*60)
+
         self.task = utils.instantiate(
-            tasks.registry, self.hparams.task, dataset=self.dataset, model=self.model
+            tasks.registry, task_config, dataset=self.dataset, model=self.model
         )
 
         # Create encoders and decoders
@@ -328,7 +436,17 @@ class SequenceLightningModule(pl.LightningModule):
 
         # Metrics
         metrics = self.metrics(x, y, **w)
-        metrics["loss"] = loss
+
+        # Handle DML loss which returns a dictionary - extract scalar loss for logging
+        if isinstance(loss, dict):
+            metrics["loss"] = loss["loss"]
+            # Add DML-specific metrics for monitoring
+            metrics["avg_scale"] = loss["avg_scale"]
+            metrics["avg_mean"] = loss["avg_mean"]
+            metrics["mixture_entropy"] = loss["mixture_entropy"]
+        else:
+            metrics["loss"] = loss
+
         metrics = {f"{prefix}/{k}": v for k, v in metrics.items()}
 
         # Calculate torchmetrics: these are accumulated and logged at the end of epochs
@@ -402,11 +520,17 @@ class SequenceLightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss = self._shared_step(batch, batch_idx, prefix="train")
 
+        # Extract scalar loss from DML dictionary if needed
+        if isinstance(loss, dict):
+            scalar_loss = loss["loss"]
+        else:
+            scalar_loss = loss
+
         # Log the loss explicitly so it shows up in WandB
         # Note that this currently runs into a bug in the progress bar with ddp (as of 1.4.6)
         # https://github.com/PyTorchLightning/pytorch-lightning/pull/9142
         # We additionally log the epochs under 'trainer' to get a consistent prefix with 'global_step'
-        loss_epoch = {"trainer/loss": loss, "trainer/epoch": self.current_epoch}
+        loss_epoch = {"trainer/loss": scalar_loss, "trainer/epoch": self.current_epoch}
         self.log_dict(
             loss_epoch,
             on_step=True,
@@ -711,7 +835,7 @@ def train(config):
         # Added by KS for pre-training
         # [22-07-21 AG] refactored, untested
         if config.train.get("ignore_pretrained_layers", False):
-            pretrained_dict = pretrained_model.state_dict()
+            pretrained_dict = model.state_dict()  # Use the loaded model
             model_dict = model.state_dict()
             for k, v in model_dict.items():
                 for ignore_layer in config.train.ignore_pretrained_layers:

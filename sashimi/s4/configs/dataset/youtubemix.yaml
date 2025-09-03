@@ -1,7 +1,7 @@
 _name_: qautoaudio
 path: youtube_mix
 bits: 8
-sample_len: 8192 # 131072
+sample_len: 4096 # 131072
 train_percentage: 0.88
 quantization: mu-law
 drop_last: true
