@@ -131,9 +131,17 @@ class SequenceLightningModule(pl.LightningModule):
         # Passing in config expands it one level, so can access by self.hparams.train instead of self.hparams.config.train
         self.save_hyperparameters(config, logger=False)
 
-        # Dataset arguments
+        # Dataset arguments - include chunk_size parameters from train section
+        dataset_kwargs = dict(self.hparams.dataset)
+
+        # Add chunk_size parameters from train section if they exist
+        if hasattr(self.hparams.train, 'train_chunk_size'):
+            dataset_kwargs['train_chunk_size'] = self.hparams.train.train_chunk_size
+        if hasattr(self.hparams.train, 'val_chunk_size'):
+            dataset_kwargs['val_chunk_size'] = self.hparams.train.val_chunk_size
+
         self.dataset = SequenceDataset.registry[self.hparams.dataset._name_](
-            **self.hparams.dataset
+            **dataset_kwargs
         )
 
         # Check hparams
@@ -467,7 +475,15 @@ class SequenceLightningModule(pl.LightningModule):
         # Reset training torchmetrics
         self.task._reset_torchmetrics("train")
 
+
     def on_train_epoch_end(self):
+        # Advance training chunk index in dataset for next epoch
+        if hasattr(self.dataset, 'use_train_chunking') and self.dataset.use_train_chunking:
+            if hasattr(self.dataset, '_current_train_chunk'):
+                old_chunk = self.dataset._current_train_chunk
+                total_chunks = (len(self.dataset.dataset_train) + self.dataset.train_chunk_size - 1) // self.dataset.train_chunk_size
+                self.dataset._current_train_chunk = (self.dataset._current_train_chunk + 1) % total_chunks
+
         # Log training torchmetrics
         super().on_train_epoch_end()
         self.log_dict(
@@ -485,8 +501,9 @@ class SequenceLightningModule(pl.LightningModule):
         for name in self.val_loader_names:
             self.task._reset_torchmetrics(name)
 
+
     def on_validation_epoch_end(self):
-        # Log all validation torchmetrics
+        # Log all validation torchmetrics FIRST
         super().on_validation_epoch_end()
         for name in self.val_loader_names:
             self.log_dict(
@@ -497,6 +514,14 @@ class SequenceLightningModule(pl.LightningModule):
                 add_dataloader_idx=False,
                 sync_dist=True,
             )
+
+        # Advance validation chunk index in dataset for next epoch (AFTER logging)
+        if hasattr(self.dataset, 'use_val_chunking') and self.dataset.use_val_chunking:
+            if hasattr(self.dataset, '_current_val_chunk'):
+                old_chunk = self.dataset._current_val_chunk
+                self.dataset._current_val_chunk = (self.dataset._current_val_chunk + 1) % (
+                    (len(self.dataset.dataset_val) + self.dataset.val_chunk_size - 1) // self.dataset.val_chunk_size
+                )
 
     def on_test_epoch_start(self):
         self._on_epoch_start()
@@ -558,10 +583,21 @@ class SequenceLightningModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        # Check if this is an EMA validation dataloader and if EMA is enabled
+        is_ema_dataloader = self.val_loader_names[dataloader_idx].endswith("/ema")
+        optimizer_has_stepped = hasattr(self.optimizers().optimizer, 'stepped')
+
+        # EMA validation only happens if:
+        # 1. It's an EMA dataloader (name ends with "/ema")
+        # 2. EMA is enabled (optimizer has stepped attribute)
+        # 3. The optimizer has actually stepped (to avoid first epoch issues)
         ema = (
-            self.val_loader_names[dataloader_idx].endswith("/ema")
+            is_ema_dataloader
+            and optimizer_has_stepped
             and self.optimizers().optimizer.stepped
-        )  # There's a bit of an annoying edge case with the first (0-th) epoch; it has to be excluded due to the initial sanity check
+        )
+
+
         if ema:
             self.optimizers().swap_ema()
         loss = self._shared_step(
@@ -674,6 +710,7 @@ class SequenceLightningModule(pl.LightningModule):
 
     def train_dataloader(self):
         train_loader = self.dataset.train_dataloader(**self.hparams.loader)
+
         # Print stats in a try block since some dataloaders might not have a length?
         try:
             log.info(

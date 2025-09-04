@@ -17,6 +17,8 @@ model:
 train:
   monitor: val/loss
   mode: min
+  train_chunk_size: 2000     # Enable chunked training with 2000 batches per chunk
+  val_chunk_size: 200        # Enable chunked validation with 200 batches per chunk
 
 task:
   metrics:
@@ -37,8 +39,8 @@ loader:
 
 trainer:
   max_epochs: 1000
-  limit_train_batches: 2000
-  limit_val_batches: 200
+  limit_train_batches: 2000  # Fallback if chunking disabled
+  limit_val_batches: 200     # Fallback if chunking disabled
 
 optimizer:
   lr: 0.004

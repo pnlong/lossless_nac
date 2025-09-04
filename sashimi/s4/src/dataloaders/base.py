@@ -12,7 +12,7 @@ import torchvision
 from einops import rearrange
 from einops.layers.torch import Rearrange
 from src.utils import is_list, permutations
-from torch.nn import functional as F
+from .chunked_dataloader import ChunkedDataLoader
 
 def deprecated(cls_or_func):
     def _deprecated(*args, **kwargs):
@@ -99,12 +99,90 @@ class DefaultCollateMixin:
     def _dataloader(self, dataset, **loader_args):
         collate_args = {k: loader_args[k] for k in loader_args if k in self.collate_args}
         loader_args = {k: loader_args[k] for k in loader_args if k not in self.collate_args}
-        loader_cls = loader_registry[loader_args.pop("_name_", None)]
-        return loader_cls(
-            dataset=dataset,
-            collate_fn=partial(self._collate_fn, **collate_args),
-            **loader_args,
-        )
+
+        # Check if we should use chunked dataloader
+        if self._should_use_chunked_dataloader(loader_args):
+            chunk_size = self._get_chunk_size_for_dataloader(loader_args)
+            # Extract batch_size from loader_args if present
+            batch_size = loader_args.pop('batch_size', 1)  # Default to 1 if not found
+
+            # Get current chunk index from dataset
+            if self._current_dataloader_type == 'train':
+                current_chunk = getattr(self, '_current_train_chunk', 0)
+            elif self._current_dataloader_type == 'eval':
+                current_chunk = getattr(self, '_current_val_chunk', 0)
+            else:
+                current_chunk = 0
+
+            # Create the dataloader
+            dataloader = ChunkedDataLoader(
+                dataset=dataset,
+                batch_size=batch_size,
+                chunk_size=chunk_size,
+                current_chunk=current_chunk,
+                dataloader_type=self._current_dataloader_type,  # Pass the dataloader type for syncing
+                collate_fn=partial(self._collate_fn, **collate_args),
+                **loader_args,
+            )
+
+            # Store reference to this dataset in the dataloader for sync purposes
+            # This is needed because PyTorch Lightning may reuse dataloaders
+            dataloader._parent_dataset = self
+
+            return dataloader
+        else:
+            # Use standard dataloader
+            loader_cls = loader_registry[loader_args.pop("_name_", None)]
+            return loader_cls(
+                dataset=dataset,
+                collate_fn=partial(self._collate_fn, **collate_args),
+                **loader_args,
+            )
+
+    def _should_use_chunked_dataloader(self, loader_args):
+        """Determine if we should use ChunkedDataLoader for this request."""
+        if not self.use_chunking:
+            return False
+
+        # Check the stored dataloader type
+        dataloader_type = getattr(self, '_current_dataloader_type', None)
+
+        if dataloader_type == 'train':
+            return self.use_train_chunking
+        elif dataloader_type == 'eval':
+            return self.use_val_chunking
+
+        # Fallback to shuffle-based detection (less reliable)
+        # Check if this is a training dataloader (has shuffle=True or no shuffle specified)
+        # Training dataloaders typically have shuffle enabled or don't specify it
+        is_training = loader_args.get('shuffle', True)  # Default to True for training
+
+        # For training, use chunking if train_chunk_size is set
+        # For validation/testing, use chunking if val_chunk_size is set
+        if is_training:
+            return self.use_train_chunking
+        else:
+            return self.use_val_chunking
+
+    def _get_chunk_size_for_dataloader(self, loader_args):
+        """Get the appropriate chunk size for this dataloader."""
+        # Check the stored dataloader type
+        dataloader_type = getattr(self, '_current_dataloader_type', None)
+
+        if dataloader_type == 'train' and self.use_train_chunking:
+            return self.train_chunk_size
+        elif dataloader_type == 'eval' and self.use_val_chunking:
+            return self.val_chunk_size
+
+        # Fallback to shuffle-based detection (less reliable)
+        is_training = loader_args.get('shuffle', True)
+
+        if is_training and self.use_train_chunking:
+            return self.train_chunk_size
+        elif not is_training and self.use_val_chunking:
+            return self.val_chunk_size
+        else:
+            return None
 
 
 class SequenceResolutionCollateMixin(DefaultCollateMixin):
@@ -263,10 +341,29 @@ class SequenceDataset(DefaultCollateMixin):
         for k, v in init_args.items():
             setattr(self, k, v)
 
+        # Initialize chunking support
+        self._setup_chunking()
+
         # The train, val, test datasets must be set by `setup()`
         self.dataset_train = self.dataset_val = self.dataset_test = None
 
         self.init()
+
+    def _setup_chunking(self):
+        """Setup chunking support based on configuration."""
+        # Get chunk size parameters
+        self.train_chunk_size = getattr(self, 'train_chunk_size', None)
+        self.val_chunk_size = getattr(self, 'val_chunk_size', None)
+
+        # Determine if chunking is enabled
+        self.use_train_chunking = self.train_chunk_size is not None
+        self.use_val_chunking = self.val_chunk_size is not None
+        self.use_chunking = self.use_train_chunking or self.use_val_chunking
+
+        # Initialize chunk indices only if chunking is enabled
+        if self.use_chunking:
+            self._current_train_chunk = 0
+            self._current_val_chunk = 0
 
     def init(self):
         """Hook called at end of __init__, override this instead of __init__"""
@@ -295,17 +392,21 @@ class SequenceDataset(DefaultCollateMixin):
     def _train_dataloader(self, dataset, **kwargs):
         if dataset is None: return
         kwargs['shuffle'] = 'sampler' not in kwargs # shuffle cant be True if we have custom sampler
+        # Store the dataloader type for later use
+        self._current_dataloader_type = 'train'
         return self._dataloader(dataset, **kwargs)
 
     def val_dataloader(self, **kwargs):
         return self._eval_dataloader(self.dataset_val, **kwargs)
 
     def test_dataloader(self, **kwargs):
-        return self._eval_dataloader(self.dataset_test, **kwargs)
+        return self._eval_dataloader(self.dataset_test, eval_type='test', **kwargs)
 
-    def _eval_dataloader(self, dataset, **kwargs):
+    def _eval_dataloader(self, dataset, eval_type='val', **kwargs):
         if dataset is None: return
         # Note that shuffle=False by default
+        # Store the dataloader type for later use
+        self._current_dataloader_type = eval_type  # 'val' or 'test'
         return self._dataloader(dataset, **kwargs)
 
     def __str__(self):
