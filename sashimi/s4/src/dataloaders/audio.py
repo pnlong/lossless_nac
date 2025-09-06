@@ -103,6 +103,7 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
         target_sr=None,
         context_len=None,
         pad_len=None,
+        is_stereo=False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -116,6 +117,7 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
         self.zero = q_zero(bits)
         self.context_len = context_len
         self.pad_len = pad_len
+        self.is_stereo = is_stereo
 
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -132,6 +134,14 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
         return NotImplementedError("Must assign a list of filepaths to self.file_names.")
 
     def __getitem__(self, index):
+        # Debug output to catch IndexError
+        if index >= len(self.examples):
+            print(f"ERROR: Index {index} out of range for examples list of length {len(self.examples)}")
+            print(f"Available examples: {len(self.examples)}")
+            print(f"Dataset length (__len__): {len(self)}")
+            print(f"First few examples: {self.examples[:min(3, len(self.examples))]}")
+            raise IndexError(f"Index {index} out of range for examples list of length {len(self.examples)}")
+        
         # Load signal
         if self.sample_len is not None:
             file_name, start_frame, num_frames = self.examples[index]
@@ -139,8 +149,8 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
         else:
             seq, sr = torchaudio.load(self.examples[index])
 
-        # Average non-mono signals across channels
-        if seq.shape[0] > 1:
+        # Average non-mono signals across channels (only for mono processing)
+        if seq.shape[0] > 1 and not self.is_stereo:
             seq = seq.mean(dim=0, keepdim=True)
 
         # Resample signal if required
@@ -149,31 +159,30 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
                 self.transforms[sr] = torchaudio.transforms.Resample(orig_freq=sr, new_freq=self.target_sr)
             seq = self.transforms[sr](seq)
 
-        # Transpose the signal to get (L, 1)
+        # Transpose the signal to get (L, C) where C is channels (1 for mono, 2 for stereo)
         seq = seq.transpose(0, 1)
 
-        # Unsqueeze to (1, L, 1)
+        # Reshape to (1, L, C) to add batch dimension while preserving channels
         seq = seq.unsqueeze(0)
 
         # Quantized signal
         qseq = self.quantizer(seq, self.bits)
 
-        # Squeeze back to (L, 1)
+        # Squeeze back to (L, C) where C is channels (1 for mono, 2 for stereo)
         qseq = qseq.squeeze(0)
 
         # Return the signal
         if self.return_type == 'autoregressive':
             # Autoregressive training
-            # x is [0,  qseq[0], qseq[1], ..., qseq[-2]]
-            # y is [qseq[0], qseq[1], ..., qseq[-1]]
+            # For stereo: x and y have shape (L, C) where C is channels
             y = qseq
             x = torch.roll(qseq, 1, 0) # Roll the signal 1 step
             x[0] = self.zero # Fill the first element with q_0
-            x = x.squeeze(1) # Squeeze to (L, )
+
             if self.context_len is not None:
                 y = y[self.context_len:] # Trim the signal
             if self.pad_len is not None:
-                x = torch.cat((torch.zeros(self.pad_len, dtype=self.qtype) + self.zero, x)) # Pad the signal
+                x = torch.cat((torch.zeros(self.pad_len, qseq.shape[-1], dtype=self.qtype) + self.zero, x)) # Pad the signal
             return x, y
         elif self.return_type is None:
             return qseq
@@ -212,6 +221,8 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
                     self.examples.append((file_name, metadata.num_frames - margin, margin))
         else:
             self.examples = self.file_names
+
+
 
     def create_quantizer(self, quantization: str):
         if quantization == 'linear':
@@ -266,19 +277,46 @@ class QuantizedAudioDataset(AbstractAudioDataset):
 
     def setup(self):
         from natsort import natsorted
-        file_names = natsorted(
-            [join(self.path, file_name) for file_name in listdir(self.path)]
-        )
-        self.file_names = file_names[
-            int(self.ratio_min * len(file_names)) : int(self.ratio_max * len(file_names))
-        ]
+
+        # Ensure path exists
+        if not os.path.exists(self.path):
+            raise FileNotFoundError(f"Dataset path does not exist: {self.path}")
+
+        # Get all files in the directory
+        all_files = listdir(self.path)
+        if not all_files:
+            raise ValueError(f"No files found in dataset directory: {self.path}")
+
+        # Filter for audio files
+        audio_extensions = ['.wav', '.flac', '.mp3', '.m4a']
+        audio_files = [f for f in all_files if any(f.endswith(ext) for ext in audio_extensions)]
+
+        if not audio_files:
+            raise ValueError(f"No audio files found in dataset directory: {self.path}. Found files: {all_files[:10]}")
+
+        # Create full paths
+        file_names = natsorted([join(self.path, file_name) for file_name in audio_files])
+
+        # Apply train/val/test split
+        total_files = len(file_names)
+        start_idx = int(self.ratio_min * total_files)
+        end_idx = int(self.ratio_max * total_files)
+        self.file_names = file_names[start_idx:end_idx]
+        
+        # Debug output to help diagnose split issues
+        # print(f"Dataset split: total_files={total_files}, ratio_min={self.ratio_min}, ratio_max={self.ratio_max}")
+        # print(f"Selected indices: {start_idx}:{end_idx}, resulting in {len(self.file_names)} files")
+        if len(self.file_names) == 0:
+            print(f"WARNING: Empty dataset split! Available files: {[os.path.basename(f) for f in file_names[:10]]}")
+            raise ValueError(f"Dataset split resulted in 0 files. Check your ratio_min ({self.ratio_min}) and ratio_max ({self.ratio_max}) values.")
+
 
 class QuantizedAutoregressiveAudio(SequenceDataset):
     _name_ = 'qautoaudio'
 
     @property
     def d_input(self):
-        return 1
+        return 2 if getattr(self, 'is_stereo', False) else 1
 
     @property
     def d_output(self):
@@ -313,6 +351,7 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
             'pad_len': None,
             'output_head': 'categorical',  # New: output head type
             'n_mixtures': 10,              # New: number of mixture components for DML
+            'is_stereo': False,            # New: stereo processing flag
         }
 
     def setup(self):
@@ -331,6 +370,7 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
             drop_last=self.drop_last,
             context_len=self.context_len,
             pad_len=self.pad_len,
+            is_stereo=self.is_stereo,
         )
 
         self.dataset_val = QuantizedAudioDataset(
@@ -343,6 +383,7 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
             drop_last=self.drop_last,
             context_len=self.context_len,
             pad_len=self.pad_len,
+            is_stereo=self.is_stereo,
         )
 
         self.dataset_test = QuantizedAudioDataset(
@@ -355,7 +396,10 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
             drop_last=self.drop_last,
             context_len=self.context_len,
             pad_len=self.pad_len,
+            is_stereo=self.is_stereo,
         )
+
+        # print(f"Dataset setup complete: train={len(self.dataset_train) if self.dataset_train else 'None'}, val={len(self.dataset_val) if self.dataset_val else 'None'}, test={len(self.dataset_test) if self.dataset_test else 'None'}")
 
         def collate_fn(batch):
             x, y, *z = zip(*batch)

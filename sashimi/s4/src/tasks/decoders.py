@@ -110,9 +110,12 @@ class SequenceDecoder(Decoder):
             assert lengths is not None, "lengths must be provided for ragged mode"
             # remove any additional padding (beyond max length of any sequence in the batch)
             restrict = lambda x: x[..., : max(lengths), :]
+        elif self.mode == "full":
+            # Full sequence mode - preserve entire sequence length
+            restrict = lambda x: x
         else:
             raise NotImplementedError(
-                "Mode must be ['last' | 'first' | 'pool' | 'sum']"
+                "Mode must be ['last' | 'first' | 'pool' | 'sum' | 'full']"
             )
 
         # Restrict to actual length of sequence

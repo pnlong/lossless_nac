@@ -55,6 +55,15 @@ class BaseTask:
     decoder = None
 
     def __init__(self, dataset=None, model=None, loss=None, loss_val=None, metrics=None, torchmetrics=None):
+        # print(f"🔍 DEBUG: BaseTask.__init__ called")
+        # print(f"🔍 DEBUG: BaseTask parameters:")
+        # print(f"🔍 DEBUG:   - dataset: {type(dataset).__name__ if dataset else None}")
+        # print(f"🔍 DEBUG:   - model: {type(model).__name__ if model else None}")
+        # print(f"🔍 DEBUG:   - loss: {loss}")
+        # print(f"🔍 DEBUG:   - loss_val: {loss_val}")
+        # print(f"🔍 DEBUG:   - metrics: {metrics}")
+        # print(f"🔍 DEBUG:   - torchmetrics: {torchmetrics}")
+        
         """ This class is allowed to grab attributes directly off a constructed dataset and model object """
         self.dataset = dataset
         self.model = model
@@ -62,6 +71,12 @@ class BaseTask:
         self.metric_names = to_list(metrics)
 
         if torchmetrics is None: torchmetrics = []
+        
+        # print(f"🔍 DEBUG: BaseTask setup_stereo_embedding about to be called")
+        # Add stereo embedding support for audio datasets
+        self._setup_stereo_embedding()
+        # print(f"🔍 DEBUG: BaseTask setup_stereo_embedding completed")
+        
         self.torchmetric_names = to_list(torchmetrics)
         self._tracked_torchmetrics = {}
 
@@ -104,6 +119,115 @@ class BaseTask:
                 self.loss_val = lambda preds, targets, **kwargs: dml_loss_val_fn(preds, targets, dataset=self.dataset)
             else:
                 self.loss_val = U.discard_kwargs(self.loss_val)
+
+    def _setup_stereo_embedding(self):
+        """Setup stereo embedding for audio datasets if explicitly enabled."""
+        # print(f"🔍 DEBUG: _setup_stereo_embedding called")
+        # print(f"🔍 DEBUG: Dataset attributes check:")
+        # print(f"🔍 DEBUG:   - hasattr(dataset, 'd_input'): {hasattr(self.dataset, 'd_input')}")
+        # print(f"🔍 DEBUG:   - hasattr(dataset, 'n_tokens'): {hasattr(self.dataset, 'n_tokens')}")
+        # print(f"🔍 DEBUG:   - hasattr(model, 'd_model'): {hasattr(self.model, 'd_model')}")
+        # print(f"🔍 DEBUG:   - hasattr(dataset, 'is_stereo'): {hasattr(self.dataset, 'is_stereo')}")
+        
+        # if hasattr(self.dataset, 'd_input'):
+        #     print(f"🔍 DEBUG:   - dataset.d_input: {self.dataset.d_input}")
+        # if hasattr(self.dataset, 'is_stereo'):
+        #     print(f"🔍 DEBUG:   - dataset.is_stereo: {self.dataset.is_stereo}")
+        # if hasattr(self.model, 'd_model'):
+        #     print(f"🔍 DEBUG:   - model.d_model: {self.model.d_model}")
+            
+        # Only activate stereo embedding if explicitly enabled via is_stereo flag
+        if (hasattr(self.dataset, 'd_input') and 
+            hasattr(self.dataset, 'n_tokens') and 
+            hasattr(self.model, 'd_model') and
+            hasattr(self.dataset, 'is_stereo') and
+            self.dataset.is_stereo and
+            self.dataset.d_input > 1):  # Stereo case with explicit flag
+            
+            # print(f"🔍 DEBUG: ✅ Stereo embedding conditions met - setting up stereo encoder")
+            
+            # Import required modules
+            import torch
+            import torch.nn as nn
+            import math
+            
+            n_tokens = self.dataset.n_tokens
+            d_model = self.model.d_model
+            d_input = self.dataset.d_input
+            
+            # print(f"🔍 DEBUG: Stereo embedding parameters:")
+            # print(f"🔍 DEBUG:   - n_tokens: {n_tokens}")
+            # print(f"🔍 DEBUG:   - d_model: {d_model}")
+            # print(f"🔍 DEBUG:   - d_input: {d_input}")
+            # print(f"🔍 DEBUG:   - Expected output dimension: {d_model * d_input}")
+            
+            # For stereo, we'll interleave the channels and let the config encoder handle embedding
+            
+            # Create a stereo encoder that includes embedding layer
+            class StereoEncoder(nn.Module):
+                def __init__(self, n_tokens, d_model):
+                    super().__init__()
+                    # print(f"🔍 DEBUG: StereoEncoder.__init__ called with n_tokens={n_tokens}, d_model={d_model}")
+                    # Create embedding layer to convert integer indices to dense features
+                    self.embedding = nn.Embedding(n_tokens, d_model)
+                    nn.init.normal_(self.embedding.weight, mean=0, std=d_model**-.5)
+                    # print(f"🔍 DEBUG: StereoEncoder embedding layer created with shape ({n_tokens}, {d_model})")
+                
+                def forward(self, x, **kwargs):
+                    # print(f"🔍 DEBUG: StereoEncoder.forward called with input shape: {x.shape}")
+                    # x shape: (batch, length, channels)
+                    batch_size, seq_len, channels = x.shape
+                    # print(f"🔍 DEBUG: StereoEncoder input breakdown: batch={batch_size}, seq_len={seq_len}, channels={channels}")
+                    
+                    # Interleave the channels to create a single sequence
+                    # This creates the proper sequence length for the model
+                    interleaved = x.view(batch_size, -1)  # (batch, length * channels)
+                    # print(f"🔍 DEBUG: StereoEncoder interleaved shape: {interleaved.shape}, dtype: {interleaved.dtype}")
+                    
+                    # Convert to long tensor for embedding layer (embedding expects integer indices)
+                    interleaved_long = interleaved.long()
+                    # print(f"🔍 DEBUG: StereoEncoder converted to long: {interleaved_long.shape}, dtype: {interleaved_long.dtype}")
+                    
+                    # Convert integer indices to dense embeddings
+                    embedded = self.embedding(interleaved_long)  # (batch, length * channels, d_model)
+                    # print(f"🔍 DEBUG: StereoEncoder embedded shape: {embedded.shape}, dtype: {embedded.dtype}")
+                    
+                    # Don't reshape - keep the interleaved sequence structure
+                    # Output: (batch, length * channels, d_model)
+                    # This maintains the interleaved stereo information in the sequence dimension
+                    result = embedded  # Keep as (batch, length * channels, d_model)
+                    # print(f"🔍 DEBUG: StereoEncoder final output shape: {result.shape}, dtype: {result.dtype}")
+                    # print(f"🔍 DEBUG: StereoEncoder output: (batch={batch_size}, interleaved_length={seq_len * channels}, features={d_model})")
+                    # print(f"🔍 DEBUG: StereoEncoder kwargs: {kwargs}")
+                    
+                    return result, kwargs
+            
+            self.encoder = StereoEncoder(n_tokens, d_model)
+            
+            # print(f"🔊 Stereo embedding setup: {d_input} channels → {d_model} features")
+        else:
+            # print(f"🔍 DEBUG: ❌ Stereo embedding conditions NOT met - using identity encoder")
+            # For backwards compatibility, create a simple identity encoder when stereo is disabled
+            # This ensures the encoder combination logic in train.py works correctly
+            # if hasattr(self.dataset, 'd_input') and self.dataset.d_input > 1:
+            #     print(f"🔇 Multi-channel dataset detected (d_input={self.dataset.d_input}) but stereo embedding disabled (is_stereo=False)")
+            #     print(f"🔇 Using identity encoder for backwards compatibility")
+            # else:
+            #     print(f"🔇 Mono dataset detected (d_input={getattr(self.dataset, 'd_input', 1)}) - using identity encoder")
+            
+            # Create identity encoder for backwards compatibility
+            import torch.nn as nn
+            class IdentityEncoder(nn.Module):
+                def __init__(self):
+                    super().__init__()
+                    # print(f"🔍 DEBUG: IdentityEncoder.__init__ called")
+                
+                def forward(self, x, **kwargs):
+                    # print(f"🔍 DEBUG: IdentityEncoder.forward called with input shape: {x.shape}")
+                    # print(f"🔍 DEBUG: IdentityEncoder kwargs: {kwargs}")
+                    return x, kwargs
+            
+            self.encoder = IdentityEncoder()
 
     def _init_torchmetrics(self, prefix):
         """Instantiate torchmetrics."""
@@ -191,29 +315,127 @@ class Scalar(nn.Module):
 
 class LMTask(BaseTask):
     def __init__(self, tied=False, rescale=True, **kwargs):
+        # print(f"🔍 DEBUG: LMTask.__init__ called with kwargs: {kwargs}")
         super().__init__(loss='cross_entropy', **kwargs)
+        
+        # print(f"🔍 DEBUG: LMTask initialization parameters:")
         n_tokens = self.dataset.n_tokens
         d_model = self.model.d_model
         d_output = self.model.d_output
+        d_input = self.dataset.d_input
+        
+        # print(f"🔍 DEBUG:   - n_tokens: {n_tokens}")
+        # print(f"🔍 DEBUG:   - d_model: {d_model}")
+        # print(f"🔍 DEBUG:   - d_output: {d_output}")
+        # print(f"🔍 DEBUG:   - d_input: {d_input}")
+        # print(f"🔍 DEBUG:   - tied: {tied}")
+        # print(f"🔍 DEBUG:   - rescale: {rescale}")
 
         if rescale:
             scale = Scalar(math.sqrt(d_model))
+            # print(f"🔍 DEBUG:   - scale factor: {math.sqrt(d_model)}")
         else:
             scale = None
+            # print(f"🔍 DEBUG:   - scale factor: None")
 
-        embedding = nn.Embedding(n_tokens, d_model)
-        nn.init.normal_(embedding.weight, mean=0, std=d_model**-.5)
-        encoder = U.PassthroughSequential(
-            embedding,
-            scale,
-        )
-        self.encoder = encoder
-        decoder = nn.Linear(d_output, n_tokens)
+        # Check if stereo encoder was already set up by BaseTask
+        if hasattr(self, 'encoder') and self.encoder is not None:
+            # print(f"🔍 DEBUG: ✅ Encoder already set up by BaseTask (stereo case) - using existing encoder")
+            # print(f"🔍 DEBUG: Existing encoder type: {type(self.encoder).__name__}")
+            # Don't overwrite the existing encoder - just add scaling if needed
+            if rescale:
+                # print(f"🔍 DEBUG: Adding scaling to existing encoder")
+                # Wrap existing encoder with scaling
+                self.encoder = U.PassthroughSequential(
+                    self.encoder,
+                    scale,
+                )
+            # print(f"🔍 DEBUG: Final encoder components: {[type(comp).__name__ for comp in self.encoder]}")
+        else:
+            # print(f"🔍 DEBUG: ❌ No existing encoder - creating new encoder (mono case)")
+            # Handle multi-channel inputs (stereo) - this should not happen if stereo is enabled
+            # print(f"🔍 DEBUG: Checking if d_input > 1: {d_input > 1}")
+            if d_input > 1:
+                # print(f"🔍 DEBUG: ⚠️ WARNING: Multi-channel case but no stereo encoder set up!")
+                # print(f"🔍 DEBUG: ✅ Multi-channel case (stereo) - creating MultiChannelEmbedding")
+                # For stereo: create separate embeddings for each channel
+                embeddings = []
+                for i in range(d_input):
+                    # print(f"🔍 DEBUG: Creating embedding {i+1}/{d_input} with shape ({n_tokens}, {d_model})")
+                    emb = nn.Embedding(n_tokens, d_model)
+                    nn.init.normal_(emb.weight, mean=0, std=d_model**-.5)
+                    embeddings.append(emb)
 
-        if tied:
+                # Combine embeddings with channel-wise processing
+                class MultiChannelEmbedding(nn.Module):
+                    def __init__(self, embeddings):
+                        super().__init__()
+                        # print(f"🔍 DEBUG: MultiChannelEmbedding.__init__ called with {len(embeddings)} embeddings")
+                        self.embeddings = nn.ModuleList(embeddings)
+
+                    def forward(self, x):
+                        # print(f"🔍 DEBUG: MultiChannelEmbedding.forward called with input shape: {x.shape}")
+                        # x shape: (batch, length, channels)
+                        batch_size, seq_len, channels = x.shape
+                        # print(f"🔍 DEBUG: MultiChannelEmbedding input breakdown: batch={batch_size}, seq_len={seq_len}, channels={channels}")
+                        
+                        embedded_channels = []
+                        for c in range(channels):
+                            # print(f"🔍 DEBUG: Processing channel {c+1}/{channels}")
+                            channel_input = x[:, :, c]  # (batch, length)
+                            # print(f"🔍 DEBUG: Channel {c+1} input shape: {channel_input.shape}")
+                            channel_emb = self.embeddings[c](channel_input)  # (batch, length, d_model)
+                            # print(f"🔍 DEBUG: Channel {c+1} embedded shape: {channel_emb.shape}")
+                            embedded_channels.append(channel_emb)
+
+                        # Concatenate along feature dimension: (batch, length, channels * d_model)
+                        result = torch.cat(embedded_channels, dim=-1)
+                        # print(f"🔍 DEBUG: MultiChannelEmbedding final output shape: {result.shape}")
+                        # print(f"🔍 DEBUG: Expected output shape: (batch={batch_size}, length={seq_len}, features={channels * d_model})")
+                        return result
+
+                embedding = MultiChannelEmbedding(embeddings)
+                # print(f"🔍 DEBUG: MultiChannelEmbedding created successfully")
+                # Note: d_model adjustment is handled in train.py via embedded_d_input calculation
+            else:
+                # print(f"🔍 DEBUG: ❌ Mono case - creating single embedding")
+                # Mono case: single embedding
+                embedding = nn.Embedding(n_tokens, d_model)
+                nn.init.normal_(embedding.weight, mean=0, std=d_model**-.5)
+                # print(f"🔍 DEBUG: Single embedding created with shape ({n_tokens}, {d_model})")
+
+            encoder = U.PassthroughSequential(
+                embedding,
+                scale,
+            )
+            # print(f"🔍 DEBUG: Encoder created with components: {[type(comp).__name__ for comp in encoder]}")
+            self.encoder = encoder
+
+        # For stereo, d_output might be per-channel, so adjust decoder accordingly
+        decoder_input_dim = d_output
+        # print(f"🔍 DEBUG: Decoder input dimension calculation:")
+        # print(f"🔍 DEBUG:   - Initial decoder_input_dim: {decoder_input_dim}")
+        # print(f"🔍 DEBUG:   - d_input: {d_input}")
+        # print(f"🔍 DEBUG:   - d_output: {d_output}")
+        
+        if d_input > 1:
+            # For stereo, model outputs predictions for each channel
+            # Decoder should output per-channel predictions
+            decoder_input_dim = d_output // d_input if d_output > d_input else d_output
+            # print(f"🔍 DEBUG:   - Stereo case: decoder_input_dim = {decoder_input_dim}")
+
+        # print(f"🔍 DEBUG: Creating decoder with input_dim={decoder_input_dim}, output_dim={n_tokens}")
+        decoder = nn.Linear(decoder_input_dim, n_tokens)
+
+        if tied and d_input == 1:
+            # print(f"🔍 DEBUG: Tied weights enabled for mono case")
             assert d_model == d_output
             decoder.weight = self.encoder[0].weight
+        # else:
+        #     print(f"🔍 DEBUG: Tied weights disabled (tied={tied}, d_input={d_input})")
+            
         self.decoder = decoder
+        # print(f"🔍 DEBUG: LMTask initialization completed successfully")
 
 class ForecastingTask(BaseTask):
 
@@ -223,11 +445,21 @@ class ForecastingTask(BaseTask):
             return args
 
     def __init__(self, norm='mean', **kwargs):
+        # print(f"🔍 DEBUG: ForecastingTask.__init__ called with norm='{norm}', kwargs: {kwargs}")
         super().__init__(**kwargs)
 
+        # print(f"🔍 DEBUG: ForecastingTask normalization setup:")
+        # print(f"🔍 DEBUG:   - norm parameter: {norm}")
+        
         if norm == 'revnorm':
-            self.encoder = ReversibleInstanceNorm1dInput(self.dataset.d_input, transposed=False)
+            # print(f"🔍 DEBUG: Using ReversibleInstanceNorm1dInput/Output")
+            # For normalization, use the feature dimension after embedding
+            # For stereo: d_model has already been scaled by d_input in the embedding section
+            d_model = self.model.d_model
+            # print(f"🔍 DEBUG:   - d_model for normalization: {d_model}")
+            self.encoder = ReversibleInstanceNorm1dInput(d_model, transposed=False)
             self.decoder = ReversibleInstanceNorm1dOutput(self.encoder)
+            # print(f"🔍 DEBUG:   - ReversibleInstanceNorm1dInput/Output created")
         elif norm == 'mean':
             self.encoder = TSNormalization(method='mean', horizon=self.dataset.dataset_train.forecast_horizon)
             self.decoder = TSInverseNormalization(method='mean', normalizer=self.encoder)

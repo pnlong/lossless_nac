@@ -1,0 +1,11 @@
+_name_: qautoaudio
+path: musdb18stereo
+bits: 16
+sample_len: 12288 # 131072
+train_percentage: 0.88
+quantization: linear
+drop_last: true
+context_len: null
+pad_len: null
+is_stereo: true
+__l_max: ${.sample_len}

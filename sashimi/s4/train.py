@@ -144,6 +144,12 @@ class SequenceLightningModule(pl.LightningModule):
             **dataset_kwargs
         )
 
+        # Setup dataset immediately to avoid timing issues with sanity check
+        if not getattr(self.hparams.train, 'disable_dataset', True):
+            # print("Setting up dataset in __init__ for sanity check compatibility...")
+            self.dataset.setup()
+            # print("Dataset setup in __init__ complete")
+
         # Check hparams
         self._check_config()
 
@@ -153,8 +159,12 @@ class SequenceLightningModule(pl.LightningModule):
         self.setup()  ## Added by KS
 
     def setup(self, stage=None):
-        if not self.hparams.train.disable_dataset:
+        # print(f"Model setup called with stage={stage}")
+        # Setup dataset if not already done (for cases where __init__ didn't run setup)
+        if not self.hparams.train.disable_dataset and (not hasattr(self.dataset, 'dataset_train') or self.dataset.dataset_train is None):
+            # print("Setting up dataset in setup method...")
             self.dataset.setup()
+            # print("Dataset setup in setup method complete")
 
         # We need to set up the model in setup() because for some reason when training with DDP, one GPU uses much more memory than the others
         # In order to not overwrite the model multiple times during different stages, we need this hack
@@ -174,11 +184,31 @@ class SequenceLightningModule(pl.LightningModule):
         ) + utils.to_list(self.hparams.decoder)
 
         # Instantiate model
-        # Pass bits parameter from dataset config to model for output head initialization
+        # Pass bits and d_input parameters from dataset config to model for output head initialization
         model_config = self.hparams.model.copy()
         if 'bits' not in model_config and hasattr(self.dataset, 'bits'):
             model_config['bits'] = self.dataset.bits
+        # For stereo, the sequence length will be doubled due to interleaving
+        # We need to update l_max to handle the doubled sequence length
+        if hasattr(self.dataset, 'is_stereo') and self.dataset.is_stereo and hasattr(self.dataset, 'd_input') and self.dataset.d_input > 1:
+            raw_d_input = self.dataset.d_input
+            if 'l_max' in model_config and model_config['l_max'] is not None:
+                original_l_max = model_config['l_max']
+                stereo_l_max = original_l_max * raw_d_input
+                # print(f"🔍 DEBUG: Stereo detected - updating l_max from {original_l_max} to {stereo_l_max}")
+                model_config['l_max'] = stereo_l_max
+        else:
+            # For mono, ensure d_input matches the actual input dimension
+            raw_d_input = getattr(self.dataset, 'd_input', 1)
+            model_config['d_input'] = raw_d_input
+            # print(f"🔍 DEBUG: Mono detected - setting d_input to {raw_d_input}")
+                
+        # print("🔍 DEBUG: About to instantiate model...")
+        # print(f"🔍 DEBUG: Model config before instantiation: {model_config}")
         self.model = utils.instantiate(registry.model, model_config)
+        # print("🔍 DEBUG: Model instantiated successfully!")
+        # print(f"🔍 DEBUG: Model instantiated with d_model: {self.model.d_model}")
+        # print(f"🔍 DEBUG: Model d_input: {getattr(self.model, 'd_input', 'Not set')}")
         if (name := self.hparams.train.post_init_hook['_name_']) is not None:
             kwargs = self.hparams.train.post_init_hook.copy()
             del kwargs['_name_']
@@ -197,9 +227,9 @@ class SequenceLightningModule(pl.LightningModule):
             print("🚀 " + "="*50)
 
         # Debug: Check if S4 layers are properly instantiated
-        print("🔍 DEBUG: Checking model architecture...")
-        print(f"🔍 DEBUG: Model type: {type(self.model)}")
-        print(f"🔍 DEBUG: Model class name: {self.model.__class__.__name__}")
+        # print("🔍 DEBUG: Checking model architecture...")
+        # print(f"🔍 DEBUG: Model type: {type(self.model)}")
+        # print(f"🔍 DEBUG: Model class name: {self.model.__class__.__name__}")
 
         # Check for S4/SSM layers (by both name and type)
         s4_layers_found = []
@@ -224,17 +254,17 @@ class SequenceLightningModule(pl.LightningModule):
                 'SSMKernel' in module_class_name):
                 ssm_layers_found.append((name, type(module)))
 
-        print(f"🔍 DEBUG: Total model layers: {total_layers}")
-        print(f"🔍 DEBUG: S4 layers found: {len(s4_layers_found)}")
+        # print(f"🔍 DEBUG: Total model layers: {total_layers}")
+        # print(f"🔍 DEBUG: S4 layers found: {len(s4_layers_found)}")
         for name, layer_type in s4_layers_found[:5]:  # Show first 5
             print(f"🔍 DEBUG:   - {name}: {layer_type}")
 
-        print(f"🔍 DEBUG: SSM layers found: {len(ssm_layers_found)}")
+        # print(f"🔍 DEBUG: SSM layers found: {len(ssm_layers_found)}")
         for name, layer_type in ssm_layers_found[:5]:  # Show first 5
             print(f"🔍 DEBUG:   - {name}: {layer_type}")
 
         # Show layer hierarchy for first few c_layers
-        print("🔍 DEBUG: Inspecting layer hierarchy...")
+        # print("🔍 DEBUG: Inspecting layer hierarchy...")
         for name, module in list(self.model.named_modules())[:20]:  # First 20 modules
             if 'c_layers' in name and name.count('.') <= 2:  # Top-level c_layers
                 print(f"🔍 DEBUG:   {name}: {type(module)}")
@@ -273,7 +303,7 @@ class SequenceLightningModule(pl.LightningModule):
             if any(keyword in module_str for keyword in ['cauchy', 'vandermonde', 'fft', 'ssm', 's4']):
                 kernel_modules_found.append((name, type(module)))
 
-        print(f"🔍 DEBUG: Kernel-related modules found: {len(kernel_modules_found)}")
+        # print(f"🔍 DEBUG: Kernel-related modules found: {len(kernel_modules_found)}")
         for name, module_type in kernel_modules_found[:5]:  # Show first 5
             print(f"🔍 DEBUG:   - {name}: {module_type}")
 
@@ -284,11 +314,11 @@ class SequenceLightningModule(pl.LightningModule):
             if module and any(keyword in module_name.lower() for keyword in ['cauchy', 'vandermonde', 'extensions', 'kernels']):
                 kernel_related_imports.append(module_name)
 
-        print(f"🔍 DEBUG: Kernel-related imports: {len(kernel_related_imports)}")
+        # print(f"🔍 DEBUG: Kernel-related imports: {len(kernel_related_imports)}")
         for imp in kernel_related_imports[:5]:  # Show first 5
             print(f"🔍 DEBUG:   - {imp}")
 
-        print("🔍 DEBUG: Model architecture check complete")
+        # print("🔍 DEBUG: Model architecture check complete")
         print("="*60)
 
         self.task = utils.instantiate(
@@ -303,8 +333,22 @@ class SequenceLightningModule(pl.LightningModule):
             decoder_cfg, model=self.model, dataset=self.dataset
         )
 
+        # Debug: Check if task already has an encoder (stereo case)
+        # print(f"🔍 DEBUG: Task encoder type: {type(self.task.encoder).__name__}")
+        # print(f"🔍 DEBUG: Config encoder type: {type(encoder).__name__}")
+        # print(f"🔍 DEBUG: Encoder config: {encoder_cfg}")
+        
         # Extract the modules so they show up in the top level parameter count
-        self.encoder = U.PassthroughSequential(self.task.encoder, encoder)
+        # Check if this is a stereo case (StereoEncoder) or mono case (IdentityEncoder)
+        if (hasattr(self.task, 'encoder') and self.task.encoder is not None and 
+            hasattr(self.task.encoder, '__class__') and 
+            'StereoEncoder' in self.task.encoder.__class__.__name__):
+            print(f"🔍 DEBUG: ✅ Stereo encoder detected - using task encoder only")
+            self.encoder = self.task.encoder
+        else:
+            print(f"🔍 DEBUG: ❌ Mono case or no task encoder - using config encoder")
+            self.encoder = encoder
+            
         self.decoder = U.PassthroughSequential(decoder, self.task.decoder)
         self.loss = self.task.loss
         self.loss_val = self.task.loss
@@ -414,10 +458,26 @@ class SequenceLightningModule(pl.LightningModule):
             assert len(z) == 1 and isinstance(z[0], dict), "Dataloader must return dictionary of extra arguments"
             z = z[0]
 
+        # print(f"🔍 DEBUG: Before encoder: {x.shape}")
+        # print(f"🔍 DEBUG: Before encoder dtype: {x.dtype}")
+        # print(f"🔍 DEBUG: Before encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
+        
+        # Handle mono data format: squeeze out singleton channel dimension
+        if (hasattr(self.dataset, 'is_stereo') and not self.dataset.is_stereo and 
+            hasattr(self.dataset, 'd_input') and self.dataset.d_input == 1 and 
+            x.dim() == 3 and x.shape[-1] == 1):
+            # print(f"🔍 DEBUG: Mono data detected - squeezing channel dimension from {x.shape} to {x.squeeze(-1).shape}")
+            x = x.squeeze(-1)  # Remove singleton channel dimension: (batch, seq_len, 1) -> (batch, seq_len)
+        
         x, w = self.encoder(x, **z) # w can model-specific constructions such as key_padding_mask for transformers or state for RNNs
+        # print(f"🔍 DEBUG: After encoder: {x.shape}")
+        # print(f"🔍 DEBUG: After encoder dtype: {x.dtype}")
+        # print(f"🔍 DEBUG: After encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
         x, state = self.model(x, **w, state=self._state)
+        # print(f"🔍 DEBUG: After model: {x.shape}")
         self._state = state
         x, w = self.decoder(x, state=state, **z)
+        # print(f"🔍 DEBUG: After decoder: {x.shape}")
         return x, y, w
 
     def step(self, x_t):
@@ -434,7 +494,12 @@ class SequenceLightningModule(pl.LightningModule):
 
         self._process_state(batch, batch_idx, train=(prefix == "train"))
 
+        # print(f"🔍 DEBUG: Original batch target shape: {batch[1].shape}")
         x, y, w = self.forward(batch)
+        
+        # print(f"🔍 DEBUG: Model output shape: {x.shape}")
+        # print(f"🔍 DEBUG: Target shape: {y.shape}")
+        # print(f"🔍 DEBUG: Target dtype: {y.dtype}")
 
         # Loss
         if prefix == 'train':

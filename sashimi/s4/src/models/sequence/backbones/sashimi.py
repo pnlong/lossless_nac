@@ -38,6 +38,7 @@ class Sashimi(SequenceModule):
         transposed=True,
         interp=0,
         act_pool=None,
+        d_input=None,              # New: actual input dimension (for stereo support)
         output_head='categorical',  # New: output head type
         n_mixtures=10,             # New: number of mixture components for DML
         bits=None,                 # New: number of bits for quantization (determines n_classes)
@@ -46,6 +47,9 @@ class Sashimi(SequenceModule):
 
         self.d_model = d_model
         H = d_model
+        # d_input is the raw input dimension, but after embedding it becomes d_model * channels
+        # For pooling layers, we need the dimension after embedding
+        self.d_input = d_input if d_input is not None else d_model
 
         self.interp = interp
         self.transposed = transposed
@@ -90,29 +94,32 @@ class Sashimi(SequenceModule):
 
         # Down blocks
         d_layers = []
+        current_dim = self.d_model  # Start with model dimension (after embedding)
         for p in pool:
             # Add sequence downsampling and feature expanding
-            d_layers.append(DownPool(H, H*expand, stride=p, transposed=self.transposed, activation=act_pool))
-            H *= expand
+            d_layers.append(DownPool(current_dim, current_dim*expand, stride=p, transposed=self.transposed, activation=act_pool))
+            current_dim *= expand
         self.d_layers = nn.ModuleList(d_layers)
 
         # Center block
+        # Use current_dim (after pooling) instead of H (original d_model) for center block
+        center_dim = current_dim  # This is the dimension after all pooling layers
         c_layers = [ ]
         for i in range(n_layers):
-            c_layers.append(_residual(H, i+1, center_layer_cfg))
-            if ff > 0: c_layers.append(_residual(H, i+1, ff_cfg))
+            c_layers.append(_residual(center_dim, i+1, center_layer_cfg))
+            if ff > 0: c_layers.append(_residual(center_dim, i+1, ff_cfg))
         self.c_layers = nn.ModuleList(c_layers)
 
         # Up blocks
         u_layers = []
         for p in pool[::-1]:
             block = []
-            H //= expand
-            block.append(UpPool(H*expand, H, stride=p, transposed=self.transposed, activation=act_pool))
+            current_dim //= expand  # Match the downsampling dimension progression
+            block.append(UpPool(current_dim*expand, current_dim, stride=p, transposed=self.transposed, activation=act_pool))
 
             for i in range(n_layers):
-                block.append(_residual(H, i+1, layer_cfg))
-                if ff > 0: block.append(_residual(H, i+1, ff_cfg))
+                block.append(_residual(current_dim, i+1, layer_cfg))
+                if ff > 0: block.append(_residual(current_dim, i+1, ff_cfg))
 
             u_layers.append(nn.ModuleList(block))
 
@@ -158,7 +165,7 @@ class Sashimi(SequenceModule):
 
     def forward(self, x, state=None, **kwargs):
         """
-        input: (batch, length, d_input)
+        input: (batch, length, d_model) - d_model may be scaled for multi-channel inputs
         output: (batch, length, d_output)
         """
         if self.interp > 0:
@@ -185,17 +192,28 @@ class Sashimi(SequenceModule):
 
         if self.transposed: x = x.transpose(1, 2)
 
+        # print(f"🔍 DEBUG: SaShiMi forward - input shape: {x.shape}")
+        # print(f"🔍 DEBUG: SaShiMi forward - d_input: {self.d_input}, d_model: {self.d_model}")
+        # print(f"🔍 DEBUG: SaShiMi forward - number of down layers: {len(self.d_layers)}")
+
         # Down blocks
         outputs = []
         outputs.append(x)
-        for layer in self.d_layers:
+        for i, layer in enumerate(self.d_layers):
+            # print(f"🔍 DEBUG: SaShiMi forward - before layer {i}: {x.shape}")
+            # print(f"🔍 DEBUG: SaShiMi forward - layer {i} type: {type(layer).__name__}")
             x, _ = layer(x)
+            # print(f"🔍 DEBUG: SaShiMi forward - after layer {i}: {x.shape}")
             outputs.append(x)
 
         # Center block
-        for layer in self.c_layers:
+        # print(f"🔍 DEBUG: SaShiMi forward - before center block: {x.shape}")
+        for i, layer in enumerate(self.c_layers):
+            # print(f"🔍 DEBUG: SaShiMi forward - before center layer {i}: {x.shape}")
             x, _ = layer(x)
+            # print(f"🔍 DEBUG: SaShiMi forward - after center layer {i}: {x.shape}")
         x = x + outputs.pop() # add a skip connection to the last output of the down block
+        # print(f"🔍 DEBUG: SaShiMi forward - after center block: {x.shape}")
 
         for block in self.u_layers:
             for layer in block:
@@ -215,7 +233,9 @@ class Sashimi(SequenceModule):
             x = y
 
         # Apply output head
+        # print(f"🔍 DEBUG: SaShiMi before output head: {x.shape}")
         x = self.output_head(x)
+        # print(f"🔍 DEBUG: SaShiMi after output head: {x.shape}")
         return x, None
 
     def default_state(self, *args, **kwargs):
