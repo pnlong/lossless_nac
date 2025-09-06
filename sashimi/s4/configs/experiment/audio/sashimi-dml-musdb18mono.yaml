@@ -39,8 +39,6 @@ loader:
 
 trainer:
   max_epochs: 1000
-  limit_train_batches: 2000  # Fallback if chunking disabled
-  limit_val_batches: 200     # Fallback if chunking disabled
 
 optimizer:
   lr: 0.004
