@@ -1,7 +1,7 @@
 _name_: qautoaudio
 path: musdb18mono
 bits: 16
-sample_len: 12288 # 131072
+sample_len: 8192 # 131072
 train_percentage: 0.88
 quantization: linear
 drop_last: true
