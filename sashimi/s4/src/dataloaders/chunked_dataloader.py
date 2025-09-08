@@ -51,12 +51,16 @@ class ChunkedDataLoader(torch.utils.data.DataLoader):
             # Store parameters for later use
             self.dataloader_kwargs = dataloader_kwargs
 
-            # Initialize parent with original kwargs
-            super().__init__(dataset, batch_size=batch_size, sampler=None, **dataloader_kwargs)
+            # Filter out sampler from kwargs to avoid conflicts
+            filtered_kwargs = {k: v for k, v in dataloader_kwargs.items() if k != 'sampler'}
+
+            # Initialize parent with filtered kwargs
+            super().__init__(dataset, batch_size=batch_size, sampler=None, **filtered_kwargs)
 
         else:
-            # Standard DataLoader mode - use parent constructor normally
-            super().__init__(dataset, batch_size=batch_size, **dataloader_kwargs)
+            # Standard DataLoader mode - filter out sampler to avoid conflicts
+            filtered_kwargs = {k: v for k, v in dataloader_kwargs.items() if k != 'sampler'}
+            super().__init__(dataset, batch_size=batch_size, **filtered_kwargs)
 
     def _calculate_total_chunks(self):
         """Calculate how many chunks needed to cover entire dataset."""
@@ -84,10 +88,10 @@ class ChunkedDataLoader(torch.utils.data.DataLoader):
 
         self._chunk_sampler.set_chunk(self._current_chunk)
 
-        # Remove shuffle from kwargs since we're using a sampler
+        # Remove conflicting parameters from kwargs since we're using a sampler
         # (sampler and shuffle are mutually exclusive in PyTorch DataLoader)
         chunked_kwargs = self.dataloader_kwargs.copy()
-        conflicting_params = ['shuffle', 'shuffle_fn', 'generator']
+        conflicting_params = ['shuffle', 'shuffle_fn', 'generator', 'sampler']
         for param in conflicting_params:
             chunked_kwargs.pop(param, None)
 

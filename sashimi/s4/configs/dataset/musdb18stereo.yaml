@@ -8,4 +8,5 @@ drop_last: true
 context_len: null
 pad_len: null
 is_stereo: true
-__l_max: ${.sample_len}
+interleaving_strategy: temporal  # Options: temporal, blocking
+__l_max: ${eval:${.sample_len} * 2}  # Automatically double the sample_len for stereo

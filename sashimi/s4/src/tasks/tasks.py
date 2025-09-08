@@ -74,7 +74,7 @@ class BaseTask:
         
         # print(f"🔍 DEBUG: BaseTask setup_stereo_embedding about to be called")
         # Add stereo embedding support for audio datasets
-        self._setup_stereo_embedding()
+        # Removed _setup_stereo_embedding() - let LMTask handle embedding for both mono and stereo
         # print(f"🔍 DEBUG: BaseTask setup_stereo_embedding completed")
         
         self.torchmetric_names = to_list(torchmetrics)
@@ -120,114 +120,6 @@ class BaseTask:
             else:
                 self.loss_val = U.discard_kwargs(self.loss_val)
 
-    def _setup_stereo_embedding(self):
-        """Setup stereo embedding for audio datasets if explicitly enabled."""
-        # print(f"🔍 DEBUG: _setup_stereo_embedding called")
-        # print(f"🔍 DEBUG: Dataset attributes check:")
-        # print(f"🔍 DEBUG:   - hasattr(dataset, 'd_input'): {hasattr(self.dataset, 'd_input')}")
-        # print(f"🔍 DEBUG:   - hasattr(dataset, 'n_tokens'): {hasattr(self.dataset, 'n_tokens')}")
-        # print(f"🔍 DEBUG:   - hasattr(model, 'd_model'): {hasattr(self.model, 'd_model')}")
-        # print(f"🔍 DEBUG:   - hasattr(dataset, 'is_stereo'): {hasattr(self.dataset, 'is_stereo')}")
-        
-        # if hasattr(self.dataset, 'd_input'):
-        #     print(f"🔍 DEBUG:   - dataset.d_input: {self.dataset.d_input}")
-        # if hasattr(self.dataset, 'is_stereo'):
-        #     print(f"🔍 DEBUG:   - dataset.is_stereo: {self.dataset.is_stereo}")
-        # if hasattr(self.model, 'd_model'):
-        #     print(f"🔍 DEBUG:   - model.d_model: {self.model.d_model}")
-            
-        # Only activate stereo embedding if explicitly enabled via is_stereo flag
-        if (hasattr(self.dataset, 'd_input') and 
-            hasattr(self.dataset, 'n_tokens') and 
-            hasattr(self.model, 'd_model') and
-            hasattr(self.dataset, 'is_stereo') and
-            self.dataset.is_stereo and
-            self.dataset.d_input > 1):  # Stereo case with explicit flag
-            
-            # print(f"🔍 DEBUG: ✅ Stereo embedding conditions met - setting up stereo encoder")
-            
-            # Import required modules
-            import torch
-            import torch.nn as nn
-            import math
-            
-            n_tokens = self.dataset.n_tokens
-            d_model = self.model.d_model
-            d_input = self.dataset.d_input
-            
-            # print(f"🔍 DEBUG: Stereo embedding parameters:")
-            # print(f"🔍 DEBUG:   - n_tokens: {n_tokens}")
-            # print(f"🔍 DEBUG:   - d_model: {d_model}")
-            # print(f"🔍 DEBUG:   - d_input: {d_input}")
-            # print(f"🔍 DEBUG:   - Expected output dimension: {d_model * d_input}")
-            
-            # For stereo, we'll interleave the channels and let the config encoder handle embedding
-            
-            # Create a stereo encoder that includes embedding layer
-            class StereoEncoder(nn.Module):
-                def __init__(self, n_tokens, d_model):
-                    super().__init__()
-                    # print(f"🔍 DEBUG: StereoEncoder.__init__ called with n_tokens={n_tokens}, d_model={d_model}")
-                    # Create embedding layer to convert integer indices to dense features
-                    self.embedding = nn.Embedding(n_tokens, d_model)
-                    nn.init.normal_(self.embedding.weight, mean=0, std=d_model**-.5)
-                    # print(f"🔍 DEBUG: StereoEncoder embedding layer created with shape ({n_tokens}, {d_model})")
-                
-                def forward(self, x, **kwargs):
-                    # print(f"🔍 DEBUG: StereoEncoder.forward called with input shape: {x.shape}")
-                    # x shape: (batch, length, channels)
-                    batch_size, seq_len, channels = x.shape
-                    # print(f"🔍 DEBUG: StereoEncoder input breakdown: batch={batch_size}, seq_len={seq_len}, channels={channels}")
-                    
-                    # Interleave the channels to create a single sequence
-                    # This creates the proper sequence length for the model
-                    interleaved = x.view(batch_size, -1)  # (batch, length * channels)
-                    # print(f"🔍 DEBUG: StereoEncoder interleaved shape: {interleaved.shape}, dtype: {interleaved.dtype}")
-                    
-                    # Convert to long tensor for embedding layer (embedding expects integer indices)
-                    interleaved_long = interleaved.long()
-                    # print(f"🔍 DEBUG: StereoEncoder converted to long: {interleaved_long.shape}, dtype: {interleaved_long.dtype}")
-                    
-                    # Convert integer indices to dense embeddings
-                    embedded = self.embedding(interleaved_long)  # (batch, length * channels, d_model)
-                    # print(f"🔍 DEBUG: StereoEncoder embedded shape: {embedded.shape}, dtype: {embedded.dtype}")
-                    
-                    # Don't reshape - keep the interleaved sequence structure
-                    # Output: (batch, length * channels, d_model)
-                    # This maintains the interleaved stereo information in the sequence dimension
-                    result = embedded  # Keep as (batch, length * channels, d_model)
-                    # print(f"🔍 DEBUG: StereoEncoder final output shape: {result.shape}, dtype: {result.dtype}")
-                    # print(f"🔍 DEBUG: StereoEncoder output: (batch={batch_size}, interleaved_length={seq_len * channels}, features={d_model})")
-                    # print(f"🔍 DEBUG: StereoEncoder kwargs: {kwargs}")
-                    
-                    return result, kwargs
-            
-            self.encoder = StereoEncoder(n_tokens, d_model)
-            
-            # print(f"🔊 Stereo embedding setup: {d_input} channels → {d_model} features")
-        else:
-            # print(f"🔍 DEBUG: ❌ Stereo embedding conditions NOT met - using identity encoder")
-            # For backwards compatibility, create a simple identity encoder when stereo is disabled
-            # This ensures the encoder combination logic in train.py works correctly
-            # if hasattr(self.dataset, 'd_input') and self.dataset.d_input > 1:
-            #     print(f"🔇 Multi-channel dataset detected (d_input={self.dataset.d_input}) but stereo embedding disabled (is_stereo=False)")
-            #     print(f"🔇 Using identity encoder for backwards compatibility")
-            # else:
-            #     print(f"🔇 Mono dataset detected (d_input={getattr(self.dataset, 'd_input', 1)}) - using identity encoder")
-            
-            # Create identity encoder for backwards compatibility
-            import torch.nn as nn
-            class IdentityEncoder(nn.Module):
-                def __init__(self):
-                    super().__init__()
-                    # print(f"🔍 DEBUG: IdentityEncoder.__init__ called")
-                
-                def forward(self, x, **kwargs):
-                    # print(f"🔍 DEBUG: IdentityEncoder.forward called with input shape: {x.shape}")
-                    # print(f"🔍 DEBUG: IdentityEncoder kwargs: {kwargs}")
-                    return x, kwargs
-            
-            self.encoder = IdentityEncoder()
 
     def _init_torchmetrics(self, prefix):
         """Instantiate torchmetrics."""
@@ -338,19 +230,34 @@ class LMTask(BaseTask):
             scale = None
             # print(f"🔍 DEBUG:   - scale factor: None")
 
+        # Pass stereo information to the model so it knows how to handle output reshaping
+        if hasattr(self.dataset, 'is_stereo') and self.dataset.is_stereo:
+            # Set stereo flag on the model for output handling
+            if hasattr(self.model, 'is_stereo'):
+                self.model.is_stereo = True
+            if hasattr(self.model, 'interleaving_strategy'):
+                self.model.interleaving_strategy = getattr(self.dataset, 'interleaving_strategy', 'temporal')
+            print(f"🔍 DEBUG: Model configured for stereo processing with strategy: {getattr(self.dataset, 'interleaving_strategy', 'temporal')}")
+
         # Check if stereo encoder was already set up by BaseTask
+        print(f"🔍 DEBUG: LMTask - hasattr(self, 'encoder'): {hasattr(self, 'encoder')}")
+        if hasattr(self, 'encoder'):
+            print(f"🔍 DEBUG: LMTask - self.encoder is not None: {self.encoder is not None}")
+            if self.encoder is not None:
+                print(f"🔍 DEBUG: LMTask - existing encoder type: {type(self.encoder).__name__}")
+        
         if hasattr(self, 'encoder') and self.encoder is not None:
-            # print(f"🔍 DEBUG: ✅ Encoder already set up by BaseTask (stereo case) - using existing encoder")
-            # print(f"🔍 DEBUG: Existing encoder type: {type(self.encoder).__name__}")
+            print(f"🔍 DEBUG: ✅ Encoder already set up by BaseTask (stereo case) - using existing encoder")
+            print(f"🔍 DEBUG: Existing encoder type: {type(self.encoder).__name__}")
             # Don't overwrite the existing encoder - just add scaling if needed
             if rescale:
-                # print(f"🔍 DEBUG: Adding scaling to existing encoder")
+                print(f"🔍 DEBUG: Adding scaling to existing encoder")
                 # Wrap existing encoder with scaling
                 self.encoder = U.PassthroughSequential(
                     self.encoder,
                     scale,
                 )
-            # print(f"🔍 DEBUG: Final encoder components: {[type(comp).__name__ for comp in self.encoder]}")
+            print(f"🔍 DEBUG: Final encoder components: {[type(comp).__name__ for comp in self.encoder]}")
         else:
             # print(f"🔍 DEBUG: ❌ No existing encoder - creating new encoder (mono case)")
             # Handle multi-channel inputs (stereo) - this should not happen if stereo is enabled
@@ -398,17 +305,14 @@ class LMTask(BaseTask):
                 # print(f"🔍 DEBUG: MultiChannelEmbedding created successfully")
                 # Note: d_model adjustment is handled in train.py via embedded_d_input calculation
             else:
-                # print(f"🔍 DEBUG: ❌ Mono case - creating single embedding")
-                # Mono case: single embedding
-                embedding = nn.Embedding(n_tokens, d_model)
-                nn.init.normal_(embedding.weight, mean=0, std=d_model**-.5)
-                # print(f"🔍 DEBUG: Single embedding created with shape ({n_tokens}, {d_model})")
+                # Mono case: use registry-based embedding with squeeze
+                from src.tasks.encoders import registry
+                embedding = registry["embedding"](n_tokens, d_model)
 
             encoder = U.PassthroughSequential(
                 embedding,
                 scale,
             )
-            # print(f"🔍 DEBUG: Encoder created with components: {[type(comp).__name__ for comp in encoder]}")
             self.encoder = encoder
 
         # For stereo, d_output might be per-channel, so adjust decoder accordingly

@@ -36,6 +36,26 @@ class Encoder(nn.Module):
         return x, {}
 
 
+class EmbeddingWithSqueeze(Encoder):
+    """Embedding encoder that handles dimension mismatch for stereo data.
+    
+    This encoder wraps nn.Embedding and handles the case where input has shape
+    (batch, seq_len, 1) but nn.Embedding expects (batch, seq_len).
+    """
+    
+    def __init__(self, n_tokens, d_model):
+        super().__init__()
+        self.embedding = nn.Embedding(n_tokens, d_model)
+        nn.init.normal_(self.embedding.weight, mean=0, std=d_model**-.5)
+    
+    def forward(self, x):
+        if x.dim() == 3 and x.shape[-1] == 1:
+            x = x.squeeze(-1)
+        
+        embedded_x = self.embedding(x)
+        return embedded_x, {}
+
+
 
 # Adapted from https://github.com/pytorch/examples/blob/master/word_language_model/model.py
 class PositionalEncoder(Encoder):
@@ -414,7 +434,8 @@ class TextConditionalEncoder(Encoder):
 registry = {
     "stop": Encoder,
     "id": nn.Identity,
-    "embedding": nn.Embedding,
+    "embedding": EmbeddingWithSqueeze,  # Use EmbeddingWithSqueeze as default embedding
+    "embedding_squeeze": EmbeddingWithSqueeze,
     "linear": nn.Linear,
     "position": PositionalEncoder,
     "class": ClassEmbedding,
@@ -432,6 +453,7 @@ registry = {
 }
 dataset_attrs = {
     "embedding": ["n_tokens"],
+    "embedding_squeeze": ["n_tokens"],
     "textcond": ["vocab_size"],
     "linear": ["d_input"],  # TODO make this d_data?
     "class": ["n_classes"],
@@ -443,6 +465,7 @@ dataset_attrs = {
 }
 model_attrs = {
     "embedding": ["d_model"],
+    "embedding_squeeze": ["d_model"],
     "textcond": ["d_model"],
     "linear": ["d_model"],
     "position": ["d_model"],

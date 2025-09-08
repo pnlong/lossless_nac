@@ -42,6 +42,9 @@ class Sashimi(SequenceModule):
         output_head='categorical',  # New: output head type
         n_mixtures=10,             # New: number of mixture components for DML
         bits=None,                 # New: number of bits for quantization (determines n_classes)
+        is_stereo=False,           # New: whether processing stereo audio
+        interleaving_strategy='temporal',  # New: interleaving strategy for stereo
+        l_max=None,                # New: maximum sequence length for proper initialization
     ):
         super().__init__()
 
@@ -59,16 +62,27 @@ class Sashimi(SequenceModule):
         self.n_mixtures = n_mixtures
         self.bits = bits if bits is not None else 8  # Default to 8 bits
         self.n_classes = 1 << self.bits  # Calculate n_classes from bits
+        
+        # Stereo configuration
+        self.is_stereo = is_stereo
+        self.interleaving_strategy = interleaving_strategy
+        
+        # Sequence length configuration
+        self.l_max = l_max
 
         # Layer arguments
         layer_cfg = layer.copy()
         layer_cfg['dropout'] = dropout
         layer_cfg['transposed'] = self.transposed
         layer_cfg['initializer'] = initializer
+        if self.l_max is not None:
+            layer_cfg['l_max'] = self.l_max
 
         center_layer_cfg = center_layer if center_layer is not None else layer_cfg.copy()
         center_layer_cfg['dropout'] = dropout
         center_layer_cfg['transposed'] = self.transposed
+        if self.l_max is not None:
+            center_layer_cfg['l_max'] = self.l_max
 
         ff_cfg = {
             '_name_': 'ffn',
@@ -162,6 +176,33 @@ class Sashimi(SequenceModule):
             return 3 * self.n_mixtures
         else:
             raise ValueError(f"Unknown output head type: {self.output_head_type}")
+    
+    def reshape_stereo_output(self, x):
+        """
+        Reshape stereo output from interleaved format back to stereo channels.
+        
+        Args:
+            x: (batch, seq_len*2, d_output) - interleaved stereo output
+            
+        Returns:
+            x: (batch, seq_len, 2, d_output) - reshaped stereo output
+        """
+        if not self.is_stereo:
+            return x
+            
+        batch_size, seq_len_interleaved, d_output = x.shape
+        seq_len = seq_len_interleaved // 2
+        
+        if self.interleaving_strategy == 'temporal':
+            # Temporal interleaving: [L, R, L, R, ...] -> [L, L, L, ...], [R, R, R, ...]
+            x = x.view(batch_size, seq_len, 2, d_output)
+        elif self.interleaving_strategy == 'blocking':
+            # Blocking interleaving: [L, L, L, ..., R, R, R, ...] -> [L, L, L, ...], [R, R, R, ...]
+            x = x.view(batch_size, 2, seq_len, d_output).transpose(1, 2)
+        else:
+            raise ValueError(f"Unknown interleaving strategy: {self.interleaving_strategy}")
+            
+        return x
 
     def forward(self, x, state=None, **kwargs):
         """
@@ -236,6 +277,12 @@ class Sashimi(SequenceModule):
         # print(f"🔍 DEBUG: SaShiMi before output head: {x.shape}")
         x = self.output_head(x)
         # print(f"🔍 DEBUG: SaShiMi after output head: {x.shape}")
+        
+        # Reshape stereo output if needed
+        if self.is_stereo:
+            x = self.reshape_stereo_output(x)
+            # print(f"🔍 DEBUG: SaShiMi after stereo reshaping: {x.shape}")
+        
         return x, None
 
     def default_state(self, *args, **kwargs):

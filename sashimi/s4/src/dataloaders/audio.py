@@ -104,6 +104,7 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
         context_len=None,
         pad_len=None,
         is_stereo=False,
+        interleaving_strategy='temporal',  # New parameter for configurable interleaving
         **kwargs,
     ) -> None:
         super().__init__()
@@ -118,6 +119,7 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
         self.context_len = context_len
         self.pad_len = pad_len
         self.is_stereo = is_stereo
+        self.interleaving_strategy = interleaving_strategy
 
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -162,19 +164,34 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
         # Transpose the signal to get (L, C) where C is channels (1 for mono, 2 for stereo)
         seq = seq.transpose(0, 1)
 
-        # Reshape to (1, L, C) to add batch dimension while preserving channels
+        # NEW: Apply configurable interleaving strategy for stereo
+        if self.is_stereo and seq.shape[1] == 2:
+            if self.interleaving_strategy == 'temporal':
+                # Interleave channels: [L, R, L, R, ...]
+                # Reshape from (L, 2) to (L*2, 1)
+                seq = seq.view(-1, 1)  # (L*2, 1)
+            elif self.interleaving_strategy == 'blocking':
+                # Block channels: [L, L, L, ..., R, R, R, ...]
+                # Concatenate channels: (L, 2) -> (L*2, 1)
+                seq = torch.cat([seq[:, 0], seq[:, 1]], dim=0).unsqueeze(-1)  # (L*2, 1)
+            else:
+                raise ValueError(f"Unknown interleaving strategy: {self.interleaving_strategy}. Supported strategies: temporal, blocking")
+
+        # Reshape to (1, L, 1) for mono or (1, L*2, 1) for stereo
         seq = seq.unsqueeze(0)
 
         # Quantized signal
         qseq = self.quantizer(seq, self.bits)
 
-        # Squeeze back to (L, C) where C is channels (1 for mono, 2 for stereo)
+        # Squeeze back to (L, 1) for mono or (L*2, 1) for stereo
         qseq = qseq.squeeze(0)
 
         # Return the signal
         if self.return_type == 'autoregressive':
             # Autoregressive training
-            # For stereo: x and y have shape (L, C) where C is channels
+            # Shape depends on mono/stereo:
+            # Mono: (L, 1)
+            # Stereo: (L*2, 1) - both temporal and blocking strategies double the length
             y = qseq
             x = torch.roll(qseq, 1, 0) # Roll the signal 1 step
             x[0] = self.zero # Fill the first element with q_0
@@ -316,7 +333,8 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
 
     @property
     def d_input(self):
-        return 2 if getattr(self, 'is_stereo', False) else 1
+        # Always return 1 since stereo is interleaved to single channel at data level
+        return 1
 
     @property
     def d_output(self):
@@ -352,6 +370,7 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
             'output_head': 'categorical',  # New: output head type
             'n_mixtures': 10,              # New: number of mixture components for DML
             'is_stereo': False,            # New: stereo processing flag
+            'interleaving_strategy': 'temporal',  # New: configurable interleaving strategy
         }
 
     def setup(self):
@@ -371,6 +390,7 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
             context_len=self.context_len,
             pad_len=self.pad_len,
             is_stereo=self.is_stereo,
+            interleaving_strategy=self.interleaving_strategy,
         )
 
         self.dataset_val = QuantizedAudioDataset(
@@ -384,6 +404,7 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
             context_len=self.context_len,
             pad_len=self.pad_len,
             is_stereo=self.is_stereo,
+            interleaving_strategy=self.interleaving_strategy,
         )
 
         self.dataset_test = QuantizedAudioDataset(
@@ -397,6 +418,7 @@ class QuantizedAutoregressiveAudio(SequenceDataset):
             context_len=self.context_len,
             pad_len=self.pad_len,
             is_stereo=self.is_stereo,
+            interleaving_strategy=self.interleaving_strategy,
         )
 
         # print(f"Dataset setup complete: train={len(self.dataset_train) if self.dataset_train else 'None'}, val={len(self.dataset_val) if self.dataset_val else 'None'}, test={len(self.dataset_test) if self.dataset_test else 'None'}")

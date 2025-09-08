@@ -184,27 +184,38 @@ class SequenceLightningModule(pl.LightningModule):
         ) + utils.to_list(self.hparams.decoder)
 
         # Instantiate model
-        # Pass bits and d_input parameters from dataset config to model for output head initialization
         model_config = self.hparams.model.copy()
+        
+        # Pass bits parameter from dataset config to model for output head initialization
         if 'bits' not in model_config and hasattr(self.dataset, 'bits'):
             model_config['bits'] = self.dataset.bits
-        # For stereo, the sequence length will be doubled due to interleaving
-        # We need to update l_max to handle the doubled sequence length
-        if hasattr(self.dataset, 'is_stereo') and self.dataset.is_stereo and hasattr(self.dataset, 'd_input') and self.dataset.d_input > 1:
-            raw_d_input = self.dataset.d_input
-            if 'l_max' in model_config and model_config['l_max'] is not None:
-                original_l_max = model_config['l_max']
-                stereo_l_max = original_l_max * raw_d_input
-                # print(f"🔍 DEBUG: Stereo detected - updating l_max from {original_l_max} to {stereo_l_max}")
-                model_config['l_max'] = stereo_l_max
+            
+        # Ensure d_input matches the actual input dimension (always 1 for both mono and stereo)
+        raw_d_input = getattr(self.dataset, 'd_input', 1)
+        model_config['d_input'] = raw_d_input
+        print(f"🔍 DEBUG: Setting d_input to {raw_d_input}")
+        
+        # Pass sequence length and stereo information to model for stereo
+        if hasattr(self.dataset, 'is_stereo') and self.dataset.is_stereo:
+            # For stereo, the model needs to know about the doubled sequence length
+            if '__l_max' in self.hparams.dataset:
+                model_config['l_max'] = self.hparams.dataset['__l_max']
+                print(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for stereo")
+            
+            # Pass stereo configuration to model
+            model_config['is_stereo'] = True
+            model_config['interleaving_strategy'] = getattr(self.dataset, 'interleaving_strategy', 'temporal')
+            print(f"🔍 DEBUG: Setting stereo config: is_stereo=True, strategy={model_config['interleaving_strategy']}")
         else:
-            # For mono, ensure d_input matches the actual input dimension
-            raw_d_input = getattr(self.dataset, 'd_input', 1)
-            model_config['d_input'] = raw_d_input
-            # print(f"🔍 DEBUG: Mono detected - setting d_input to {raw_d_input}")
+            # For mono, also pass l_max if available
+            if '__l_max' in self.hparams.dataset:
+                model_config['l_max'] = self.hparams.dataset['__l_max']
+                print(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for mono")
                 
-        # print("🔍 DEBUG: About to instantiate model...")
-        # print(f"🔍 DEBUG: Model config before instantiation: {model_config}")
+        print(f"🔍 DEBUG: Model config before instantiation: {model_config}")
+        print(f"🔍 DEBUG: Dataset d_input: {getattr(self.dataset, 'd_input', 'Not set')}")
+        print(f"🔍 DEBUG: Dataset is_stereo: {getattr(self.dataset, 'is_stereo', 'Not set')}")
+        print(f"🔍 DEBUG: Dataset interleaving_strategy: {getattr(self.dataset, 'interleaving_strategy', 'Not set')}")
         self.model = utils.instantiate(registry.model, model_config)
         # print("🔍 DEBUG: Model instantiated successfully!")
         # print(f"🔍 DEBUG: Model instantiated with d_model: {self.model.d_model}")
@@ -327,7 +338,7 @@ class SequenceLightningModule(pl.LightningModule):
 
         # Create encoders and decoders
         encoder = encoders.instantiate(
-            encoder_cfg, dataset=self.dataset, model=self.model
+            encoder_cfg, model=self.model, dataset=self.dataset
         )
         decoder = decoders.instantiate(
             decoder_cfg, model=self.model, dataset=self.dataset
@@ -339,14 +350,20 @@ class SequenceLightningModule(pl.LightningModule):
         # print(f"🔍 DEBUG: Encoder config: {encoder_cfg}")
         
         # Extract the modules so they show up in the top level parameter count
-        # Check if this is a stereo case (StereoEncoder) or mono case (IdentityEncoder)
-        if (hasattr(self.task, 'encoder') and self.task.encoder is not None and 
-            hasattr(self.task.encoder, '__class__') and 
-            'StereoEncoder' in self.task.encoder.__class__.__name__):
-            print(f"🔍 DEBUG: ✅ Stereo encoder detected - using task encoder only")
+        # Use task encoder if available, otherwise use config encoder
+        # print(f"🔍 DEBUG: Task type: {type(self.task).__name__}")
+        # print(f"🔍 DEBUG: Task has encoder: {hasattr(self.task, 'encoder')}")
+        # if hasattr(self.task, 'encoder'):
+            # print(f"🔍 DEBUG: Task encoder is not None: {self.task.encoder is not None}")
+            # print(f"🔍 DEBUG: Task encoder type: {type(self.task.encoder).__name__}")
+        
+        # Use task encoder if available, otherwise use config encoder
+        if hasattr(self.task, 'encoder') and self.task.encoder is not None:
+            # print(f"🔍 DEBUG: ✅ Using task encoder (type: {type(self.task.encoder).__name__})")
             self.encoder = self.task.encoder
         else:
-            print(f"🔍 DEBUG: ❌ Mono case or no task encoder - using config encoder")
+            # print(f"🔍 DEBUG: ❌ Task encoder not available, using config encoder")
+            # print(f"🔍 DEBUG: Config encoder type: {type(encoder).__name__}")
             self.encoder = encoder
             
         self.decoder = U.PassthroughSequential(decoder, self.task.decoder)
@@ -462,14 +479,15 @@ class SequenceLightningModule(pl.LightningModule):
         # print(f"🔍 DEBUG: Before encoder dtype: {x.dtype}")
         # print(f"🔍 DEBUG: Before encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
         
-        # Handle mono data format: squeeze out singleton channel dimension
-        if (hasattr(self.dataset, 'is_stereo') and not self.dataset.is_stereo and 
-            hasattr(self.dataset, 'd_input') and self.dataset.d_input == 1 and 
-            x.dim() == 3 and x.shape[-1] == 1):
-            # print(f"🔍 DEBUG: Mono data detected - squeezing channel dimension from {x.shape} to {x.squeeze(-1).shape}")
-            x = x.squeeze(-1)  # Remove singleton channel dimension: (batch, seq_len, 1) -> (batch, seq_len)
+        # No special stereo handling needed - data is already interleaved
+        # x shape: (batch, seq_len, 1) for mono or (batch, seq_len*2, 1) for stereo
+        
+        # print(f"🔍 DEBUG: Forward pass input shape: {x.shape}")
+        # print(f"🔍 DEBUG: Forward pass input dtype: {x.dtype}")
         
         x, w = self.encoder(x, **z) # w can model-specific constructions such as key_padding_mask for transformers or state for RNNs
+        # print(f"🔍 DEBUG: After encoder shape: {x.shape}")
+        # print(f"🔍 DEBUG: After encoder dtype: {x.dtype}")
         # print(f"🔍 DEBUG: After encoder: {x.shape}")
         # print(f"🔍 DEBUG: After encoder dtype: {x.dtype}")
         # print(f"🔍 DEBUG: After encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
