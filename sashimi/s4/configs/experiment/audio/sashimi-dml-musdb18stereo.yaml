@@ -1,0 +1,44 @@
+# @package _global_
+defaults:
+  - /trainer: default
+  - /loader: default
+  - /dataset: musdb18stereo
+  - /task: multiclass_classification
+  - /optimizer: adamw
+  - /scheduler: plateau
+  - /model: sashimi
+
+model:
+  output_head: dml  # 🚀 USING DML (Discretized Mixture of Logistics) MODE
+  n_mixtures: 6
+  n_layers: 8
+  dropout: 0.0
+
+train:
+  monitor: val/loss
+  mode: min
+  train_chunk_size: 2000     # Enable chunked training with 2000 batches per chunk
+  val_chunk_size: 200        # Enable chunked validation with 200 batches per chunk
+
+task:
+  metrics:
+    - bpb
+    - accuracy
+    - accuracy@3
+    - accuracy@5
+    - accuracy@10
+
+encoder: embedding
+
+decoder:
+  _name_: sequence
+  mode: full                 # Preserve full sequence length for stereo
+
+loader:
+  batch_size: 1
+
+trainer:
+  max_epochs: 1000
+
+optimizer:
+  lr: 0.004
