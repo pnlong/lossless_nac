@@ -109,7 +109,7 @@ class DefaultCollateMixin:
             # Get current chunk index from dataset
             if self._current_dataloader_type == 'train':
                 current_chunk = getattr(self, '_current_train_chunk', 0)
-            elif self._current_dataloader_type == 'eval':
+            elif self._current_dataloader_type in ['val', 'test']:
                 current_chunk = getattr(self, '_current_val_chunk', 0)
             else:
                 current_chunk = 0
@@ -149,7 +149,7 @@ class DefaultCollateMixin:
 
         if dataloader_type == 'train':
             return self.use_train_chunking
-        elif dataloader_type == 'eval':
+        elif dataloader_type in ['val', 'test']:
             return self.use_val_chunking
 
         # Fallback to shuffle-based detection (less reliable)
@@ -171,7 +171,7 @@ class DefaultCollateMixin:
 
         if dataloader_type == 'train' and self.use_train_chunking:
             return self.train_chunk_size
-        elif dataloader_type == 'eval' and self.use_val_chunking:
+        elif dataloader_type in ['val', 'test'] and self.use_val_chunking:
             return self.val_chunk_size
 
         # Fallback to shuffle-based detection (less reliable)

@@ -163,18 +163,20 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
     x = targets.float() / (num_classes / 2) - 1
     x = x.unsqueeze(-1)  # Add mixture dimension
 
-    # Clamp log_scales for stability - matches original's tf.maximum(log_scales, -7.)
-    log_scales = torch.clamp(log_scales, min=-7.0)
+    # Clamp log_scales for stability - more conservative than original for better gradients
+    log_scales = torch.clamp(log_scales, min=-5.0, max=5.0)
 
     # Compute inverse scales - equivalent to original's inv_stdv = tf.exp(-log_scales)
     inv_scales = torch.exp(-log_scales)
-
+    
     # Compute bin boundaries - matches original's 1./255. discretization
     # For general bit depth: bin size should be 1.0 / (2^bits - 1)
     bin_size = 1.0 / (num_classes - 1)  # Original uses 1/255 for 8-bit
+    
+    # Use in-place operations where possible to save memory
     x_plus = x + bin_size / 2   # Upper boundary
     x_minus = x - bin_size / 2  # Lower boundary
-
+    
     # Compute centered values for CDF calculations
     centered_x = x - means
 

@@ -634,6 +634,23 @@ class SequenceLightningModule(pl.LightningModule):
         else:
             scalar_loss = loss
 
+        # Add gradient clipping for DML models to improve training stability
+        if hasattr(self.model, 'output_head_type') and self.model.output_head_type == 'dml':
+            # Clip gradients to prevent explosion
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+            
+            # Log gradient norm for monitoring
+            total_norm = 0
+            for p in self.parameters():
+                if p.grad is not None:
+                    param_norm = p.grad.data.norm(2)
+                    total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** (1. / 2)
+            
+            # Log gradient norm
+            self.log("trainer/grad_norm", total_norm, on_step=True, on_epoch=False, 
+                    prog_bar=False, add_dataloader_idx=False, sync_dist=True)
+
         # Log the loss explicitly so it shows up in WandB
         # Note that this currently runs into a bug in the progress bar with ddp (as of 1.4.6)
         # https://github.com/PyTorchLightning/pytorch-lightning/pull/9142

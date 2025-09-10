@@ -40,6 +40,26 @@ class DiscretizedLogisticMixtureHead(nn.Module):
         # Project to 3K outputs for K mixture components
         self.projection = nn.Linear(d_model, 3 * n_mixtures)
         
+        # Better initialization for DML parameters
+        self._init_parameters()
+    
+    def _init_parameters(self):
+        """Initialize DML parameters for better training stability."""
+        with torch.no_grad():
+            # Initialize mixture weights (logit_probs) to be roughly uniform
+            # Small random values to break symmetry
+            self.projection.weight[:self.n_mixtures].normal_(0, 0.1)
+            self.projection.bias[:self.n_mixtures].fill_(0.0)
+            
+            # Initialize means to small values around zero
+            self.projection.weight[self.n_mixtures:2*self.n_mixtures].normal_(0, 0.1)
+            self.projection.bias[self.n_mixtures:2*self.n_mixtures].fill_(0.0)
+            
+            # Initialize log_scales to reasonable values (-1.0 to -0.5)
+            # This gives scales around 0.37 to 0.61, which are good starting points
+            self.projection.weight[2*self.n_mixtures:3*self.n_mixtures].normal_(0, 0.1)
+            self.projection.bias[2*self.n_mixtures:3*self.n_mixtures].uniform_(-1.0, -0.5)
+        
     def forward(self, x):
         """
         Args:
