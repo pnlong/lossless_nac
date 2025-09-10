@@ -134,6 +134,31 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
     means = predictions["means"]               # [..., K]
     log_scales = predictions["log_scales"]     # [..., K]
 
+    # Handle stereo audio: targets and predictions should have matching sequence lengths
+    # For stereo, both are doubled due to interleaving: (batch, seq_len*2) for targets, (batch, seq_len*2, K) for predictions
+    # For mono, both are normal: (batch, seq_len) for targets, (batch, seq_len, K) for predictions
+    
+    # Verify that targets and predictions have compatible shapes
+    if targets.dim() == 2:  # (batch, seq_len) or (batch, seq_len*2) for stereo
+        target_seq_len = targets.shape[1]
+    else:  # (batch, seq_len, 1) or similar
+        target_seq_len = targets.shape[1]
+    
+    # Check if predictions have stereo-reshaped output (4D tensor) or regular output (3D tensor)
+    if logit_probs.dim() == 4:  # Stereo reshaped: (batch, seq_len, 2, K)
+        pred_seq_len = logit_probs.shape[1] * 2  # Double due to stereo channels
+        # Flatten stereo channels back to interleaved format for loss computation
+        logit_probs = logit_probs.view(logit_probs.shape[0], -1, logit_probs.shape[-1])  # (batch, seq_len*2, K)
+        means = means.view(means.shape[0], -1, means.shape[-1])  # (batch, seq_len*2, K)
+        log_scales = log_scales.view(log_scales.shape[0], -1, log_scales.shape[-1])  # (batch, seq_len*2, K)
+    else:  # Regular: (batch, seq_len, K) or (batch, seq_len*2, K)
+        pred_seq_len = logit_probs.shape[1]
+    
+    # Ensure targets and predictions have matching sequence lengths
+    if target_seq_len != pred_seq_len:
+        raise ValueError(f"Target sequence length ({target_seq_len}) doesn't match prediction sequence length ({pred_seq_len}). "
+                         f"This might indicate a stereo/mono mismatch in the model or dataset configuration.")
+
     # Normalize targets from [0, 2^bits-1] to [-1, 1] - equivalent to original's data preprocessing
     x = targets.float() / (num_classes / 2) - 1
     x = x.unsqueeze(-1)  # Add mixture dimension
