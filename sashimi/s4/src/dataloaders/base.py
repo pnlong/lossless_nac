@@ -153,9 +153,9 @@ class DefaultCollateMixin:
             return self.use_val_chunking
 
         # Fallback to shuffle-based detection (less reliable)
-        # Check if this is a training dataloader (has shuffle=True or no shuffle specified)
-        # Training dataloaders typically have shuffle enabled or don't specify it
-        is_training = loader_args.get('shuffle', True)  # Default to True for training
+        # Check if this is a training dataloader (has shuffle=True)
+        # Default to False since validation/test dataloaders typically don't shuffle
+        is_training = loader_args.get('shuffle', False)
 
         # For training, use chunking if train_chunk_size is set
         # For validation/testing, use chunking if val_chunk_size is set
@@ -175,7 +175,8 @@ class DefaultCollateMixin:
             return self.val_chunk_size
 
         # Fallback to shuffle-based detection (less reliable)
-        is_training = loader_args.get('shuffle', True)
+        # Default to False since validation/test dataloaders typically don't shuffle
+        is_training = loader_args.get('shuffle', False)
 
         if is_training and self.use_train_chunking:
             return self.train_chunk_size
