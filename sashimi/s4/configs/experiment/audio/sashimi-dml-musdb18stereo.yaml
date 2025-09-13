@@ -41,4 +41,4 @@ trainer:
   max_epochs: 1000
 
 optimizer:
-  lr: 0.004
+  lr: 0.04

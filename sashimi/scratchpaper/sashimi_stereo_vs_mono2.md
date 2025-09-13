@@ -53,10 +53,22 @@ if self.is_stereo and seq.shape[1] == 2:
         # Interleave channels: [L, R, L, R, ...]
         # Reshape from (L, 2) to (L*2, 1)
         seq = seq.view(-1, 1)  # (L*2, 1)
-    elif self.interleaving_strategy == 'blocking':
-        # Block channels: [L, L, L, ..., R, R, R, ...]
-        # Concatenate channels: (L, 2) -> (L*2, 1)
-        seq = torch.cat([seq[:, 0], seq[:, 1]], dim=0).unsqueeze(-1)  # (L*2, 1)
+    elif self.interleaving_strategy.startswith('blocking'):
+        if self.interleaving_strategy == 'blocking':
+            # Block channels: [L, L, L, ..., R, R, R, ...]
+            # Concatenate channels: (L, 2) -> (L*2, 1)
+            seq = torch.cat([seq[:, 0], seq[:, 1]], dim=0).unsqueeze(-1)  # (L*2, 1)
+        else: # some block size parameter is provided
+            block_size = int(self.interleaving_strategy.split('-')[-1])
+            if block_size <= 0: # Validate block size
+                raise ValueError(f"Block size must be positive, got {block_size}")
+            seq_len = seq.shape[0]
+            block_size = min(block_size, seq_len) # Truncate block size if it's larger than sequence length
+            interleaved_blocks = []
+            for start in range(0, seq_len, block_size):
+                end = min(start + block_size, seq_len)
+                interleaved_blocks.append(seq[start:end].flatten())
+            seq = torch.cat(interleaved_blocks, dim=0).unsqueeze(-1)  # (L*2, 1)
 
 # Add batch dimension: (1, L*2, 1) for stereo
 seq = seq.unsqueeze(0)
@@ -240,13 +252,89 @@ def reshape_stereo_output(self, x):
     if self.interleaving_strategy == 'temporal':
         # Temporal interleaving: [L, R, L, R, ...] -> [L, L, L, ...], [R, R, R, ...]
         x = x.view(batch_size, seq_len, 2, d_output)
-    elif self.interleaving_strategy == 'blocking':
-        # Blocking interleaving: [L, L, L, ..., R, R, R, ...] -> [L, L, L, ...], [R, R, R, ...]
-        x = x.view(batch_size, 2, seq_len, d_output).transpose(1, 2)
+    elif self.interleaving_strategy.startswith('blocking'):
+        if self.interleaving_strategy == 'blocking':
+            # Blocking interleaving: [L, L, L, ..., R, R, R, ...] -> [L, L, L, ...], [R, R, R, ...]
+            return tensor.view(batch_size, 2, seq_len, d_output).transpose(1, 2)
+        else: # some block size parameter is provided
+            block_size = int(self.interleaving_strategy.split('-')[-1])
+            if block_size <= 0: # Validate block size
+                raise ValueError(f"Block size must be positive, got {block_size}")
+            block_size = min(block_size, seq_len) # Truncate block size if it's larger than sequence length                
+            complete_blocks = seq_len // block_size # Calculate actual number of complete blocks and remainder
+            remainder = seq_len % block_size # Calculate actual number of complete blocks and remainder
+            if remainder == 0: # All blocks are complete
+                reshaped_tensor = tensor.view(batch_size, complete_blocks, 2, block_size, d_output)
+                return reshaped_tensor.view(batch_size, -1, 2, d_output)
+            else: # Handle variable block sizes
+                complete_tensor = tensor[:, :complete_blocks * 2 * block_size, :]
+                reshaped_complete = complete_tensor.view(batch_size, complete_blocks, 2, block_size, d_output)
+                reshaped_complete = reshaped_complete.view(batch_size, -1, 2, d_output)
+                if remainder > 0: # Reshape final incomplete block
+                    remainder_tensor = tensor[:, complete_blocks * 2 * block_size:, :]
+                    reshaped_remainder = remainder_tensor.view(batch_size, 2, remainder, d_output).transpose(1, 2)
+                    return torch.cat([reshaped_complete, reshaped_remainder], dim=1)
+                else:
+                    return reshaped_complete
     else:
         raise ValueError(f"Unknown interleaving strategy: {self.interleaving_strategy}")
         
     return x
+```
+
+**Refactored Implementation with Helper Function:**
+```python
+def _deinterleave_stereo_tensor(self, tensor, batch_size, seq_len_interleaved, d_output):
+    """
+    Helper function to deinterleave a stereo tensor based on the interleaving strategy.
+    """
+    seq_len = seq_len_interleaved // 2
+    
+    if self.interleaving_strategy == 'temporal':
+        return tensor.view(batch_size, seq_len, 2, d_output)
+    elif self.interleaving_strategy.startswith('blocking'):
+        if self.interleaving_strategy == 'blocking':
+            return tensor.view(batch_size, 2, seq_len, d_output).transpose(1, 2)
+        else: # variable block size
+            block_size = int(self.interleaving_strategy.split('-')[-1])
+            if block_size <= 0:
+                raise ValueError(f"Block size must be positive, got {block_size}")
+            
+            block_size = min(block_size, seq_len)
+            complete_blocks = seq_len // block_size
+            remainder = seq_len % block_size
+            
+            if remainder == 0:
+                reshaped_tensor = tensor.view(batch_size, complete_blocks, 2, block_size, d_output)
+                return reshaped_tensor.view(batch_size, -1, 2, d_output)
+            else:
+                complete_tensor = tensor[:, :complete_blocks * 2 * block_size, :]
+                reshaped_complete = complete_tensor.view(batch_size, complete_blocks, 2, block_size, d_output)
+                reshaped_complete = reshaped_complete.view(batch_size, -1, 2, d_output)
+                if remainder > 0: # Reshape final incomplete block
+                    remainder_tensor = tensor[:, complete_blocks * 2 * block_size:, :]
+                    reshaped_remainder = remainder_tensor.view(batch_size, 2, remainder, d_output).transpose(1, 2)
+                    return torch.cat([reshaped_complete, reshaped_remainder], dim=1)
+                else:
+                    return reshaped_complete
+    else:
+        raise ValueError(f"Unknown interleaving strategy: {self.interleaving_strategy}")
+
+# Simplified reshape_stereo_output method
+def reshape_stereo_output(self, x):
+    if not self.is_stereo:
+        return x
+        
+    if isinstance(x, dict):
+        reshaped_dict = {}
+        for key, tensor in x.items():
+            batch_size, seq_len_interleaved, d_output = tensor.shape
+            reshaped_tensor = self._deinterleave_stereo_tensor(tensor, batch_size, seq_len_interleaved, d_output)
+            reshaped_dict[key] = reshaped_tensor
+        return reshaped_dict
+    
+    batch_size, seq_len_interleaved, d_output = x.shape
+    return self._deinterleave_stereo_tensor(x, batch_size, seq_len_interleaved, d_output)
 ```
 
 ## 6. Decoder Processing (tasks.py)
@@ -366,16 +454,32 @@ Output: (L*2, 1) -> [L0, R0, L1, R1, L2, R2, ...]
 **Implementation:**
 ```python
 # In AbstractAudioDataset.__getitem__()
-elif self.interleaving_strategy == 'blocking':
-    # Block channels: [L, L, L, ..., R, R, R, ...]
-    # Concatenate channels: (L, 2) -> (L*2, 1)
-    seq = torch.cat([seq[:, 0], seq[:, 1]], dim=0).unsqueeze(-1)  # (L*2, 1)
+elif self.interleaving_strategy.startswith('blocking'):
+    if self.interleaving_strategy == 'blocking':
+        # Block channels: [L, L, L, ..., R, R, R, ...]
+        # Concatenate channels: (L, 2) -> (L*2, 1)
+        seq = torch.cat([seq[:, 0], seq[:, 1]], dim=0).unsqueeze(-1)  # (L*2, 1)
+    else: # some block size parameter is provided
+        block_size = int(self.interleaving_strategy.split('-')[-1])
+        if block_size <= 0: # Validate block size
+            raise ValueError(f"Block size must be positive, got {block_size}")
+        seq_len = seq.shape[0]
+        block_size = min(block_size, seq_len) # Truncate block size if it's larger than sequence length
+        interleaved_blocks = []
+        for start in range(0, seq_len, block_size):
+            end = min(start + block_size, seq_len)
+            interleaved_blocks.append(seq[start:end].flatten())
+        seq = torch.cat(interleaved_blocks, dim=0).unsqueeze(-1)  # (L*2, 1)
 ```
 
 **Data Flow:**
 ```
 Input:  (L, 2) -> [L0, L1, L2, ..., R0, R1, R2, ...]
 Output: (L*2, 1) -> [L0, L1, L2, ..., R0, R1, R2, ...]
+
+For blocking-<size> (e.g., blocking-500):
+Input:  (1028, 2) -> [L0...L1027, R0...R1027]
+Output: (2056, 1) -> [L0...L499, R0...R499, L500...L999, R500...R999, L1000...L1027, R1000...R1027]
 ```
 
 **Characteristics:**

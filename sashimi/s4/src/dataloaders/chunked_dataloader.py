@@ -53,9 +53,28 @@ class ChunkedDataLoader(torch.utils.data.DataLoader):
 
             # Filter out sampler from kwargs to avoid conflicts
             filtered_kwargs = {k: v for k, v in dataloader_kwargs.items() if k != 'sampler'}
+            
+            # Check if drop_last is True and adjust chunk size accordingly
+            drop_last = filtered_kwargs.get('drop_last', True)  # Default to True as per config
+            if drop_last:
+                # When drop_last=True, we need to ensure chunk_size is divisible by batch_size
+                # to get exactly the expected number of batches
+                adjusted_chunk_size = (chunk_size // batch_size) * batch_size
+                if adjusted_chunk_size != chunk_size:
+                    # print(f"🔧 Adjusting chunk size from {chunk_size} to {adjusted_chunk_size} for drop_last=True")
+                    # Update the chunk sampler with adjusted size
+                    self._chunk_sampler = ChunkedSampler(len(dataset), adjusted_chunk_size)
+                    self._chunk_size = adjusted_chunk_size
 
             # Initialize parent with filtered kwargs
             super().__init__(dataset, batch_size=batch_size, sampler=None, **filtered_kwargs)
+            
+            # Store original len method
+            self._original_len = super().__len__
+            
+            # Also try overriding other methods PyTorch Lightning might use
+            self._original_num_workers = getattr(self, 'num_workers', None)
+            self._original_batch_size = getattr(self, 'batch_size', None)
 
         else:
             # Standard DataLoader mode - filter out sampler to avoid conflicts
@@ -66,6 +85,55 @@ class ChunkedDataLoader(torch.utils.data.DataLoader):
         """Calculate how many chunks needed to cover entire dataset."""
         dataset_size = len(self._original_dataset)
         return (dataset_size + self._chunk_size - 1) // self._chunk_size
+
+    def _chunked_len(self):
+        """Calculate the correct number of batches for the current chunk."""
+        if not self.use_chunked:
+            return self._original_len()
+        
+        # Calculate number of batches in current chunk
+        samples_in_chunk = min(self._chunk_size, len(self._original_dataset))
+        batches_in_chunk = (samples_in_chunk + self.batch_size - 1) // self.batch_size
+        
+        # Debug: Print when _chunked_len is called
+        # print(f"🔍 ChunkedDataLoader._chunked_len() called: returning {batches_in_chunk} batches")
+        # print(f"   Current chunk: {getattr(self, '_current_chunk', 'NOT SET')}, samples_in_chunk: {samples_in_chunk}, batch_size: {self.batch_size}")
+        
+        return batches_in_chunk
+    
+    def __len__(self):
+        """Override __len__ to ensure PyTorch Lightning calls our method."""
+        # print(f"🔍 ChunkedDataLoader.__len__() method called directly")
+        if not self.use_chunked:
+            return super().__len__()
+        
+        # Calculate number of batches in current chunk
+        samples_in_chunk = min(self._chunk_size, len(self._original_dataset))
+        
+        # Check if drop_last is True to determine batch calculation
+        drop_last = getattr(self, 'drop_last', True)  # Default to True as per config
+        if drop_last:
+            # When drop_last=True, we get exactly floor(samples_in_chunk / batch_size) batches
+            batches_in_chunk = samples_in_chunk // self.batch_size
+        else:
+            # When drop_last=False, we get ceil(samples_in_chunk / batch_size) batches
+            batches_in_chunk = (samples_in_chunk + self.batch_size - 1) // self.batch_size
+        
+        # print(f"   Returning {batches_in_chunk} batches for chunk with {samples_in_chunk} samples")
+        return batches_in_chunk
+    
+    def __getattr__(self, name):
+        """Override __getattr__ to intercept any attribute access."""
+        if name == '__len__':
+            # print(f"🔍 ChunkedDataLoader.__getattr__('__len__') called")
+            return self.__len__
+        elif name == 'num_batches':
+            # print(f"🔍 ChunkedDataLoader.__getattr__('num_batches') called")
+            return self.__len__()
+        elif name == 'len':
+            # print(f"🔍 ChunkedDataLoader.__getattr__('len') called")
+            return self.__len__
+        return super().__getattr__(name)
 
     def __iter__(self):
         """Return iterator - either chunked or standard."""
@@ -84,7 +152,12 @@ class ChunkedDataLoader(torch.utils.data.DataLoader):
         if partition_name == "eval":
             partition_name = "val"
 
-        print(f"Starting {partition_name} chunk {self._current_chunk} of {self._total_chunks}")
+        # Calculate batches in this chunk for progress bar
+        samples_in_chunk = min(self._chunk_size, len(self._original_dataset))
+        batches_in_chunk = (samples_in_chunk + self.batch_size - 1) // self.batch_size
+        
+        print(f"Starting {partition_name} chunk {self._current_chunk + 1} of {self._total_chunks}")
+        # print(f"  Chunk info: {samples_in_chunk} samples, {batches_in_chunk} batches (batch_size={self.batch_size})")
 
         self._chunk_sampler.set_chunk(self._current_chunk)
 
@@ -102,6 +175,20 @@ class ChunkedDataLoader(torch.utils.data.DataLoader):
             sampler=self._chunk_sampler,
             **chunked_kwargs
         )
+        
+        # Override the internal dataloader's __len__ method to return correct batch count
+        def chunked_len():
+            samples_in_chunk = min(self._chunk_size, len(self._original_dataset))
+            batches_in_chunk = (samples_in_chunk + self.batch_size - 1) // self.batch_size
+            # print(f"🔍 Internal DataLoader.__len__() called: returning {batches_in_chunk} batches")
+            # print(f"   samples_in_chunk: {samples_in_chunk}, batch_size: {self.batch_size}")
+            return batches_in_chunk
+        
+        dataloader.__len__ = chunked_len
+        
+        # Also override num_batches property if it exists (some PyTorch versions use this)
+        if hasattr(dataloader, 'num_batches'):
+            dataloader.num_batches = chunked_len()
 
         return iter(dataloader)
 
@@ -123,8 +210,10 @@ class ChunkedDataLoader(torch.utils.data.DataLoader):
             if self._dataloader_type is not None:
                 if self._dataloader_type == 'train' and hasattr(dataset, '_current_train_chunk'):
                     expected_chunk = dataset._current_train_chunk
-                elif self._dataloader_type == 'eval' and hasattr(dataset, '_current_val_chunk'):
+                elif self._dataloader_type in ['eval', 'val'] and hasattr(dataset, '_current_val_chunk'):
                     expected_chunk = dataset._current_val_chunk
+                elif self._dataloader_type == 'test' and hasattr(dataset, '_current_test_chunk'):
+                    expected_chunk = dataset._current_test_chunk
                 else:
                     return
             else:
@@ -146,13 +235,6 @@ class ChunkedDataLoader(torch.utils.data.DataLoader):
             # If anything goes wrong, just continue with current chunk
             pass
 
-    def __len__(self):
-        """Return the length of the current iteration."""
-        if not self.use_chunked:
-            # Use standard DataLoader length
-            return super().__len__()
-
-        return len(self._chunk_sampler)
 
     def set_chunk(self, chunk_idx):
         """Set the current chunk index."""

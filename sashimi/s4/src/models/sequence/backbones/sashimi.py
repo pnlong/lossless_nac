@@ -177,6 +177,51 @@ class Sashimi(SequenceModule):
         else:
             raise ValueError(f"Unknown output head type: {self.output_head_type}")
     
+    def _deinterleave_stereo_tensor(self, tensor, batch_size, seq_len_interleaved, d_output):
+        """
+        Helper function to deinterleave a stereo tensor based on the interleaving strategy.
+        
+        Args:
+            tensor: (batch_size, seq_len_interleaved, d_output) tensor
+            batch_size: Batch size
+            seq_len_interleaved: Length of interleaved sequence (should be seq_len * 2)
+            d_output: Output dimension
+            
+        Returns:
+            reshaped_tensor: (batch_size, seq_len, 2, d_output) tensor
+        """
+        seq_len = seq_len_interleaved // 2
+        
+        if self.interleaving_strategy == 'temporal':
+            # Temporal interleaving: [L, R, L, R, ...] -> [L, L, L, ...], [R, R, R, ...]
+            return tensor.view(batch_size, seq_len, 2, d_output)
+        elif self.interleaving_strategy.startswith('blocking'):
+            if self.interleaving_strategy == 'blocking':
+                # Blocking interleaving: [L, L, L, ..., R, R, R, ...] -> [L, L, L, ...], [R, R, R, ...]
+                return tensor.view(batch_size, 2, seq_len, d_output).transpose(1, 2)
+            else: # some block size parameter is provided
+                block_size = int(self.interleaving_strategy.split('-')[-1])
+                if block_size <= 0: # Validate block size
+                    raise ValueError(f"Block size must be positive, got {block_size}")
+                block_size = min(block_size, seq_len) # Truncate block size if it's larger than sequence length                
+                complete_blocks = seq_len // block_size # Calculate actual number of complete blocks and remainder
+                remainder = seq_len % block_size # Calculate actual number of complete blocks and remainder
+                if remainder == 0: # All blocks are complete
+                    reshaped_tensor = tensor.view(batch_size, complete_blocks, 2, block_size, d_output)
+                    return reshaped_tensor.view(batch_size, -1, 2, d_output)
+                else: # Handle variable block sizes
+                    complete_tensor = tensor[:, :complete_blocks * 2 * block_size, :]
+                    reshaped_complete = complete_tensor.view(batch_size, complete_blocks, 2, block_size, d_output)
+                    reshaped_complete = reshaped_complete.view(batch_size, -1, 2, d_output)
+                    if remainder > 0: # Reshape final incomplete block
+                        remainder_tensor = tensor[:, complete_blocks * 2 * block_size:, :]
+                        reshaped_remainder = remainder_tensor.view(batch_size, 2, remainder, d_output).transpose(1, 2)
+                        return torch.cat([reshaped_complete, reshaped_remainder], dim=1)
+                    else:
+                        return reshaped_complete
+        else:
+            raise ValueError(f"Unknown interleaving strategy: {self.interleaving_strategy}")
+
     def reshape_stereo_output(self, x):
         """
         Reshape stereo output from interleaved format back to stereo channels.
@@ -199,34 +244,13 @@ class Sashimi(SequenceModule):
             reshaped_dict = {}
             for key, tensor in x.items():
                 batch_size, seq_len_interleaved, d_output = tensor.shape
-                seq_len = seq_len_interleaved // 2
-                
-                if self.interleaving_strategy == 'temporal':
-                    # Temporal interleaving: [L, R, L, R, ...] -> [L, L, L, ...], [R, R, R, ...]
-                    reshaped_tensor = tensor.view(batch_size, seq_len, 2, d_output)
-                elif self.interleaving_strategy == 'blocking':
-                    # Blocking interleaving: [L, L, L, ..., R, R, R, ...] -> [L, L, L, ...], [R, R, R, ...]
-                    reshaped_tensor = tensor.view(batch_size, 2, seq_len, d_output).transpose(1, 2)
-                else:
-                    raise ValueError(f"Unknown interleaving strategy: {self.interleaving_strategy}")
-                
+                reshaped_tensor = self._deinterleave_stereo_tensor(tensor, batch_size, seq_len_interleaved, d_output)
                 reshaped_dict[key] = reshaped_tensor
             return reshaped_dict
         
         # Handle categorical tensor output
         batch_size, seq_len_interleaved, d_output = x.shape
-        seq_len = seq_len_interleaved // 2
-        
-        if self.interleaving_strategy == 'temporal':
-            # Temporal interleaving: [L, R, L, R, ...] -> [L, L, L, ...], [R, R, R, ...]
-            x = x.view(batch_size, seq_len, 2, d_output)
-        elif self.interleaving_strategy == 'blocking':
-            # Blocking interleaving: [L, L, L, ..., R, R, R, ...] -> [L, L, L, ...], [R, R, R, ...]
-            x = x.view(batch_size, 2, seq_len, d_output).transpose(1, 2)
-        else:
-            raise ValueError(f"Unknown interleaving strategy: {self.interleaving_strategy}")
-            
-        return x
+        return self._deinterleave_stereo_tensor(x, batch_size, seq_len_interleaved, d_output)
 
     def forward(self, x, state=None, **kwargs):
         """

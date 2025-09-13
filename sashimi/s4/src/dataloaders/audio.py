@@ -170,10 +170,22 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
                 # Interleave channels: [L, R, L, R, ...]
                 # Reshape from (L, 2) to (L*2, 1)
                 seq = seq.view(-1, 1)  # (L*2, 1)
-            elif self.interleaving_strategy == 'blocking':
-                # Block channels: [L, L, L, ..., R, R, R, ...]
-                # Concatenate channels: (L, 2) -> (L*2, 1)
-                seq = torch.cat([seq[:, 0], seq[:, 1]], dim=0).unsqueeze(-1)  # (L*2, 1)
+            elif self.interleaving_strategy.startswith('blocking'):
+                if self.interleaving_strategy == 'blocking':
+                    # Block channels: [L, L, L, ..., R, R, R, ...]
+                    # Concatenate channels: (L, 2) -> (L*2, 1)
+                    seq = torch.cat([seq[:, 0], seq[:, 1]], dim=0).unsqueeze(-1)  # (L*2, 1)
+                else: # some block size parameter is provided
+                    block_size = int(self.interleaving_strategy.split('-')[-1])
+                    if block_size <= 0: # Validate block size
+                        raise ValueError(f"Block size must be positive, got {block_size}")
+                    seq_len = seq.shape[0]
+                    block_size = min(block_size, seq_len) # Truncate block size if it's larger than sequence length
+                    interleaved_blocks = []
+                    for start in range(0, seq_len, block_size):
+                        end = min(start + block_size, seq_len)
+                        interleaved_blocks.append(seq[start:end].flatten())
+                    seq = torch.cat(interleaved_blocks, dim=0).unsqueeze(-1)  # (L*2, 1)
             else:
                 raise ValueError(f"Unknown interleaving strategy: {self.interleaving_strategy}. Supported strategies: temporal, blocking")
 

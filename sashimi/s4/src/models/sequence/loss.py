@@ -42,7 +42,7 @@ def sample_from_discretized_mix_logistic(predictions, num_classes, temperature=1
     log_scales = predictions["log_scales"]     # [..., K]
 
     # Clamp log_scales for stability (same as in loss function)
-    log_scales = torch.clamp(log_scales, min=-7.0)
+    log_scales = torch.clamp(log_scales, min=-5.0, max=5.0)
 
     batch_shape = logit_probs.shape[:-1]  # Shape without mixture dimension
     nr_mix = logit_probs.shape[-1]        # Number of mixture components
@@ -138,7 +138,7 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
     # For stereo, both are doubled due to interleaving: (batch, seq_len*2) for targets, (batch, seq_len*2, K) for predictions
     # For mono, both are normal: (batch, seq_len) for targets, (batch, seq_len, K) for predictions
     
-    # Verify that targets and predictions have compatible shapes
+    # Get target sequence length
     if targets.dim() == 2:  # (batch, seq_len) or (batch, seq_len*2) for stereo
         target_seq_len = targets.shape[1]
     else:  # (batch, seq_len, 1) or similar
@@ -146,13 +146,15 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
     
     # Check if predictions have stereo-reshaped output (4D tensor) or regular output (3D tensor)
     if logit_probs.dim() == 4:  # Stereo reshaped: (batch, seq_len, 2, K)
-        pred_seq_len = logit_probs.shape[1] * 2  # Double due to stereo channels
         # Flatten stereo channels back to interleaved format for loss computation
         logit_probs = logit_probs.view(logit_probs.shape[0], -1, logit_probs.shape[-1])  # (batch, seq_len*2, K)
         means = means.view(means.shape[0], -1, means.shape[-1])  # (batch, seq_len*2, K)
         log_scales = log_scales.view(log_scales.shape[0], -1, log_scales.shape[-1])  # (batch, seq_len*2, K)
-    else:  # Regular: (batch, seq_len, K) or (batch, seq_len*2, K)
-        pred_seq_len = logit_probs.shape[1]
+    
+    # Ensure all prediction tensors have the same sequence length
+    pred_seq_len = logit_probs.shape[1]
+    assert logit_probs.shape[1] == means.shape[1] == log_scales.shape[1], \
+        f"Mismatch in prediction sequence lengths: logit_probs={logit_probs.shape[1]}, means={means.shape[1]}, log_scales={log_scales.shape[1]}"
     
     # Ensure targets and predictions have matching sequence lengths
     if target_seq_len != pred_seq_len:
@@ -161,9 +163,15 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
 
     # Normalize targets from [0, 2^bits-1] to [-1, 1] - equivalent to original's data preprocessing
     x = targets.float() / (num_classes / 2) - 1
-    x = x.unsqueeze(-1)  # Add mixture dimension
+    # Ensure x has the same number of dimensions as means for proper broadcasting
+    if x.dim() == 3:  # targets was (batch, seq_len, 1)
+        x = x.squeeze(-1)  # Remove the extra dimension to get (batch, seq_len)
+    x = x.unsqueeze(-1)  # Add mixture dimension to get (batch, seq_len, 1)
+    # Expand x to match the number of mixture components
+    x = x.expand_as(means)  # Now x has shape (batch, seq_len, K) to match means
 
-    # Clamp log_scales for stability - more conservative than original for better gradients
+    # Clamp log_scales for stability - use symmetric clamping to prevent gradient explosion
+    # Original uses tf.maximum(log_scales, -7.) but we need both min and max bounds
     log_scales = torch.clamp(log_scales, min=-5.0, max=5.0)
 
     # Compute inverse scales - equivalent to original's inv_stdv = tf.exp(-log_scales)
@@ -200,42 +208,48 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
     mid_in = inv_scales * centered_x
     log_pdf_mid = mid_in - log_scales - 2. * F.softplus(mid_in)
 
-    # Robust edge case selection - matches original's nested tf.where with fallback
+    # Robust edge case selection - use proper quantization boundaries
     # Original uses: tf.where(x < -0.999, log_cdf_plus, tf.where(x > 0.999, log_one_minus_cdf_min,
     #                tf.where(cdf_delta > 1e-5, tf.log(tf.maximum(cdf_delta, 1e-12)), log_pdf_mid - np.log(127.5))))
 
     # For our discretization, the equivalent of 127.5 is (num_classes-1)/2
     log_normalizer = math.log((num_classes - 1) / 2)
 
-    # Select appropriate log probability based on conditions
-    is_left_edge = (x < -0.999).squeeze(-1).unsqueeze(-1)  # x is [..., 1], need to broadcast
-    is_right_edge = (x > 0.999).squeeze(-1).unsqueeze(-1)
-    is_normal_case = ~is_left_edge & ~is_right_edge
+    # Use proper quantization-aware edge detection instead of arbitrary thresholds
+    # Ensure targets has the right shape for edge detection
+    if targets.dim() == 3:  # targets is (batch, seq_len, 1)
+        targets_for_edge = targets.squeeze(-1)  # (batch, seq_len)
+    else:
+        targets_for_edge = targets  # (batch, seq_len)
+    
+    is_left_edge = (targets_for_edge == 0).unsqueeze(-1)  # [..., 1]
+    is_right_edge = (targets_for_edge == num_classes - 1).unsqueeze(-1)  # [..., 1]
+    
+    # Expand edge detection to match mixture components
+    is_left_edge = is_left_edge.expand_as(log_cdf_plus)  # [..., K]
+    is_right_edge = is_right_edge.expand_as(log_cdf_plus)  # [..., K]
+    
+    # Select appropriate log probability based on quantization boundaries
+    log_probs = torch.where(
+        is_left_edge, 
+        log_cdf_plus,
+        torch.where(
+            is_right_edge,
+            log_one_minus_cdf_min,
+            torch.where(
+                cdf_delta > 1e-5,
+                torch.log(torch.clamp(cdf_delta, min=1e-12)),
+                log_pdf_mid - log_normalizer
+            )
+        )
+    )
 
-    log_probs = torch.zeros_like(log_cdf_plus)
-
-    # Left edge case (x < -0.999)
-    log_probs = torch.where(is_left_edge, log_cdf_plus, log_probs)
-
-    # Right edge case (x > 0.999)
-    log_probs = torch.where(is_right_edge, log_one_minus_cdf_min, log_probs)
-
-    # Normal case with fallback for extreme probabilities
-    normal_mask = is_normal_case
-    # Use log(cdf_delta) for normal cases with sufficient probability mass
-    log_probs = torch.where(normal_mask & (cdf_delta > 1e-5),
-                           torch.log(torch.clamp(cdf_delta, min=1e-12)), log_probs)
-    # Use log_pdf_mid approximation for cases with very small cdf_delta
-    log_probs = torch.where(normal_mask & (cdf_delta <= 1e-5),
-                           log_pdf_mid - log_normalizer, log_probs)
-
-    # Add mixture weights - matches original's approach
-    # The original adds log_prob_from_logits directly to the summed probabilities
-    mixture_log_probs = log_prob_from_logits(logit_probs)  # (..., K)
-    log_probs = log_probs + mixture_log_probs  # Both (..., K)
-
-    # Use log_sum_exp over mixture dimension - matches original's log_sum_exp
-    log_probs = torch.logsumexp(log_probs, dim=-1)  # (...,)
+    # Add mixture weights - use PyTorch's optimized log_softmax for better efficiency and stability
+    # Original uses tf.reduce_sum which is mathematically incorrect
+    # Correct approach: add mixture weights to each component, then use logsumexp
+    mixture_log_probs = F.log_softmax(logit_probs, dim=-1)  # (..., K) - mixture weights using PyTorch's optimized version
+    log_probs = log_probs + mixture_log_probs  # (..., K) - add mixture weights to each component
+    log_probs = torch.logsumexp(log_probs, dim=-1)  # (...,) - proper mixture computation
 
     # Negative log likelihood - matches original's -tf.reduce_sum(log_sum_exp(...))
     # Original has option for sum_all=True/False, we always use mean for consistency

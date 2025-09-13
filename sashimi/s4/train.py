@@ -267,22 +267,22 @@ class SequenceLightningModule(pl.LightningModule):
 
         # print(f"🔍 DEBUG: Total model layers: {total_layers}")
         # print(f"🔍 DEBUG: S4 layers found: {len(s4_layers_found)}")
-        for name, layer_type in s4_layers_found[:5]:  # Show first 5
-            print(f"🔍 DEBUG:   - {name}: {layer_type}")
+        # for name, layer_type in s4_layers_found[:5]:  # Show first 5
+        #     print(f"🔍 DEBUG:   - {name}: {layer_type}")
 
         # print(f"🔍 DEBUG: SSM layers found: {len(ssm_layers_found)}")
-        for name, layer_type in ssm_layers_found[:5]:  # Show first 5
-            print(f"🔍 DEBUG:   - {name}: {layer_type}")
+        # for name, layer_type in ssm_layers_found[:5]:  # Show first 5
+        #     print(f"🔍 DEBUG:   - {name}: {layer_type}")
 
         # Show layer hierarchy for first few c_layers
         # print("🔍 DEBUG: Inspecting layer hierarchy...")
-        for name, module in list(self.model.named_modules())[:20]:  # First 20 modules
-            if 'c_layers' in name and name.count('.') <= 2:  # Top-level c_layers
-                print(f"🔍 DEBUG:   {name}: {type(module)}")
-                # Show children
-                for child_name, child_module in module.named_modules():
-                    if child_name and '.' not in child_name:  # Direct children only
-                        print(f"🔍 DEBUG:     └─ {child_name}: {type(child_module)}")
+        # for name, module in list(self.model.named_modules())[:20]:  # First 20 modules
+        #     if 'c_layers' in name and name.count('.') <= 2:  # Top-level c_layers
+        #         print(f"🔍 DEBUG:   {name}: {type(module)}")
+        #         # Show children
+        #         for child_name, child_module in module.named_modules():
+        #             if child_name and '.' not in child_name:  # Direct children only
+        #                 print(f"🔍 DEBUG:     └─ {child_name}: {type(child_module)}")
 
         # Check model configuration
         if hasattr(self.model, 'output_head_type'):
@@ -295,17 +295,17 @@ class SequenceLightningModule(pl.LightningModule):
             print(f"🔍 DEBUG: Model n_classes: {self.model.n_classes}")
 
         # Check if model has the expected backbone structure
-        if hasattr(self.model, 'backbone') or hasattr(self.model, 'layers'):
-            backbone_attr = 'backbone' if hasattr(self.model, 'backbone') else 'layers'
-            backbone = getattr(self.model, backbone_attr)
-            print(f"🔍 DEBUG: Model {backbone_attr}: {type(backbone)}")
-            if hasattr(backbone, '__len__'):
-                print(f"🔍 DEBUG: Backbone length: {len(backbone)}")
-                for i, layer in enumerate(backbone):
-                    print(f"🔍 DEBUG:   Layer {i}: {type(layer)}")
-                    if i >= 3:  # Only show first few layers
-                        print(f"🔍 DEBUG:   ... and {len(backbone) - i - 1} more layers")
-                        break
+        # if hasattr(self.model, 'backbone') or hasattr(self.model, 'layers'):
+        #     backbone_attr = 'backbone' if hasattr(self.model, 'backbone') else 'layers'
+        #     backbone = getattr(self.model, backbone_attr)
+        #     print(f"🔍 DEBUG: Model {backbone_attr}: {type(backbone)}")
+        #     if hasattr(backbone, '__len__'):
+        #         print(f"🔍 DEBUG: Backbone length: {len(backbone)}")
+        #         for i, layer in enumerate(backbone):
+        #             print(f"🔍 DEBUG:   Layer {i}: {type(layer)}")
+        #             if i >= 3:  # Only show first few layers
+        #                 print(f"🔍 DEBUG:   ... and {len(backbone) - i - 1} more layers")
+        #                 break
 
         # Check for kernel optimization modules
         kernel_modules_found = []
@@ -315,8 +315,8 @@ class SequenceLightningModule(pl.LightningModule):
                 kernel_modules_found.append((name, type(module)))
 
         # print(f"🔍 DEBUG: Kernel-related modules found: {len(kernel_modules_found)}")
-        for name, module_type in kernel_modules_found[:5]:  # Show first 5
-            print(f"🔍 DEBUG:   - {name}: {module_type}")
+        # for name, module_type in kernel_modules_found[:5]:  # Show first 5
+        #     print(f"🔍 DEBUG:   - {name}: {module_type}")
 
         # Check if any modules have been imported that would trigger kernel warnings
         import sys
@@ -326,11 +326,11 @@ class SequenceLightningModule(pl.LightningModule):
                 kernel_related_imports.append(module_name)
 
         # print(f"🔍 DEBUG: Kernel-related imports: {len(kernel_related_imports)}")
-        for imp in kernel_related_imports[:5]:  # Show first 5
-            print(f"🔍 DEBUG:   - {imp}")
+        # for imp in kernel_related_imports[:5]:  # Show first 5
+        #     print(f"🔍 DEBUG:   - {imp}")
 
         # print("🔍 DEBUG: Model architecture check complete")
-        print("="*60)
+        # print("="*60)
 
         self.task = utils.instantiate(
             tasks.registry, task_config, dataset=self.dataset, model=self.model
@@ -375,6 +375,27 @@ class SequenceLightningModule(pl.LightningModule):
 
         # Handle state logic
         self._initialize_state()
+
+        # Debug: Parameter statistics for output head
+        print("🏋️ " + "="*50)
+        print("🏋️ PARAMETER STATISTICS")
+        
+        # Calculate total model parameters (encoder + backbone + decoder)
+        n_params = sum(p.numel() for p in self.parameters())
+        
+        # Calculate output head parameters
+        # The output head is part of the backbone model
+        n_params_output_head = 0
+        if hasattr(self.model, 'output_head') and self.model.output_head is not None:
+            n_params_output_head = sum(p.numel() for p in self.model.output_head.parameters())
+        
+        # Calculate percentage
+        percentage_output_head = (100 * n_params_output_head / n_params) if n_params > 0 else 0
+        
+        print(f"🏋️ Number of Parameters in Output Head: {n_params_output_head:,}")
+        print(f"🏋️ Total Number of Parameters in Model: {n_params:,}")
+        print(f"🏋️ Percentage of Parameters in Output Head: {percentage_output_head:.2f}%")
+        print("🏋️ " + "="*50)
 
     def load_state_dict(self, state_dict, strict=True):
         if self.hparams.train.pretrained_model_state_hook['_name_'] is not None:
@@ -606,6 +627,15 @@ class SequenceLightningModule(pl.LightningModule):
                     (len(self.dataset.dataset_val) + self.dataset.val_chunk_size - 1) // self.dataset.val_chunk_size
                 )
 
+        # Also advance test chunk index if test dataloaders are included in validation
+        # (This happens when test loaders are processed as part of validation phase)
+        if hasattr(self.dataset, 'use_val_chunking') and self.dataset.use_val_chunking:
+            if hasattr(self.dataset, '_current_test_chunk'):
+                old_chunk = self.dataset._current_test_chunk
+                self.dataset._current_test_chunk = (self.dataset._current_test_chunk + 1) % (
+                    (len(self.dataset.dataset_test) + self.dataset.val_chunk_size - 1) // self.dataset.val_chunk_size
+                )
+
     def on_test_epoch_start(self):
         self._on_epoch_start()
         # Reset all test torchmetrics
@@ -624,6 +654,14 @@ class SequenceLightningModule(pl.LightningModule):
                 add_dataloader_idx=False,
                 sync_dist=True,
             )
+
+        # Advance test chunk index in dataset for next epoch (AFTER logging)
+        if hasattr(self.dataset, 'use_val_chunking') and self.dataset.use_val_chunking:
+            if hasattr(self.dataset, '_current_test_chunk'):
+                old_chunk = self.dataset._current_test_chunk
+                self.dataset._current_test_chunk = (self.dataset._current_test_chunk + 1) % (
+                    (len(self.dataset.dataset_test) + self.dataset.val_chunk_size - 1) // self.dataset.val_chunk_size
+                )
 
     def training_step(self, batch, batch_idx):
         loss = self._shared_step(batch, batch_idx, prefix="train")

@@ -109,8 +109,10 @@ class DefaultCollateMixin:
             # Get current chunk index from dataset
             if self._current_dataloader_type == 'train':
                 current_chunk = getattr(self, '_current_train_chunk', 0)
-            elif self._current_dataloader_type in ['val', 'test']:
+            elif self._current_dataloader_type == 'val':
                 current_chunk = getattr(self, '_current_val_chunk', 0)
+            elif self._current_dataloader_type == 'test':
+                current_chunk = getattr(self, '_current_test_chunk', 0)
             else:
                 current_chunk = 0
 
@@ -365,6 +367,7 @@ class SequenceDataset(DefaultCollateMixin):
         if self.use_chunking:
             self._current_train_chunk = 0
             self._current_val_chunk = 0
+            self._current_test_chunk = 0
 
     def init(self):
         """Hook called at end of __init__, override this instead of __init__"""
