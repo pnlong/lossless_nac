@@ -10,15 +10,15 @@ defaults:
 
 model:
   output_head: dml  # 🚀 USING DML (Discretized Mixture of Logistics) MODE
-  n_mixtures: 6
+  n_mixtures: 8
   n_layers: 8
   dropout: 0.0
 
 train:
   monitor: val/loss
   mode: min
-  train_chunk_size: 2000     # Enable chunked training with 2000 batches per chunk
-  val_chunk_size: 200        # Enable chunked validation with 200 batches per chunk
+  train_chunk_size: 4096     # Enable chunked training with 4096 batches per chunk
+  val_chunk_size: 512        # Enable chunked validation with 512 batches per chunk
 
 task:
   metrics:
@@ -41,4 +41,4 @@ trainer:
   max_epochs: 1000
 
 optimizer:
-  lr: 0.04
+  lr: 0.01

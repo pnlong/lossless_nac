@@ -293,6 +293,8 @@ class SequenceLightningModule(pl.LightningModule):
             print(f"🔍 DEBUG: Model bits: {self.model.bits}")
         if hasattr(self.model, 'n_classes'):
             print(f"🔍 DEBUG: Model n_classes: {self.model.n_classes}")
+        if hasattr(self.model, 'd_output'):
+            print(f"🔍 DEBUG: Model d_output: {self.model.d_output}")
 
         # Check if model has the expected backbone structure
         # if hasattr(self.model, 'backbone') or hasattr(self.model, 'layers'):
@@ -377,8 +379,8 @@ class SequenceLightningModule(pl.LightningModule):
         self._initialize_state()
 
         # Debug: Parameter statistics for output head
-        print("🏋️ " + "="*50)
-        print("🏋️ PARAMETER STATISTICS")
+        print("🏋️  " + "="*50)
+        print("🏋️  PARAMETER STATISTICS")
         
         # Calculate total model parameters (encoder + backbone + decoder)
         n_params = sum(p.numel() for p in self.parameters())
@@ -392,10 +394,10 @@ class SequenceLightningModule(pl.LightningModule):
         # Calculate percentage
         percentage_output_head = (100 * n_params_output_head / n_params) if n_params > 0 else 0
         
-        print(f"🏋️ Number of Parameters in Output Head: {n_params_output_head:,}")
-        print(f"🏋️ Total Number of Parameters in Model: {n_params:,}")
-        print(f"🏋️ Percentage of Parameters in Output Head: {percentage_output_head:.2f}%")
-        print("🏋️ " + "="*50)
+        print(f"🏋️  Number of Parameters in Output Head: {n_params_output_head:,}")
+        print(f"🏋️  Total Number of Parameters in Model: {n_params:,}")
+        print(f"🏋️  Percentage of Parameters in Output Head: {percentage_output_head:.2f}%")
+        print("🏋️  " + "="*50)
 
     def load_state_dict(self, state_dict, strict=True):
         if self.hparams.train.pretrained_model_state_hook['_name_'] is not None:

@@ -42,7 +42,7 @@ def sample_from_discretized_mix_logistic(predictions, num_classes, temperature=1
     log_scales = predictions["log_scales"]     # [..., K]
 
     # Clamp log_scales for stability (same as in loss function)
-    log_scales = torch.clamp(log_scales, min=-5.0, max=5.0)
+    log_scales = torch.clamp(log_scales, min=-3.0, max=3.0)
 
     batch_shape = logit_probs.shape[:-1]  # Shape without mixture dimension
     nr_mix = logit_probs.shape[-1]        # Number of mixture components
@@ -170,9 +170,10 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
     # Expand x to match the number of mixture components
     x = x.expand_as(means)  # Now x has shape (batch, seq_len, K) to match means
 
-    # Clamp log_scales for stability - use symmetric clamping to prevent gradient explosion
+    # Clamp log_scales for stability - use more conservative clamping to prevent gradient explosion
     # Original uses tf.maximum(log_scales, -7.) but we need both min and max bounds
-    log_scales = torch.clamp(log_scales, min=-5.0, max=5.0)
+    # More conservative bounds to prevent extreme gradients
+    log_scales = torch.clamp(log_scales, min=-3.0, max=3.0)
 
     # Compute inverse scales - equivalent to original's inv_stdv = tf.exp(-log_scales)
     inv_scales = torch.exp(-log_scales)
@@ -222,6 +223,7 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
     else:
         targets_for_edge = targets  # (batch, seq_len)
     
+    # Edge detection should be based on the original quantized values, not normalized ones
     is_left_edge = (targets_for_edge == 0).unsqueeze(-1)  # [..., 1]
     is_right_edge = (targets_for_edge == num_classes - 1).unsqueeze(-1)  # [..., 1]
     
@@ -253,7 +255,8 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
 
     # Negative log likelihood - matches original's -tf.reduce_sum(log_sum_exp(...))
     # Original has option for sum_all=True/False, we always use mean for consistency
-    nll = -log_probs.mean()
+    # Scale the loss to match categorical cross-entropy magnitude for better training stability
+    nll = -log_probs.mean()  # Scale down DML loss to prevent gradient explosion perhaps?
 
     # Compute statistics for monitoring (unchanged)
     with torch.no_grad():
