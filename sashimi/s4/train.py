@@ -193,14 +193,14 @@ class SequenceLightningModule(pl.LightningModule):
         # Ensure d_input matches the actual input dimension (always 1 for both mono and stereo)
         raw_d_input = getattr(self.dataset, 'd_input', 1)
         model_config['d_input'] = raw_d_input
-        print(f"🔍 DEBUG: Setting d_input to {raw_d_input}")
+        # print(f"🔍 DEBUG: Setting d_input to {raw_d_input}")
         
         # Pass sequence length and stereo information to model for stereo
         if hasattr(self.dataset, 'is_stereo') and self.dataset.is_stereo:
             # For stereo, the model needs to know about the doubled sequence length
             if '__l_max' in self.hparams.dataset:
                 model_config['l_max'] = self.hparams.dataset['__l_max']
-                print(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for stereo")
+                # print(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for stereo")
             
             # Pass stereo configuration to model
             model_config['is_stereo'] = True
@@ -210,9 +210,9 @@ class SequenceLightningModule(pl.LightningModule):
             # For mono, also pass l_max if available
             if '__l_max' in self.hparams.dataset:
                 model_config['l_max'] = self.hparams.dataset['__l_max']
-                print(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for mono")
+                # print(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for mono")
                 
-        print(f"🔍 DEBUG: Model config before instantiation: {model_config}")
+        # print(f"🔍 DEBUG: Model config before instantiation: {model_config}")
         print(f"🔍 DEBUG: Dataset d_input: {getattr(self.dataset, 'd_input', 'Not set')}")
         print(f"🔍 DEBUG: Dataset is_stereo: {getattr(self.dataset, 'is_stereo', 'Not set')}")
         print(f"🔍 DEBUG: Dataset interleaving_strategy: {getattr(self.dataset, 'interleaving_strategy', 'Not set')}")
@@ -551,15 +551,16 @@ class SequenceLightningModule(pl.LightningModule):
         # Metrics
         metrics = self.metrics(x, y, **w)
 
-        # Handle DML loss which returns a dictionary - extract scalar loss for logging
-        if isinstance(loss, dict):
-            metrics["loss"] = loss["loss"]
+        # Handle DML statistics computation for monitoring
+        if hasattr(self.model, 'output_head_type') and self.model.output_head_type == 'dml':
+            from src.models.sequence.loss import compute_dml_statistics
+            stats = compute_dml_statistics(x)
             # Add DML-specific metrics for monitoring
-            metrics["avg_scale"] = loss["avg_scale"]
-            metrics["avg_mean"] = loss["avg_mean"]
-            metrics["mixture_entropy"] = loss["mixture_entropy"]
-        else:
-            metrics["loss"] = loss
+            metrics["avg_scale"] = stats["avg_scale"]
+            metrics["avg_mean"] = stats["avg_mean"]
+            metrics["mixture_entropy"] = stats["mixture_entropy"]
+
+        metrics["loss"] = loss
 
         metrics = {f"{prefix}/{k}": v for k, v in metrics.items()}
 
@@ -668,12 +669,6 @@ class SequenceLightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss = self._shared_step(batch, batch_idx, prefix="train")
 
-        # Extract scalar loss from DML dictionary if needed
-        if isinstance(loss, dict):
-            scalar_loss = loss["loss"]
-        else:
-            scalar_loss = loss
-
         # Add gradient clipping for DML models to improve training stability
         if hasattr(self.model, 'output_head_type') and self.model.output_head_type == 'dml':
             # Clip gradients to prevent explosion
@@ -695,7 +690,7 @@ class SequenceLightningModule(pl.LightningModule):
         # Note that this currently runs into a bug in the progress bar with ddp (as of 1.4.6)
         # https://github.com/PyTorchLightning/pytorch-lightning/pull/9142
         # We additionally log the epochs under 'trainer' to get a consistent prefix with 'global_step'
-        loss_epoch = {"trainer/loss": scalar_loss, "trainer/epoch": self.current_epoch}
+        loss_epoch = {"trainer/loss": loss, "trainer/epoch": self.current_epoch}
         self.log_dict(
             loss_epoch,
             on_step=True,
@@ -958,6 +953,11 @@ def create_trainer(config):
     if config.trainer.accelerator == 'gpu' and config.trainer.devices > 1:
         print("ddp automatically configured, more than 1 gpu used!")
         config.trainer.strategy = "ddp"
+        
+        # Enable find_unused_parameters for DML models to handle potential unused parameters
+        if hasattr(config.model, 'output_head') and config.model.output_head == 'dml':
+            print("DML model detected, enabling find_unused_parameters=True for DDP")
+            config.trainer.strategy = "ddp_find_unused_parameters_true"
 
     # Add ProgressiveResizing callback
     if config.callbacks.get("progressive_resizing", None) is not None:

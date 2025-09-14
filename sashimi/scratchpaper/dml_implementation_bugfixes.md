@@ -33,7 +33,7 @@ log_pdf_mid = mid_in - log_scales - 2. * F.softplus(mid_in)
 - Loss spikes when numerical overflow occurs
 
 **Solution**: 
-- Add more conservative clamping: `log_scales = torch.clamp(log_scales, min=-5.0, max=5.0)`
+- Add more conservative clamping: `log_scales = torch.clamp(log_scales, min=-3.0, max=3.0)`
 - Use numerically stable sigmoid implementation
 - Add gradient clipping in training loop
 
@@ -126,7 +126,7 @@ log_scales = torch.clamp(log_scales, min=-7.0)
 
 **Solution**: Use symmetric clamping:
 ```python
-log_scales = torch.clamp(log_scales, min=-5.0, max=5.0)
+log_scales = torch.clamp(log_scales, min=-3.0, max=3.0)
 ```
 
 ### 6. **Sampling Function Numerical Issues**
@@ -167,7 +167,56 @@ logistic_samples = selected_means + torch.exp(selected_log_scales) * (torch.log(
 - Add learning rate scheduling
 - Implement gradient clipping: `max_norm=1.0`
 
-### 8. **Missing Gradient Monitoring**
+### 9. **DDP Unused Parameters Error**
+**File**: `sashimi/s4/src/models/sequence/loss.py` and `sashimi/s4/train.py`
+**Lines**: 262-274 in loss function, 554-563 in train.py
+
+**Problem**: DDP detects unused parameters because statistics are computed with `torch.no_grad()` inside the loss function, confusing DDP about which parameters are used in backprop:
+```python
+# Inside loss function - uses parameters but detached from gradients
+with torch.no_grad():
+    avg_scale = log_scales.exp().mean().item()      # Uses log_scales parameter
+    avg_mean = means.abs().mean().item()            # Uses means parameter  
+    mixture_entropy = -(F.softmax(logit_probs, -1) * F.log_softmax(logit_probs, -1)).sum(-1).mean().item()
+```
+
+**Impact**:
+- DDP throws "unused parameters" error: "It looks like your LightningModule has parameters that were not used in producing the loss"
+- Training fails in distributed mode
+- Statistics are computed but not used in backprop, confusing DDP
+
+**Solution**: Move statistics computation outside the loss function to avoid DDP confusion:
+```python
+# Loss function now returns only scalar loss
+return nll
+
+# Separate function for statistics computation
+def compute_dml_statistics(predictions):
+    # Statistics computed separately in training step
+    with torch.no_grad():
+        avg_scale = log_scales.exp().mean().item()
+        avg_mean = means.abs().mean().item()
+        mixture_entropy = -(F.softmax(logit_probs, -1) * F.log_softmax(logit_probs, -1)).sum(-1).mean().item()
+    return {"avg_scale": avg_scale, "avg_mean": avg_mean, "mixture_entropy": mixture_entropy}
+
+# Training step computes statistics separately
+if hasattr(self.model, 'output_head_type') and self.model.output_head_type == 'dml':
+    stats = compute_dml_statistics(x)
+    metrics["avg_scale"] = stats["avg_scale"]
+    metrics["avg_mean"] = stats["avg_mean"] 
+    metrics["mixture_entropy"] = stats["mixture_entropy"]
+```
+
+**Additional Fix**: Updated DDP configuration to handle remaining unused parameters:
+```python
+# Enable find_unused_parameters for DML models using string-based configuration
+if hasattr(config.model, 'output_head') and config.model.output_head == 'dml':
+    config.trainer.strategy = "ddp_find_unused_parameters_true"
+```
+
+**Status**: ✅ **FIXED** - Statistics computation moved outside loss function + DDP configuration updated
+
+### 10. **Missing Gradient Monitoring**
 **File**: `sashimi/s4/train.py`
 
 **Problem**: No gradient norm monitoring to detect explosion/vanishing:
@@ -180,10 +229,10 @@ logistic_samples = selected_means + torch.exp(selected_log_scales) * (torch.log(
 ## Priority Fixes
 
 ### High Priority (Fix First)
-1. **Add symmetric log_scales clamping** (Line 167) - Prevents gradient explosion
-2. **Implement proper edge case handling** (Lines 211-223) - Fixes boundary issues
-3. **Add gradient clipping** (Training loop) - Prevents loss spikes
-4. **Fix mixture weight computation** (Lines 225-230) - Improves efficiency and stability
+1. ✅ **Add symmetric log_scales clamping** (Line 176) - Prevents gradient explosion
+2. ✅ **Implement proper edge case handling** (Lines 227-247) - Fixes boundary issues
+3. ✅ **Fix mixture weight computation** (Lines 252-254) - Improves efficiency and stability
+4. ✅ **Move statistics outside loss function** (Lines 262-274) - Fixes DDP unused parameters error
 
 ### Medium Priority
 5. **Lower learning rate** (Config files) - Improves convergence

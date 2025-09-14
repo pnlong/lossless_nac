@@ -183,30 +183,15 @@ def loss(x, y, loss_fn):
     """Metric that just returns the loss function.
 
     This metric may be useful because the training loss may add extra regularization (e.g. weight decay implemented as L2 penalty), while adding this as a metric skips the additional losses """
-    loss_output = loss_fn(x, y)
-    # Handle DML loss which returns a dictionary - extract the 'loss' key
-    if isinstance(loss_output, dict):
-        return loss_output['loss']
-    else:
-        return loss_output
+    return loss_fn(x, y)
 
 def bpb(x, y, loss_fn):
     """Bits per byte (for image density estimation, speech generation, char LM)."""
-    loss_output = loss_fn(x, y)
-    # Handle DML loss which returns a dictionary
-    if isinstance(loss_output, dict):
-        loss_val = loss_output['loss']
-    else:
-        loss_val = loss_output
+    loss_val = loss_fn(x, y)  # Now always returns scalar
     return loss_val / math.log(2)
 
 def ppl(x, y, loss_fn):
-    loss_output = loss_fn(x, y)
-    # Handle DML loss which returns a dictionary
-    if isinstance(loss_output, dict):
-        loss_val = loss_output['loss']
-    else:
-        loss_val = loss_output
+    loss_val = loss_fn(x, y)  # Now always returns scalar
     return torch.exp(loss_val)
 
 

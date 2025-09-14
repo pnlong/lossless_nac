@@ -258,16 +258,31 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
     # Scale the loss to match categorical cross-entropy magnitude for better training stability
     nll = -log_probs.mean()  # Scale down DML loss to prevent gradient explosion perhaps?
 
-    # Compute statistics for monitoring (unchanged)
+    # Return only the loss for backpropagation to avoid DDP unused parameters error
+    return nll
+
+
+def compute_dml_statistics(predictions):
+    """Compute DML statistics for monitoring.
+    
+    Args:
+        predictions: dict with {logit_probs, means, log_scales}
+    
+    Returns:
+        dict containing avg_scale, avg_mean, mixture_entropy
+    """
+    logit_probs = predictions["logit_probs"]
+    means = predictions["means"] 
+    log_scales = predictions["log_scales"]
+    
     with torch.no_grad():
         avg_scale = log_scales.exp().mean().item()
         avg_mean = means.abs().mean().item()
         mixture_entropy = -(
             F.softmax(logit_probs, -1) * F.log_softmax(logit_probs, -1)
         ).sum(-1).mean().item()
-
+    
     return {
-        "loss": nll,
         "avg_scale": avg_scale,
         "avg_mean": avg_mean,
         "mixture_entropy": mixture_entropy,
