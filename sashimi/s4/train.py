@@ -287,7 +287,7 @@ class SequenceLightningModule(pl.LightningModule):
         # Check model configuration
         if hasattr(self.model, 'output_head_type'):
             print(f"🔍 DEBUG: Model output_head_type: {self.model.output_head_type}")
-        if hasattr(self.model, 'n_mixtures'):
+        if hasattr(self.model, 'n_mixtures') and self.model.output_head_type == 'dml':
             print(f"🔍 DEBUG: Model n_mixtures: {self.model.n_mixtures}")
         if hasattr(self.model, 'bits'):
             print(f"🔍 DEBUG: Model bits: {self.model.bits}")
