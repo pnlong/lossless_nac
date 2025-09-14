@@ -112,8 +112,10 @@ class CustomWandbLogger(WandbLogger):
 
                 # define default x-axis
                 if getattr(self._experiment, "define_metric", None):
-                    self._experiment.define_metric("trainer/global_step")
-                    self._experiment.define_metric("*", step_metric="trainer/global_step", step_sync=True)
+                    # self._experiment.define_metric("trainer/global_step")
+                    # self._experiment.define_metric("*", step_metric="trainer/global_step", step_sync=True)
+                    self._experiment.define_metric("trainer/samples_processed")
+                    self._experiment.define_metric("*", step_metric="trainer/samples_processed", step_sync=True)
 
         return self._experiment
 
@@ -155,6 +157,10 @@ class SequenceLightningModule(pl.LightningModule):
 
         # PL has some bugs, so add hooks and make sure they're only called once
         self._has_setup = False
+        
+        # Track samples processed for accurate logging
+        self._samples_processed_total = 0  # Total across all epochs
+        self._samples_processed_epoch = 0  # Current epoch only
 
         self.setup()  ## Added by KS
 
@@ -285,6 +291,7 @@ class SequenceLightningModule(pl.LightningModule):
         #                 print(f"🔍 DEBUG:     └─ {child_name}: {type(child_module)}")
 
         # Check model configuration
+        print("="*60)
         if hasattr(self.model, 'output_head_type'):
             print(f"🔍 DEBUG: Model output_head_type: {self.model.output_head_type}")
         if hasattr(self.model, 'n_mixtures') and self.model.output_head_type == 'dml':
@@ -581,6 +588,8 @@ class SequenceLightningModule(pl.LightningModule):
         self._on_epoch_start()
         # Reset training torchmetrics
         self.task._reset_torchmetrics("train")
+        # Reset epoch samples counter
+        self._samples_processed_epoch = 0
 
 
     def on_train_epoch_end(self):
@@ -666,6 +675,24 @@ class SequenceLightningModule(pl.LightningModule):
                     (len(self.dataset.dataset_test) + self.dataset.val_chunk_size - 1) // self.dataset.val_chunk_size
                 )
 
+    def _get_batch_size(self, batch):
+        """Get batch size from batch, handling different batch formats."""
+        if isinstance(batch, (list, tuple)) and len(batch) > 0:
+            # batch is (x, y, ...) format
+            x = batch[0]
+            if isinstance(x, torch.Tensor):
+                return x.shape[0]
+            elif isinstance(x, (list, tuple)):
+                return len(x)
+        elif isinstance(batch, torch.Tensor):
+            return batch.shape[0]
+        elif isinstance(batch, dict):
+            # Handle dict format - look for common keys
+            for key in ['x', 'input', 'data']:
+                if key in batch and isinstance(batch[key], torch.Tensor):
+                    return batch[key].shape[0]
+        return 1  # Fallback
+
     def training_step(self, batch, batch_idx):
         loss = self._shared_step(batch, batch_idx, prefix="train")
 
@@ -690,7 +717,16 @@ class SequenceLightningModule(pl.LightningModule):
         # Note that this currently runs into a bug in the progress bar with ddp (as of 1.4.6)
         # https://github.com/PyTorchLightning/pytorch-lightning/pull/9142
         # We additionally log the epochs under 'trainer' to get a consistent prefix with 'global_step'
-        loss_epoch = {"trainer/loss": loss, "trainer/epoch": self.current_epoch}
+        # Track samples processed accurately
+        batch_size = self._get_batch_size(batch)
+        self._samples_processed_total += batch_size
+        self._samples_processed_epoch += batch_size
+               
+        loss_epoch = {
+            "trainer/loss": loss, 
+            "trainer/epoch": self.current_epoch,
+            "trainer/samples_processed": self._samples_processed_total
+        }
         self.log_dict(
             loss_epoch,
             on_step=True,

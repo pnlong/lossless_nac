@@ -10,8 +10,8 @@ line="----------------------------------------"
 
 batch_size=8
 sample_len=4096
-cuda_visible_devices="0,1"
-n_devices=2
+cuda_visible_devices="0"
+n_devices=1
 wandb_group="rambutan"
 max_epochs=2000
 
