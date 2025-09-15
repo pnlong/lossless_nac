@@ -105,9 +105,9 @@ class CustomWandbLogger(WandbLogger):
                         self._experiment = wandb.init(**self._wandb_init)
                         break
                     except Exception as e:
-                        print("wandb Exception:\n", e)
+                        log.info("wandb Exception:\n", e)
                         t = random.randint(30, 60)
-                        print(f"Sleeping for {t} seconds")
+                        log.info(f"Sleeping for {t} seconds")
                         time.sleep(t)
 
                 # define default x-axis
@@ -148,9 +148,9 @@ class SequenceLightningModule(pl.LightningModule):
 
         # Setup dataset immediately to avoid timing issues with sanity check
         if not getattr(self.hparams.train, 'disable_dataset', True):
-            # print("Setting up dataset in __init__ for sanity check compatibility...")
+            # log.info("Setting up dataset in __init__ for sanity check compatibility...")
             self.dataset.setup()
-            # print("Dataset setup in __init__ complete")
+            # log.info("Dataset setup in __init__ complete")
 
         # Check hparams
         self._check_config()
@@ -165,12 +165,12 @@ class SequenceLightningModule(pl.LightningModule):
         self.setup()  ## Added by KS
 
     def setup(self, stage=None):
-        # print(f"Model setup called with stage={stage}")
+        # log.info(f"Model setup called with stage={stage}")
         # Setup dataset if not already done (for cases where __init__ didn't run setup)
         if not self.hparams.train.disable_dataset and (not hasattr(self.dataset, 'dataset_train') or self.dataset.dataset_train is None):
-            # print("Setting up dataset in setup method...")
+            # log.info("Setting up dataset in setup method...")
             self.dataset.setup()
-            # print("Dataset setup in setup method complete")
+            # log.info("Dataset setup in setup method complete")
 
         # We need to set up the model in setup() because for some reason when training with DDP, one GPU uses much more memory than the others
         # In order to not overwrite the model multiple times during different stages, we need this hack
@@ -199,33 +199,33 @@ class SequenceLightningModule(pl.LightningModule):
         # Ensure d_input matches the actual input dimension (always 1 for both mono and stereo)
         raw_d_input = getattr(self.dataset, 'd_input', 1)
         model_config['d_input'] = raw_d_input
-        # print(f"🔍 DEBUG: Setting d_input to {raw_d_input}")
+        # log.info(f"🔍 DEBUG: Setting d_input to {raw_d_input}")
         
         # Pass sequence length and stereo information to model for stereo
         if hasattr(self.dataset, 'is_stereo') and self.dataset.is_stereo:
             # For stereo, the model needs to know about the doubled sequence length
             if '__l_max' in self.hparams.dataset:
                 model_config['l_max'] = self.hparams.dataset['__l_max']
-                # print(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for stereo")
+                # log.info(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for stereo")
             
             # Pass stereo configuration to model
             model_config['is_stereo'] = True
             model_config['interleaving_strategy'] = getattr(self.dataset, 'interleaving_strategy', 'temporal')
-            print(f"🔍 DEBUG: Setting stereo config: is_stereo=True, strategy={model_config['interleaving_strategy']}")
+            log.info(f"🔍 DEBUG: Setting stereo config: is_stereo=True, strategy={model_config['interleaving_strategy']}")
         else:
             # For mono, also pass l_max if available
             if '__l_max' in self.hparams.dataset:
                 model_config['l_max'] = self.hparams.dataset['__l_max']
-                # print(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for mono")
+                # log.info(f"🔍 DEBUG: Setting l_max to {model_config['l_max']} for mono")
                 
-        # print(f"🔍 DEBUG: Model config before instantiation: {model_config}")
-        print(f"🔍 DEBUG: Dataset d_input: {getattr(self.dataset, 'd_input', 'Not set')}")
-        print(f"🔍 DEBUG: Dataset is_stereo: {getattr(self.dataset, 'is_stereo', 'Not set')}")
-        print(f"🔍 DEBUG: Dataset interleaving_strategy: {getattr(self.dataset, 'interleaving_strategy', 'Not set')}")
+        # log.info(f"🔍 DEBUG: Model config before instantiation: {model_config}")
+        log.info(f"🔍 DEBUG: Dataset d_input: {getattr(self.dataset, 'd_input', 'Not set')}")
+        log.info(f"🔍 DEBUG: Dataset is_stereo: {getattr(self.dataset, 'is_stereo', 'Not set')}")
+        log.info(f"🔍 DEBUG: Dataset interleaving_strategy: {getattr(self.dataset, 'interleaving_strategy', 'Not set')}")
         self.model = utils.instantiate(registry.model, model_config)
-        # print("🔍 DEBUG: Model instantiated successfully!")
-        # print(f"🔍 DEBUG: Model instantiated with d_model: {self.model.d_model}")
-        # print(f"🔍 DEBUG: Model d_input: {getattr(self.model, 'd_input', 'Not set')}")
+        # log.info("🔍 DEBUG: Model instantiated successfully!")
+        # log.info(f"🔍 DEBUG: Model instantiated with d_model: {self.model.d_model}")
+        # log.info(f"🔍 DEBUG: Model d_input: {getattr(self.model, 'd_input', 'Not set')}")
         if (name := self.hparams.train.post_init_hook['_name_']) is not None:
             kwargs = self.hparams.train.post_init_hook.copy()
             del kwargs['_name_']
@@ -236,17 +236,17 @@ class SequenceLightningModule(pl.LightningModule):
         task_config = self.hparams.task.copy()
         if hasattr(self.hparams.model, 'output_head') and self.hparams.model.output_head == 'dml':
             task_config['loss'] = 'dml'
-            print("🚀 " + "="*50)
-            print("🚀 DML MODE ACTIVATED!")
-            print("🚀 Using Discretized Mixture of Logistics output head")
-            print("🚀 Model will output mixture parameters instead of class logits")
-            print("🚀 Loss function: discretized_mix_logistic_loss")
-            print("🚀 " + "="*50)
+            log.info("🚀 " + "="*50)
+            log.info("🚀 DML MODE ACTIVATED!")
+            log.info("🚀 Using Discretized Mixture of Logistics output head")
+            log.info("🚀 Model will output mixture parameters instead of class logits")
+            log.info("🚀 Loss function: discretized_mix_logistic_loss")
+            log.info("🚀 " + "="*50)
 
         # Debug: Check if S4 layers are properly instantiated
-        # print("🔍 DEBUG: Checking model architecture...")
-        # print(f"🔍 DEBUG: Model type: {type(self.model)}")
-        # print(f"🔍 DEBUG: Model class name: {self.model.__class__.__name__}")
+        # log.info("🔍 DEBUG: Checking model architecture...")
+        # log.info(f"🔍 DEBUG: Model type: {type(self.model)}")
+        # log.info(f"🔍 DEBUG: Model class name: {self.model.__class__.__name__}")
 
         # Check for S4/SSM layers (by both name and type)
         s4_layers_found = []
@@ -271,49 +271,49 @@ class SequenceLightningModule(pl.LightningModule):
                 'SSMKernel' in module_class_name):
                 ssm_layers_found.append((name, type(module)))
 
-        # print(f"🔍 DEBUG: Total model layers: {total_layers}")
-        # print(f"🔍 DEBUG: S4 layers found: {len(s4_layers_found)}")
+        # log.info(f"🔍 DEBUG: Total model layers: {total_layers}")
+        # log.info(f"🔍 DEBUG: S4 layers found: {len(s4_layers_found)}")
         # for name, layer_type in s4_layers_found[:5]:  # Show first 5
-        #     print(f"🔍 DEBUG:   - {name}: {layer_type}")
+        #     log.info(f"🔍 DEBUG:   - {name}: {layer_type}")
 
-        # print(f"🔍 DEBUG: SSM layers found: {len(ssm_layers_found)}")
+        # log.info(f"🔍 DEBUG: SSM layers found: {len(ssm_layers_found)}")
         # for name, layer_type in ssm_layers_found[:5]:  # Show first 5
-        #     print(f"🔍 DEBUG:   - {name}: {layer_type}")
+        #     log.info(f"🔍 DEBUG:   - {name}: {layer_type}")
 
         # Show layer hierarchy for first few c_layers
-        # print("🔍 DEBUG: Inspecting layer hierarchy...")
+        # log.info("🔍 DEBUG: Inspecting layer hierarchy...")
         # for name, module in list(self.model.named_modules())[:20]:  # First 20 modules
         #     if 'c_layers' in name and name.count('.') <= 2:  # Top-level c_layers
-        #         print(f"🔍 DEBUG:   {name}: {type(module)}")
+        #         log.info(f"🔍 DEBUG:   {name}: {type(module)}")
         #         # Show children
         #         for child_name, child_module in module.named_modules():
         #             if child_name and '.' not in child_name:  # Direct children only
-        #                 print(f"🔍 DEBUG:     └─ {child_name}: {type(child_module)}")
+        #                 log.info(f"🔍 DEBUG:     └─ {child_name}: {type(child_module)}")
 
         # Check model configuration
-        print("="*60)
+        log.info("="*60)
         if hasattr(self.model, 'output_head_type'):
-            print(f"🔍 DEBUG: Model output_head_type: {self.model.output_head_type}")
+            log.info(f"🔍 DEBUG: Model output_head_type: {self.model.output_head_type}")
         if hasattr(self.model, 'n_mixtures') and self.model.output_head_type == 'dml':
-            print(f"🔍 DEBUG: Model n_mixtures: {self.model.n_mixtures}")
+            log.info(f"🔍 DEBUG: Model n_mixtures: {self.model.n_mixtures}")
         if hasattr(self.model, 'bits'):
-            print(f"🔍 DEBUG: Model bits: {self.model.bits}")
+            log.info(f"🔍 DEBUG: Model bits: {self.model.bits}")
         if hasattr(self.model, 'n_classes'):
-            print(f"🔍 DEBUG: Model n_classes: {self.model.n_classes}")
+            log.info(f"🔍 DEBUG: Model n_classes: {self.model.n_classes}")
         if hasattr(self.model, 'd_output'):
-            print(f"🔍 DEBUG: Model d_output: {self.model.d_output}")
+            log.info(f"🔍 DEBUG: Model d_output: {self.model.d_output}")
 
         # Check if model has the expected backbone structure
         # if hasattr(self.model, 'backbone') or hasattr(self.model, 'layers'):
         #     backbone_attr = 'backbone' if hasattr(self.model, 'backbone') else 'layers'
         #     backbone = getattr(self.model, backbone_attr)
-        #     print(f"🔍 DEBUG: Model {backbone_attr}: {type(backbone)}")
+        #     log.info(f"🔍 DEBUG: Model {backbone_attr}: {type(backbone)}")
         #     if hasattr(backbone, '__len__'):
-        #         print(f"🔍 DEBUG: Backbone length: {len(backbone)}")
+        #         log.info(f"🔍 DEBUG: Backbone length: {len(backbone)}")
         #         for i, layer in enumerate(backbone):
-        #             print(f"🔍 DEBUG:   Layer {i}: {type(layer)}")
+        #             log.info(f"🔍 DEBUG:   Layer {i}: {type(layer)}")
         #             if i >= 3:  # Only show first few layers
-        #                 print(f"🔍 DEBUG:   ... and {len(backbone) - i - 1} more layers")
+        #                 log.info(f"🔍 DEBUG:   ... and {len(backbone) - i - 1} more layers")
         #                 break
 
         # Check for kernel optimization modules
@@ -323,9 +323,9 @@ class SequenceLightningModule(pl.LightningModule):
             if any(keyword in module_str for keyword in ['cauchy', 'vandermonde', 'fft', 'ssm', 's4']):
                 kernel_modules_found.append((name, type(module)))
 
-        # print(f"🔍 DEBUG: Kernel-related modules found: {len(kernel_modules_found)}")
+        # log.info(f"🔍 DEBUG: Kernel-related modules found: {len(kernel_modules_found)}")
         # for name, module_type in kernel_modules_found[:5]:  # Show first 5
-        #     print(f"🔍 DEBUG:   - {name}: {module_type}")
+        #     log.info(f"🔍 DEBUG:   - {name}: {module_type}")
 
         # Check if any modules have been imported that would trigger kernel warnings
         import sys
@@ -334,12 +334,12 @@ class SequenceLightningModule(pl.LightningModule):
             if module and any(keyword in module_name.lower() for keyword in ['cauchy', 'vandermonde', 'extensions', 'kernels']):
                 kernel_related_imports.append(module_name)
 
-        # print(f"🔍 DEBUG: Kernel-related imports: {len(kernel_related_imports)}")
+        # log.info(f"🔍 DEBUG: Kernel-related imports: {len(kernel_related_imports)}")
         # for imp in kernel_related_imports[:5]:  # Show first 5
-        #     print(f"🔍 DEBUG:   - {imp}")
+        #     log.info(f"🔍 DEBUG:   - {imp}")
 
-        # print("🔍 DEBUG: Model architecture check complete")
-        # print("="*60)
+        # log.info("🔍 DEBUG: Model architecture check complete")
+        # log.info("="*60)
 
         self.task = utils.instantiate(
             tasks.registry, task_config, dataset=self.dataset, model=self.model
@@ -354,25 +354,25 @@ class SequenceLightningModule(pl.LightningModule):
         )
 
         # Debug: Check if task already has an encoder (stereo case)
-        # print(f"🔍 DEBUG: Task encoder type: {type(self.task.encoder).__name__}")
-        # print(f"🔍 DEBUG: Config encoder type: {type(encoder).__name__}")
-        # print(f"🔍 DEBUG: Encoder config: {encoder_cfg}")
+        # log.info(f"🔍 DEBUG: Task encoder type: {type(self.task.encoder).__name__}")
+        # log.info(f"🔍 DEBUG: Config encoder type: {type(encoder).__name__}")
+        # log.info(f"🔍 DEBUG: Encoder config: {encoder_cfg}")
         
         # Extract the modules so they show up in the top level parameter count
         # Use task encoder if available, otherwise use config encoder
-        # print(f"🔍 DEBUG: Task type: {type(self.task).__name__}")
-        # print(f"🔍 DEBUG: Task has encoder: {hasattr(self.task, 'encoder')}")
+        # log.info(f"🔍 DEBUG: Task type: {type(self.task).__name__}")
+        # log.info(f"🔍 DEBUG: Task has encoder: {hasattr(self.task, 'encoder')}")
         # if hasattr(self.task, 'encoder'):
-            # print(f"🔍 DEBUG: Task encoder is not None: {self.task.encoder is not None}")
-            # print(f"🔍 DEBUG: Task encoder type: {type(self.task.encoder).__name__}")
+            # log.info(f"🔍 DEBUG: Task encoder is not None: {self.task.encoder is not None}")
+            # log.info(f"🔍 DEBUG: Task encoder type: {type(self.task.encoder).__name__}")
         
         # Use task encoder if available, otherwise use config encoder
         if hasattr(self.task, 'encoder') and self.task.encoder is not None:
-            # print(f"🔍 DEBUG: ✅ Using task encoder (type: {type(self.task.encoder).__name__})")
+            # log.info(f"🔍 DEBUG: ✅ Using task encoder (type: {type(self.task.encoder).__name__})")
             self.encoder = self.task.encoder
         else:
-            # print(f"🔍 DEBUG: ❌ Task encoder not available, using config encoder")
-            # print(f"🔍 DEBUG: Config encoder type: {type(encoder).__name__}")
+            # log.info(f"🔍 DEBUG: ❌ Task encoder not available, using config encoder")
+            # log.info(f"🔍 DEBUG: Config encoder type: {type(encoder).__name__}")
             self.encoder = encoder
             
         self.decoder = U.PassthroughSequential(decoder, self.task.decoder)
@@ -386,8 +386,8 @@ class SequenceLightningModule(pl.LightningModule):
         self._initialize_state()
 
         # Debug: Parameter statistics for output head
-        print("🏋️  " + "="*50)
-        print("🏋️  PARAMETER STATISTICS")
+        log.info("🏋️  " + "="*50)
+        log.info("🏋️  PARAMETER STATISTICS")
         
         # Calculate total model parameters (encoder + backbone + decoder)
         n_params = sum(p.numel() for p in self.parameters())
@@ -401,10 +401,10 @@ class SequenceLightningModule(pl.LightningModule):
         # Calculate percentage
         percentage_output_head = (100 * n_params_output_head / n_params) if n_params > 0 else 0
         
-        print(f"🏋️  Number of Parameters in Output Head: {n_params_output_head:,}")
-        print(f"🏋️  Total Number of Parameters in Model: {n_params:,}")
-        print(f"🏋️  Percentage of Parameters in Output Head: {percentage_output_head:.2f}%")
-        print("🏋️  " + "="*50)
+        log.info(f"🏋️  Number of Parameters in Output Head: {n_params_output_head:,}")
+        log.info(f"🏋️  Total Number of Parameters in Model: {n_params:,}")
+        log.info(f"🏋️  Percentage of Parameters in Output Head: {percentage_output_head:.2f}%")
+        log.info("🏋️  " + "="*50)
 
     def load_state_dict(self, state_dict, strict=True):
         if self.hparams.train.pretrained_model_state_hook['_name_'] is not None:
@@ -416,7 +416,7 @@ class SequenceLightningModule(pl.LightningModule):
             # Modify the checkpoint['state_dict'] inside model_state_hook e.g. to inflate 2D convs to 3D convs
             state_dict = model_state_hook(self.model, state_dict)
 
-        print("Custom load_state_dict function is running.")
+        log.info("Custom load_state_dict function is running.")
 
         # note, it needs to return something from the normal function we overrided
         return super().load_state_dict(state_dict, strict=strict)
@@ -505,27 +505,27 @@ class SequenceLightningModule(pl.LightningModule):
             assert len(z) == 1 and isinstance(z[0], dict), "Dataloader must return dictionary of extra arguments"
             z = z[0]
 
-        # print(f"🔍 DEBUG: Before encoder: {x.shape}")
-        # print(f"🔍 DEBUG: Before encoder dtype: {x.dtype}")
-        # print(f"🔍 DEBUG: Before encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
+        # log.info(f"🔍 DEBUG: Before encoder: {x.shape}")
+        # log.info(f"🔍 DEBUG: Before encoder dtype: {x.dtype}")
+        # log.info(f"🔍 DEBUG: Before encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
         
         # No special stereo handling needed - data is already interleaved
         # x shape: (batch, seq_len, 1) for mono or (batch, seq_len*2, 1) for stereo
         
-        # print(f"🔍 DEBUG: Forward pass input shape: {x.shape}")
-        # print(f"🔍 DEBUG: Forward pass input dtype: {x.dtype}")
+        # log.info(f"🔍 DEBUG: Forward pass input shape: {x.shape}")
+        # log.info(f"🔍 DEBUG: Forward pass input dtype: {x.dtype}")
         
         x, w = self.encoder(x, **z) # w can model-specific constructions such as key_padding_mask for transformers or state for RNNs
-        # print(f"🔍 DEBUG: After encoder shape: {x.shape}")
-        # print(f"🔍 DEBUG: After encoder dtype: {x.dtype}")
-        # print(f"🔍 DEBUG: After encoder: {x.shape}")
-        # print(f"🔍 DEBUG: After encoder dtype: {x.dtype}")
-        # print(f"🔍 DEBUG: After encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
+        # log.info(f"🔍 DEBUG: After encoder shape: {x.shape}")
+        # log.info(f"🔍 DEBUG: After encoder dtype: {x.dtype}")
+        # log.info(f"🔍 DEBUG: After encoder: {x.shape}")
+        # log.info(f"🔍 DEBUG: After encoder dtype: {x.dtype}")
+        # log.info(f"🔍 DEBUG: After encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
         x, state = self.model(x, **w, state=self._state)
-        # print(f"🔍 DEBUG: After model: {x.shape}")
+        # log.info(f"🔍 DEBUG: After model: {x.shape}")
         self._state = state
         x, w = self.decoder(x, state=state, **z)
-        # print(f"🔍 DEBUG: After decoder: {x.shape}")
+        # log.info(f"🔍 DEBUG: After decoder: {x.shape}")
         return x, y, w
 
     def step(self, x_t):
@@ -542,12 +542,12 @@ class SequenceLightningModule(pl.LightningModule):
 
         self._process_state(batch, batch_idx, train=(prefix == "train"))
 
-        # print(f"🔍 DEBUG: Original batch target shape: {batch[1].shape}")
+        # log.info(f"🔍 DEBUG: Original batch target shape: {batch[1].shape}")
         x, y, w = self.forward(batch)
         
-        # print(f"🔍 DEBUG: Model output shape: {x.shape}")
-        # print(f"🔍 DEBUG: Target shape: {y.shape}")
-        # print(f"🔍 DEBUG: Target dtype: {y.dtype}")
+        # log.info(f"🔍 DEBUG: Model output shape: {x.shape}")
+        # log.info(f"🔍 DEBUG: Target shape: {y.shape}")
+        # log.info(f"🔍 DEBUG: Target dtype: {y.dtype}")
 
         # Loss
         if prefix == 'train':
@@ -816,7 +816,7 @@ class SequenceLightningModule(pl.LightningModule):
             dict(s) for s in sorted(list(dict.fromkeys(frozenset(hp.items()) for hp in hps)))
             # dict(s) for s in dict.fromkeys(frozenset(hp.items()) for hp in hps)
         ]  # Unique dicts
-        print("Hyperparameter groups", hps)
+        log.info("Hyperparameter groups", hps)
         for hp in hps:
             params = [p for p in all_params if getattr(p, "_optim", None) == hp]
             optimizer.add_param_group(
@@ -987,21 +987,21 @@ def create_trainer(config):
 
     # Configure ddp automatically
     if config.trainer.accelerator == 'gpu' and config.trainer.devices > 1:
-        print("ddp automatically configured, more than 1 gpu used!")
+        log.info("ddp automatically configured, more than 1 gpu used!")
         config.trainer.strategy = "ddp"
         
         # Enable find_unused_parameters for DML models to handle potential unused parameters
         if hasattr(config.model, 'output_head') and config.model.output_head == 'dml':
-            print("DML model detected, enabling find_unused_parameters=True for DDP")
+            log.info("DML model detected, enabling find_unused_parameters=True for DDP")
             config.trainer.strategy = "ddp_find_unused_parameters_true"
 
     # Add ProgressiveResizing callback
     if config.callbacks.get("progressive_resizing", None) is not None:
         num_stages = len(config.callbacks.progressive_resizing.stage_params)
-        print(f"Progressive Resizing: {num_stages} stages")
+        log.info(f"Progressive Resizing: {num_stages} stages")
         for i, e in enumerate(config.callbacks.progressive_resizing.stage_params):
             # Stage params are resolution and epochs, pretty print
-            print(f"\tStage {i}: {e['resolution']} @ {e['epochs']} epochs")
+            log.info(f"\tStage {i}: {e['resolution']} @ {e['epochs']} epochs")
 
     # Additional ModelCheckpoint callback for preemption
     if config.tolerance.id is not None:
@@ -1043,7 +1043,7 @@ def train(config):
             config=config,
             strict=config.train.pretrained_model_strict_load,
         )
-        print("Loaded pretrained model from", config.train.pretrained_model_path)
+        log.info("Loaded pretrained model from", config.train.pretrained_model_path)
 
         # Added by KS for pre-training
         # [22-07-21 AG] refactored, untested
@@ -1062,7 +1062,7 @@ def train(config):
 
     # Run initial validation epoch (useful for debugging, finetuning)
     if config.train.validate_at_start:
-        print("Running validation before training")
+        log.info("Running validation before training")
         trainer.validate(model)
 
     if config.train.ckpt is not None:
@@ -1082,7 +1082,7 @@ def preemption_setup(config):
     resume_dir = os.path.join(get_original_cwd(), config.tolerance.logdir, str(config.tolerance.id))
 
     if os.path.exists(resume_dir):
-        print(f"Resuming from {resume_dir}")
+        log.info(f"Resuming from {resume_dir}")
 
         # Load path to the last checkpoint
         with open(os.path.join(resume_dir, "hydra.txt"), "r") as f:
@@ -1100,15 +1100,15 @@ def preemption_setup(config):
 
             # if not last_exists or not last__exists:
             #     # This run doesn't have both checkpoints, so skip it
-            #     print(f"\tSkipping {hydra_path}, not suitable for resuming (last_exists = {last_exists}, last__exists = {last__exists})")
+            #     log.info(f"\tSkipping {hydra_path}, not suitable for resuming (last_exists = {last_exists}, last__exists = {last__exists})")
             #     continue
 
             # # Read timestamp when checkpoints were modified
             # # We want to load the _earlier_ checkpoint, since that is guaranteed to be uncorrupted
             # last_timestamp = os.path.getmtime(last_path)
             # last__timestamp = os.path.getmtime(last__path)
-            # print("\t\tlast_timestamp =", last_timestamp)
-            # print("\t\tlast__timestamp =", last__timestamp)
+            # log.info("\t\tlast_timestamp =", last_timestamp)
+            # log.info("\t\tlast__timestamp =", last__timestamp)
 
             # if last_timestamp < last__timestamp:
             #     checkpoint_path = last_path
@@ -1118,7 +1118,7 @@ def preemption_setup(config):
             # config.train.ckpt = checkpoint_path
 
             if os.path.exists(last_path):
-                print("\tFound checkpoint at", last_path)
+                log.info("\tFound checkpoint at", last_path)
                 config.train.ckpt = last_path
                 # HACK TODO
                 config.train.pretrained_model_path = None
@@ -1128,7 +1128,7 @@ def preemption_setup(config):
 
         # If we didn't find a checkpoint
         if checkpoint_path is None:
-            print("\tNo suitable checkpoint found, starting from scratch")
+            log.info("\tNo suitable checkpoint found, starting from scratch")
 
         # Set wandb run id to resume
         if os.path.exists(os.path.join(hydra_path, 'wandb')):
