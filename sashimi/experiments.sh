@@ -8,9 +8,9 @@ line="----------------------------------------"
 # PARAMETERS
 ##################################################
 
-batch_size_mono=8
-batch_size_stereo=4
-sample_len=16384
+batch_size_mono=16
+batch_size_stereo=8
+sample_len=8192
 cuda_visible_devices="0"
 n_devices=1
 wandb_group="durian"
