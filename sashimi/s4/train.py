@@ -816,7 +816,7 @@ class SequenceLightningModule(pl.LightningModule):
             dict(s) for s in sorted(list(dict.fromkeys(frozenset(hp.items()) for hp in hps)))
             # dict(s) for s in dict.fromkeys(frozenset(hp.items()) for hp in hps)
         ]  # Unique dicts
-        log.info("Hyperparameter groups", hps)
+        log.info(f"Hyperparameter groups: {hps}")
         for hp in hps:
             params = [p for p in all_params if getattr(p, "_optim", None) == hp]
             optimizer.add_param_group(
