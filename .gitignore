@@ -13,3 +13,6 @@ residuals_truncated.bin
 # FLAC repositories
 flac_entropy_coding/
 flac_lossy_estimating/
+
+sashimi/outputs_clarified/
+sashimi/s4/outputs/
