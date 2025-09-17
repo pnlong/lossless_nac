@@ -147,9 +147,10 @@ def discretized_mix_logistic_loss(predictions, targets, dataset=None):
     # Check if predictions have stereo-reshaped output (4D tensor) or regular output (3D tensor)
     if logit_probs.dim() == 4:  # Stereo reshaped: (batch, seq_len, 2, K)
         # Flatten stereo channels back to interleaved format for loss computation
-        logit_probs = logit_probs.view(logit_probs.shape[0], -1, logit_probs.shape[-1])  # (batch, seq_len*2, K)
-        means = means.view(means.shape[0], -1, means.shape[-1])  # (batch, seq_len*2, K)
-        log_scales = log_scales.view(log_scales.shape[0], -1, log_scales.shape[-1])  # (batch, seq_len*2, K)
+        # Use .reshape() instead of .view() to handle non-contiguous tensors from blocking interleaving
+        logit_probs = logit_probs.reshape(logit_probs.shape[0], -1, logit_probs.shape[-1])  # (batch, seq_len*2, K)
+        means = means.reshape(means.shape[0], -1, means.shape[-1])  # (batch, seq_len*2, K)
+        log_scales = log_scales.reshape(log_scales.shape[0], -1, log_scales.shape[-1])  # (batch, seq_len*2, K)
     
     # Ensure all prediction tensors have the same sequence length
     pred_seq_len = logit_probs.shape[1]
