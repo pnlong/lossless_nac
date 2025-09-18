@@ -184,7 +184,8 @@ class AbstractAudioDataset(torch.utils.data.Dataset):
                     interleaved_blocks = []
                     for start in range(0, seq_len, block_size):
                         end = min(start + block_size, seq_len)
-                        interleaved_blocks.append(seq[start:end].flatten())
+                        interleaved_blocks.append(seq[start:end, 0]) # left channel
+                        interleaved_blocks.append(seq[start:end, 1]) # right channel
                     seq = torch.cat(interleaved_blocks, dim=0).unsqueeze(-1)  # (L*2, 1)
             else:
                 raise ValueError(f"Unknown interleaving strategy: {self.interleaving_strategy}. Supported strategies: temporal, blocking")

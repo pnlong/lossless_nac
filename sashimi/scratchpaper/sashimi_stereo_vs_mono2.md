@@ -67,7 +67,8 @@ if self.is_stereo and seq.shape[1] == 2:
             interleaved_blocks = []
             for start in range(0, seq_len, block_size):
                 end = min(start + block_size, seq_len)
-                interleaved_blocks.append(seq[start:end].flatten())
+                interleaved_blocks.append(seq[start:end, 0])
+                interleaved_blocks.append(seq[start:end, 1])
             seq = torch.cat(interleaved_blocks, dim=0).unsqueeze(-1)  # (L*2, 1)
 
 # Add batch dimension: (1, L*2, 1) for stereo
@@ -468,7 +469,8 @@ elif self.interleaving_strategy.startswith('blocking'):
         interleaved_blocks = []
         for start in range(0, seq_len, block_size):
             end = min(start + block_size, seq_len)
-            interleaved_blocks.append(seq[start:end].flatten())
+            interleaved_blocks.append(seq[start:end, 0])
+            interleaved_blocks.append(seq[start:end, 1])
         seq = torch.cat(interleaved_blocks, dim=0).unsqueeze(-1)  # (L*2, 1)
 ```
 
