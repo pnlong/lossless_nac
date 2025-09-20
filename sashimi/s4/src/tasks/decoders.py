@@ -306,7 +306,7 @@ registry = {
 }
 model_attrs = {
     "linear": ["d_output"],
-    "sequence": ["d_output"],
+    "sequence": ["d_model"],  # Fix: SequenceDecoder expects d_model as first parameter
     "nd": ["d_output"],
     "retrieval": ["d_output"],
     "state": ["d_state", "state_to_tensor"],
@@ -315,7 +315,7 @@ model_attrs = {
 
 dataset_attrs = {
     "linear": ["d_output"],
-    "sequence": ["d_output", "l_output"],
+    "sequence": ["d_output"],  # Fix: Only pass d_output from dataset, d_model comes from model
     "nd": ["d_output"],
     "retrieval": ["d_output"],
     # TODO rename d_output to n_classes?
@@ -339,6 +339,7 @@ def _instantiate(decoder, model=None, dataset=None):
         dataset, *dataset_attrs.get(name, [])
     )
     model_args = utils.config.extract_attrs_from_obj(model, *model_attrs.get(name, []))
+    
     # Instantiate decoder
     obj = utils.instantiate(registry, decoder, *model_args, *dataset_args)
     return obj

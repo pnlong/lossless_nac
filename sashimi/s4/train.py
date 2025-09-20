@@ -221,7 +221,8 @@ class SequenceLightningModule(pl.LightningModule):
         # log.info(f"🔍 DEBUG: Model config before instantiation: {model_config}")
         log.info(f"🔍 DEBUG: Dataset d_input: {getattr(self.dataset, 'd_input', 'Not set')}")
         log.info(f"🔍 DEBUG: Dataset is_stereo: {getattr(self.dataset, 'is_stereo', 'Not set')}")
-        log.info(f"🔍 DEBUG: Dataset interleaving_strategy: {getattr(self.dataset, 'interleaving_strategy', 'Not set')}")
+        if getattr(self.dataset, 'is_stereo', False) == True:
+            log.info(f"🔍 DEBUG: Dataset interleaving_strategy: {getattr(self.dataset, 'interleaving_strategy', 'Not set')}")
         self.model = utils.instantiate(registry.model, model_config)
         # log.info("🔍 DEBUG: Model instantiated successfully!")
         # log.info(f"🔍 DEBUG: Model instantiated with d_model: {self.model.d_model}")
@@ -353,26 +354,10 @@ class SequenceLightningModule(pl.LightningModule):
             decoder_cfg, model=self.model, dataset=self.dataset
         )
 
-        # Debug: Check if task already has an encoder (stereo case)
-        # log.info(f"🔍 DEBUG: Task encoder type: {type(self.task.encoder).__name__}")
-        # log.info(f"🔍 DEBUG: Config encoder type: {type(encoder).__name__}")
-        # log.info(f"🔍 DEBUG: Encoder config: {encoder_cfg}")
-        
-        # Extract the modules so they show up in the top level parameter count
-        # Use task encoder if available, otherwise use config encoder
-        # log.info(f"🔍 DEBUG: Task type: {type(self.task).__name__}")
-        # log.info(f"🔍 DEBUG: Task has encoder: {hasattr(self.task, 'encoder')}")
-        # if hasattr(self.task, 'encoder'):
-            # log.info(f"🔍 DEBUG: Task encoder is not None: {self.task.encoder is not None}")
-            # log.info(f"🔍 DEBUG: Task encoder type: {type(self.task.encoder).__name__}")
-        
         # Use task encoder if available, otherwise use config encoder
         if hasattr(self.task, 'encoder') and self.task.encoder is not None:
-            # log.info(f"🔍 DEBUG: ✅ Using task encoder (type: {type(self.task.encoder).__name__})")
             self.encoder = self.task.encoder
         else:
-            # log.info(f"🔍 DEBUG: ❌ Task encoder not available, using config encoder")
-            # log.info(f"🔍 DEBUG: Config encoder type: {type(encoder).__name__}")
             self.encoder = encoder
             
         self.decoder = U.PassthroughSequential(decoder, self.task.decoder)
@@ -497,6 +482,7 @@ class SequenceLightningModule(pl.LightningModule):
 
     def forward(self, batch):
         """Passes a batch through the encoder, backbone, and decoder"""
+        
         # z holds arguments such as sequence length
         x, y, *z = batch # z holds extra dataloader info such as resolution
         if len(z) == 0:
@@ -505,27 +491,11 @@ class SequenceLightningModule(pl.LightningModule):
             assert len(z) == 1 and isinstance(z[0], dict), "Dataloader must return dictionary of extra arguments"
             z = z[0]
 
-        # log.info(f"🔍 DEBUG: Before encoder: {x.shape}")
-        # log.info(f"🔍 DEBUG: Before encoder dtype: {x.dtype}")
-        # log.info(f"🔍 DEBUG: Before encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
-        
-        # No special stereo handling needed - data is already interleaved
-        # x shape: (batch, seq_len, 1) for mono or (batch, seq_len*2, 1) for stereo
-        
-        # log.info(f"🔍 DEBUG: Forward pass input shape: {x.shape}")
-        # log.info(f"🔍 DEBUG: Forward pass input dtype: {x.dtype}")
-        
         x, w = self.encoder(x, **z) # w can model-specific constructions such as key_padding_mask for transformers or state for RNNs
-        # log.info(f"🔍 DEBUG: After encoder shape: {x.shape}")
-        # log.info(f"🔍 DEBUG: After encoder dtype: {x.dtype}")
-        # log.info(f"🔍 DEBUG: After encoder: {x.shape}")
-        # log.info(f"🔍 DEBUG: After encoder dtype: {x.dtype}")
-        # log.info(f"🔍 DEBUG: After encoder sample values: {x[0, :5, :5] if x.dim() == 3 else x[0, :5]}")
-        x, state = self.model(x, **w, state=self._state)
-        # log.info(f"🔍 DEBUG: After model: {x.shape}")
+        
+        x, state = self.model(x, apply_output_head=False, **w, state=self._state)
         self._state = state
         x, w = self.decoder(x, state=state, **z)
-        # log.info(f"🔍 DEBUG: After decoder: {x.shape}")
         return x, y, w
 
     def step(self, x_t):
@@ -539,16 +509,9 @@ class SequenceLightningModule(pl.LightningModule):
         return x_t
 
     def _shared_step(self, batch, batch_idx, prefix="train"):
-
         self._process_state(batch, batch_idx, train=(prefix == "train"))
-
-        # log.info(f"🔍 DEBUG: Original batch target shape: {batch[1].shape}")
         x, y, w = self.forward(batch)
         
-        # log.info(f"🔍 DEBUG: Model output shape: {x.shape}")
-        # log.info(f"🔍 DEBUG: Target shape: {y.shape}")
-        # log.info(f"🔍 DEBUG: Target dtype: {y.dtype}")
-
         # Loss
         if prefix == 'train':
             loss = self.loss(x, y, **w)

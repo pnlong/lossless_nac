@@ -54,7 +54,7 @@ def cross_entropy(logits, y):
     if isinstance(logits, dict):
         return torch.tensor(0.0, device=y.device if hasattr(y, 'device') else None)
 
-    logits = logits.view(-1, logits.shape[-1])
+    logits = logits.reshape(-1, logits.shape[-1])
     y = y.view(-1)
     return F.cross_entropy(logits, y)
 
@@ -64,7 +64,7 @@ def soft_cross_entropy(logits, y, label_smoothing=0.0):
     if isinstance(logits, dict):
         return torch.tensor(0.0, device=y.device if hasattr(y, 'device') else None)
 
-    logits = logits.view(-1, logits.shape[-1])
+    logits = logits.reshape(-1, logits.shape[-1])
     # target is now 2d (no target flattening)
     return F.cross_entropy(logits, y, label_smoothing=label_smoothing)
 
@@ -74,7 +74,7 @@ def accuracy(logits, y):
     if isinstance(logits, dict):
         return torch.tensor(0.0, device=y.device if hasattr(y, 'device') else None)
 
-    logits = logits.view(-1, logits.shape[-1])
+    logits = logits.reshape(-1, logits.shape[-1])
     if y.numel() > logits.shape[0]:
         # Mixup leads to this case: use argmax class
         y = y.argmax(dim=-1)
@@ -87,7 +87,7 @@ def accuracy_at_k(logits, y, k=1):
     if isinstance(logits, dict):
         return torch.tensor(0.0, device=y.device if hasattr(y, 'device') else None)
 
-    logits = logits.view(-1, logits.shape[-1])
+    logits = logits.reshape(-1, logits.shape[-1])
     if y.numel() > logits.shape[0]:
         # Mixup leads to this case: use argmax class
         y = y.argmax(dim=-1)
@@ -100,28 +100,28 @@ def f1_binary(logits, y):
     if isinstance(logits, dict):
         return 0.0
 
-    logits = logits.view(-1, logits.shape[-1])
+    logits = logits.reshape(-1, logits.shape[-1])
     y = y.view(-1)
     y_hat = torch.argmax(logits, dim=-1)
     return f1_score(y.cpu().numpy(), y_hat.cpu().numpy(), average="binary")
 
 
 def f1_macro(logits, y):
-    logits = logits.view(-1, logits.shape[-1])
+    logits = logits.reshape(-1, logits.shape[-1])
     y = y.view(-1)
     y_hat = torch.argmax(logits, dim=-1)
     return f1_score(y.cpu().numpy(), y_hat.cpu().numpy(), average="macro")
 
 
 def f1_micro(logits, y):
-    logits = logits.view(-1, logits.shape[-1])
+    logits = logits.reshape(-1, logits.shape[-1])
     y = y.view(-1)
     y_hat = torch.argmax(logits, dim=-1)
     return f1_score(y.cpu().numpy(), y_hat.cpu().numpy(), average="micro")
 
 
 def roc_auc_macro(logits, y):
-    logits = logits.view(
+    logits = logits.reshape(
         -1, logits.shape[-1]
     ).detach()  # KS: had to add detach to eval while training
     y = y.view(-1)
@@ -131,7 +131,7 @@ def roc_auc_macro(logits, y):
 
 
 def roc_auc_micro(logits, y):
-    logits = logits.view(-1, logits.shape[-1])
+    logits = logits.reshape(-1, logits.shape[-1])
     y = y.view(-1)
     return roc_auc_score(
         y.cpu().numpy(), F.softmax(logits, dim=-1).cpu().numpy()[:, 1], average="micro"

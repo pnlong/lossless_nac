@@ -30,7 +30,7 @@ encoder: embedding
 
 decoder:
   _name_: sequence
-  mode: full                 # Preserve full sequence length for stereo
+  mode: last
 
 loader:
   batch_size: 1

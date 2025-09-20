@@ -328,11 +328,24 @@ class LMTask(BaseTask):
             decoder_input_dim = d_output // d_input if d_output > d_input else d_output
             # print(f"🔍 DEBUG:   - Stereo case: decoder_input_dim = {decoder_input_dim}")
 
-        # print(f"🔍 DEBUG: Creating decoder with input_dim={decoder_input_dim}, output_dim={n_tokens}")
-        decoder = nn.Linear(decoder_input_dim, n_tokens)
+        # Check if backbone already has a categorical output head
+        backbone_has_categorical_output = (
+            hasattr(self.model, 'output_head') and 
+            hasattr(self.model, 'output_head_type') and 
+            self.model.output_head_type == 'categorical'
+        )
+        
+        if backbone_has_categorical_output:
+            # Backbone already handles output projection, use identity decoder
+            # Set flag so backbone outputs d_model features instead of final predictions
+            self.model._apply_output_head_internally = False
+            decoder = nn.Identity()
+        else:
+            # Backbone doesn't handle output, create linear decoder
+            decoder = nn.Linear(decoder_input_dim, n_tokens)
 
-        if tied and d_input == 1:
-            # print(f"🔍 DEBUG: Tied weights enabled for mono case")
+        if tied and d_input == 1 and not backbone_has_categorical_output:
+            # Only apply weight tying if we're using a linear decoder (not identity)
             assert d_model == d_output
             decoder.weight = self.encoder[0].weight
         # else:

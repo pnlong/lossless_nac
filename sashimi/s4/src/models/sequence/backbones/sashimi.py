@@ -170,6 +170,7 @@ class Sashimi(SequenceModule):
     @property
     def d_output(self):
         """Output dimension depends on output head type"""
+        # Always return the final output dimension for decoder usage
         if self.output_head_type == "categorical":
             return self.n_classes
         elif self.output_head_type == "dml":
@@ -252,10 +253,10 @@ class Sashimi(SequenceModule):
         batch_size, seq_len_interleaved, d_output = x.shape
         return self._deinterleave_stereo_tensor(x, batch_size, seq_len_interleaved, d_output)
 
-    def forward(self, x, state=None, **kwargs):
+    def forward(self, x, state=None, apply_output_head=True, **kwargs):
         """
         input: (batch, length, d_model) - d_model may be scaled for multi-channel inputs
-        output: (batch, length, d_output)
+        output: (batch, length, d_output) if apply_output_head=True, else (batch, length, d_model)
         """
         if self.interp > 0:
             # Interpolation will be used to reconstruct "missing" frames
@@ -323,13 +324,16 @@ class Sashimi(SequenceModule):
 
         # Apply output head
         # print(f"🔍 DEBUG: SaShiMi before output head: {x.shape}")
-        x = self.output_head(x)
-        # print(f"🔍 DEBUG: SaShiMi after output head: {x.shape}")
-        
-        # Reshape stereo output if needed
-        if self.is_stereo:
-            x = self.reshape_stereo_output(x)
-            # print(f"🔍 DEBUG: SaShiMi after stereo reshaping: {x.shape}")
+        if apply_output_head:
+            x = self.output_head(x)
+            # print(f"🔍 DEBUG: SaShiMi after output head: {x.shape}")
+            
+            # Reshape stereo output if needed
+            if self.is_stereo:
+                x = self.reshape_stereo_output(x)
+                # print(f"🔍 DEBUG: SaShiMi after stereo reshaping: {x.shape}")
+        # else:
+        #     print(f"🔍 DEBUG: SaShiMi skipping output head, output shape: {x.shape}")
         
         return x, None
 

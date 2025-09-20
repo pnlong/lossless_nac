@@ -9,6 +9,7 @@ import os
 import shutil
 import yaml
 from pathlib import Path
+from os.path import realpath
 from tqdm import tqdm
 
 
@@ -19,7 +20,7 @@ def main():
     args = parser.parse_args()
     
     # Get script directory and validate structure
-    script_dir = Path(__file__).parent.absolute()
+    script_dir = Path(realpath(__file__)).parent.absolute()
     outputs_dir = script_dir / "s4" / "outputs"
     clarified_dir = script_dir / "outputs_clarified"
     
