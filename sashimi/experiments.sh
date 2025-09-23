@@ -8,12 +8,12 @@ line="----------------------------------------"
 # PARAMETERS
 ##################################################
 
-batch_size_mono=16
-batch_size_stereo=8
+batch_size_mono=4
+batch_size_stereo=2
 sample_len=8192
-cuda_visible_devices="0"
-n_devices=1
-wandb_group="durian"
+cuda_visible_devices="0,1"
+n_devices=2
+wandb_group="longan"
 max_epochs=2000
 
 ##################################################

@@ -954,8 +954,8 @@ def create_trainer(config):
         config.trainer.strategy = "ddp"
         
         # Enable find_unused_parameters for DML models to handle potential unused parameters
-        if hasattr(config.model, 'output_head') and config.model.output_head == 'dml':
-            log.info("DML model detected, enabling find_unused_parameters=True for DDP")
+        if hasattr(config.model, 'output_head'):
+            log.info(f"{config.model.output_head} model detected, enabling find_unused_parameters=True for DDP")
             config.trainer.strategy = "ddp_find_unused_parameters_true"
 
     # Add ProgressiveResizing callback
