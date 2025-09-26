@@ -57,7 +57,7 @@ class Sashimi(SequenceModule):
         self.interp = interp
         self.transposed = transposed
 
-        # Output head configuration
+        # Output head configuration (kept for compatibility but not used)
         self.output_head_type = output_head
         self.n_mixtures = n_mixtures
         self.bits = bits if bits is not None else 8  # Default to 8 bits
@@ -156,27 +156,14 @@ class Sashimi(SequenceModule):
 
             self.interp_layers = nn.ModuleList(interp_layers)
             
-        # Initialize output head
-        head_kwargs = {
-            "n_mixtures": self.n_mixtures if output_head == "dml" else None,
-            "n_classes": self.n_classes if output_head == "categorical" else None,
-        }
-        self.output_head = get_output_head(
-            output_head, 
-            d_model, 
-            **{k: v for k, v in head_kwargs.items() if v is not None}
-        )
+        # Note: Output head removed - decoder handles final projection
+        # Keeping output_head as None for compatibility
+        self.output_head = None
 
     @property
     def d_output(self):
-        """Output dimension depends on output head type"""
-        # Always return the final output dimension for decoder usage
-        if self.output_head_type == "categorical":
-            return self.n_classes
-        elif self.output_head_type == "dml":
-            return 3 * self.n_mixtures
-        else:
-            raise ValueError(f"Unknown output head type: {self.output_head_type}")
+        """Output dimension - always returns d_model since backbone has no output head"""
+        return self.d_model
     
     def _deinterleave_stereo_tensor(self, tensor, batch_size, seq_len_interleaved, d_output):
         """
@@ -253,10 +240,10 @@ class Sashimi(SequenceModule):
         batch_size, seq_len_interleaved, d_output = x.shape
         return self._deinterleave_stereo_tensor(x, batch_size, seq_len_interleaved, d_output)
 
-    def forward(self, x, state=None, apply_output_head=True, **kwargs):
+    def forward(self, x, state=None, **kwargs):
         """
         input: (batch, length, d_model) - d_model may be scaled for multi-channel inputs
-        output: (batch, length, d_output) if apply_output_head=True, else (batch, length, d_model)
+        output: (batch, length, d_model) - always outputs d_model features, no output head
         """
         if self.interp > 0:
             # Interpolation will be used to reconstruct "missing" frames
@@ -322,18 +309,9 @@ class Sashimi(SequenceModule):
             y[:, self.interp - 1::self.interp, :] = x
             x = y
 
-        # Apply output head
-        # print(f"🔍 DEBUG: SaShiMi before output head: {x.shape}")
-        if apply_output_head:
-            x = self.output_head(x)
-            # print(f"🔍 DEBUG: SaShiMi after output head: {x.shape}")
-            
-            # Reshape stereo output if needed
-            if self.is_stereo:
-                x = self.reshape_stereo_output(x)
-                # print(f"🔍 DEBUG: SaShiMi after stereo reshaping: {x.shape}")
-        # else:
-        #     print(f"🔍 DEBUG: SaShiMi skipping output head, output shape: {x.shape}")
+        # SaShiMi backbone always outputs d_model features
+        # The decoder (LMTask or SequenceDecoder) handles the final projection to n_classes
+        # print(f"🔍 DEBUG: SaShiMi output shape: {x.shape}")
         
         return x, None
 
@@ -387,7 +365,6 @@ class Sashimi(SequenceModule):
                     outputs.append(x)
             x = x + outputs.pop()
 
-        # feature projection and output head
+        # feature projection (no output head - decoder handles final projection)
         x = self.norm(x)
-        x = self.output_head(x)
         return x, next_state

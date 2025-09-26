@@ -378,10 +378,12 @@ class SequenceLightningModule(pl.LightningModule):
         n_params = sum(p.numel() for p in self.parameters())
         
         # Calculate output head parameters
-        # The output head is part of the backbone model
+        # The output head is the output_transform of the SequenceDecoder
         n_params_output_head = 0
-        if hasattr(self.model, 'output_head') and self.model.output_head is not None:
-            n_params_output_head = sum(p.numel() for p in self.model.output_head.parameters())
+        if (hasattr(self.decoder, '__len__') and len(self.decoder) > 0 and 
+            hasattr(self.decoder[0], 'output_transform')):
+            # The output head is the output_transform of the SequenceDecoder
+            n_params_output_head = sum(p.numel() for p in self.decoder[0].output_transform.parameters())
         
         # Calculate percentage
         percentage_output_head = (100 * n_params_output_head / n_params) if n_params > 0 else 0
@@ -493,7 +495,7 @@ class SequenceLightningModule(pl.LightningModule):
 
         x, w = self.encoder(x, **z) # w can model-specific constructions such as key_padding_mask for transformers or state for RNNs
         
-        x, state = self.model(x, apply_output_head=False, **w, state=self._state)
+        x, state = self.model(x, **w, state=self._state)
         self._state = state
         x, w = self.decoder(x, state=state, **z)
         return x, y, w
