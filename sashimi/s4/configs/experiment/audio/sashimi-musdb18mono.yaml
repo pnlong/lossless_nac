@@ -10,6 +10,7 @@ defaults:
 
 model:
   n_layers: 8
+  d_model: 64
   dropout: 0.0
 
 train:
