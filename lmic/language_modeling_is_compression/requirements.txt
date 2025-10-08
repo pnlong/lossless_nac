@@ -1,0 +1,15 @@
+absl-py
+chex
+dm-tree
+dm-haiku
+jax
+numpy
+optax
+pillow
+pydub
+scipy
+soundfile
+tensorflow
+tensorflow_datasets
+tqdm
+wandb
