@@ -102,3 +102,89 @@ def normalize_pdf_for_arithmetic_coding(pdf: chex.Array) -> chex.Array:
   # Ensure all probabilities are sufficiently large to yield distinct cdfs.
   pdf = (1 - 2 * pdf.shape[0] * machine_epsilon) * pdf + machine_epsilon
   return pdf
+
+
+# Extended bit depth support functions for Llama model compatibility
+
+def right_shift_bytes_by_n_bits(data: bytes, n_bits: int = 1) -> tuple[bytes, int]:
+  """Generalized version of right_shift_bytes_by_one for different bit depths.
+  
+  Args:
+    data: Input bytes
+    n_bits: Number of bits to right-shift (1 for 8-bit, 2 for 16-bit, etc.)
+    
+  Returns:
+    tuple: (right_shifted_bytes, number_of_bytes)
+  """
+  if n_bits < 1 or n_bits > 7:
+    raise ValueError("n_bits must be between 1 and 7")
+  
+  shifted_bytes = []
+  for byte in data:
+    shifted_byte = byte >> n_bits
+    shifted_bytes.append(shifted_byte)
+  
+  return bytes(shifted_bytes), len(data)
+
+
+def zero_most_significant_bits_if_not_ascii_decodable(data: bytes, n_bits: int = 1) -> tuple[bytes, int]:
+  """Generalized version of zero_most_significant_bit_if_not_ascii_decodable.
+  
+  Args:
+    data: Input bytes
+    n_bits: Number of MSB bits to zero (1 for 8-bit, 2 for 16-bit, etc.)
+    
+  Returns:
+    tuple: (ascii_decodable_bytes, number_of_zeroed_bits)
+  """
+  if n_bits < 1 or n_bits > 7:
+    raise ValueError("n_bits must be between 1 and 7")
+  
+  zeroed_bits = 0
+  masked_data = []
+  mask = (1 << (8 - n_bits)) - 1  # Create mask for lower (8-n_bits) bits
+  
+  for byte in data:
+    # Check if byte is ASCII decodable after masking
+    masked_byte = byte & mask
+    if chr(masked_byte).isascii():
+      masked_data.append(masked_byte)
+    else:
+      zeroed_bits += n_bits
+      masked_data.append(masked_byte)
+  
+  return bytes(masked_data), zeroed_bits
+
+
+def get_mask_function_for_bit_depth(bit_depth: int, use_ascii_check: bool = True) -> callable:
+  """Get the appropriate mask function for a given bit depth.
+  
+  Args:
+    bit_depth: Bit depth (8, 16, 24, or 32)
+    use_ascii_check: Whether to use ASCII check or right-shift approach
+    
+  Returns:
+    Mask function for the specified bit depth
+  """
+  if bit_depth == 8:
+    if use_ascii_check:
+      return lambda data: zero_most_significant_bits_if_not_ascii_decodable(data, n_bits=1)
+    else:
+      return lambda data: right_shift_bytes_by_n_bits(data, n_bits=1)
+  elif bit_depth == 16:
+    if use_ascii_check:
+      return lambda data: zero_most_significant_bits_if_not_ascii_decodable(data, n_bits=1)
+    else:
+      return lambda data: right_shift_bytes_by_n_bits(data, n_bits=1)
+  elif bit_depth == 24:
+    if use_ascii_check:
+      return lambda data: zero_most_significant_bits_if_not_ascii_decodable(data, n_bits=1)
+    else:
+      return lambda data: right_shift_bytes_by_n_bits(data, n_bits=1)
+  elif bit_depth == 32:
+    if use_ascii_check:
+      return lambda data: zero_most_significant_bits_if_not_ascii_decodable(data, n_bits=1)
+    else:
+      return lambda data: right_shift_bytes_by_n_bits(data, n_bits=1)
+  else:
+    raise ValueError(f"Unsupported bit depth: {bit_depth}. Supported: 8, 16, 24, 32")
