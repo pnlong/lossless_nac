@@ -8,8 +8,9 @@
 ##################################################
 
 import pandas as pd
-from os.path import exists
-from os import makedirs, rename, listdir
+from os.path import exists, basename
+from typing import List, Tuple
+from os import makedirs, rename
 from shutil import rmtree
 import argparse
 import multiprocessing
@@ -109,7 +110,7 @@ if __name__ == "__main__":
     ##################################################
 
     # convert files
-    def convert_helper(i: int):
+    def convert_helper(i: int) -> List[Tuple[str, bool]]:
         """
         Use the information in a row of the dataset to convert a residual to a WAV file, as well as the original input file.
 
@@ -120,13 +121,20 @@ if __name__ == "__main__":
 
         Returns
         -------
-        None
+        List[Tuple[str, bool]]
+            List of tuples containing (file_path, is_mix) for all generated files
         """
 
         # get data
         path, sample_rate = dataset.loc[i]
         data = np.load(path) # loads in shape (n_samples, 2)
         data = data.astype(np.int16) # ensure type is correct
+
+        # determine if this is a mix file (original NPY file without .npy suffix ends with ".0")
+        is_mix = basename(path).split(".")[-2] == "0"
+
+        # track generated files
+        generated_files = []
 
         # write channels individually as mono files
         for channel_idx, channel in enumerate(data.T):
@@ -145,6 +153,7 @@ if __name__ == "__main__":
                         rate = sample_rate,
                         data = clip,
                     )
+                    generated_files.append((filename, is_mix))
 
             # otherwise, just write the channel as a mono file
             else:
@@ -154,29 +163,45 @@ if __name__ == "__main__":
                     rate = sample_rate,
                     data = channel,
                 )
+                generated_files.append((filename, is_mix))
+
+        return generated_files
 
     # use multiprocessing
     print("Converting NPY Files to WAV Files...")
     with multiprocessing.Pool(processes = args.jobs) as pool:
-        _ = list(tqdm(iterable = pool.imap_unordered(
+        mix_mapping = list(tqdm(iterable = pool.imap_unordered(
             func = convert_helper,
             iterable = dataset.index,
             chunksize = 1,
         ), desc = "Converting NPY Files to WAV Files", total = len(dataset)))
+        mix_mapping = sum(mix_mapping, []) # flatten mix mapping
+        output_paths, is_mixes = map(list, zip(*mix_mapping)) # transpose mix mapping
+
+        del mix_mapping
     print("Completed converting NPY Files to WAV Files.")
 
     # rename files if desired
     if args.rename_simple:
         print("Renaming Files to Simple Names because --rename_simple was called...")
         counter = 0
-        bases = listdir(args.output_dir)
-        fixed_width = ceil(log10(len(bases)))
-        for base in tqdm(iterable = bases, desc = "Renaming Files to Simple Names", total = len(bases)):
-            input_path = f"{args.output_dir}/{base}"
+        fixed_width = ceil(log10(len(output_paths)))
+        for i in tqdm(iterable = range(len(output_paths)), desc = "Renaming Files to Simple Names", total = len(output_paths)):
+            input_path = output_paths[i]
             output_path = f"{args.output_dir}/out{counter:0{fixed_width}}.wav"
             rename(src = input_path, dst = output_path)
+            output_paths[i] = output_path
             counter += 1
         print("Completed renaming files to simple names.")
+
+    # create table mapping files to mix status
+    print("Creating mix mapping table...")
+    mix_mapping_path = f"{args.output_dir}.csv"
+    pd.DataFrame(data = {
+        "path": list(map(basename, output_paths)), # use basename to get simple file names
+        "is_mix": is_mixes,
+    }).to_csv(path_or_buf = mix_mapping_path, sep = ",", header = True, index = False)
+    print(f"Created mix mapping table: {mix_mapping_path}")
 
     ##################################################
 
