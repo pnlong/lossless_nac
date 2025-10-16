@@ -55,56 +55,40 @@ def _run_original_llama_inference(model_wrapper, input_ids):
     return logits
 
 
-def create_llama_predict_fn_extended(model_info: Dict[str, Any], bit_depth: int = 8) -> Callable:
+def create_llama_predict_fn_extended(model_info: Dict[str, Any], bit_depth: int = 8, max_length: int = 2048) -> Callable:
   """Create prediction function for Llama model with extended bit depth support.
+  
+  FIXED: Now does single forward pass to get l*T log-probabilities as per paper's approach.
   
   Args:
     model_info: Loaded Llama model information
     bit_depth: Bit depth (8, 16, 24, or 32)
+    max_length: Maximum sequence length (adjusted for stereo if needed)
     
   Returns:
-    Prediction function
+    Prediction function that accepts ASCII text and returns (l, T) log-probabilities
   """
   model = model_info["model"]
   tokenizer = model_info["tokenizer"]
   model_format = model_info.get("format", "huggingface")
   
-  def predict_fn(sequence_array: np.ndarray) -> np.ndarray:
-    """Predict next token probabilities for Llama model with bit depth support.
+  def predict_fn(ascii_text: str) -> np.ndarray:
+    """Predict token probabilities following paper's approach.
+    
+    Paper: "This sequence is fed into the big pretrained Transformer model, 
+    which gives us the conditionals ρˆ(y|x<i) for all histories x<i and tokens in the alphabet y.
+    Denoting the length of the sequence after tokenization as l, we obtain l ∗ T log-probabilities."
     
     Args:
-      sequence_array: Input sequence array
+      ascii_text: ASCII string (already mapped, no need to map again)
       
     Returns:
-      Log probabilities for next tokens
+      Log probabilities of shape (l, T) where l=sequence_length, T=vocab_size
     """
-    # Convert numpy array to bytes based on bit depth
-    if bit_depth == 8:
-      data_bytes = sequence_array.astype(np.uint8).tobytes()
-    elif bit_depth == 16:
-      data_bytes = sequence_array.astype(np.int16).tobytes()
-    elif bit_depth == 24:
-      # Convert to 24-bit bytes
-      data_bytes = []
-      for sample in sequence_array.flatten():
-        if sample < 0:
-          sample = sample + (1 << 24)  # Convert to unsigned 24-bit
-        data_bytes.extend(sample.astype(np.int32).tobytes()[:3])  # Take first 3 bytes
-      data_bytes = bytes(data_bytes)
-    elif bit_depth == 32:
-      data_bytes = sequence_array.astype(np.int32).tobytes()
-    else:
-      raise ValueError(f"Unsupported bit depth: {bit_depth}")
-    
-    # Apply ASCII mapping to convert to ASCII-compatible format
-    ascii_mapping_fn = ascii_mapping.get_ascii_mapping_function_for_bit_depth(bit_depth)
-    ascii_data, _ = ascii_mapping_fn(data_bytes)
-    
-    # Convert masked bytes to ASCII string
-    ascii_text = ascii_data.decode('ascii', errors='ignore')
+    import logging
     
     if len(ascii_text) == 0:
-      # Return uniform distribution if no valid ASCII
+      # Return uniform distribution if no text
       vocab_size = len(tokenizer)
       return np.log(np.ones(vocab_size) / vocab_size)
     
@@ -116,25 +100,66 @@ def create_llama_predict_fn_extended(model_info: Dict[str, Any], bit_depth: int 
       vocab_size = len(tokenizer)
       return np.log(np.ones(vocab_size) / vocab_size)
     
-    # Get predictions from Llama model
-    input_ids = torch.tensor(tokens).unsqueeze(0)
+    # Truncate tokens to max_length if needed
+    if len(tokens) > max_length:
+      tokens = tokens[:max_length]
+    
+    # PAPER'S APPROACH: Feed entire sequence to model, get predictions for all positions
+    input_ids = torch.tensor(tokens).unsqueeze(0)  # Shape: (1, l)
     
     with torch.no_grad():
       if model_format == "huggingface":
-        # Standard Hugging Face model
         outputs = model(input_ids)
-        logits = outputs.logits
+        logits = outputs.logits  # Shape: (1, l, T)
       elif model_format == "original":
-        # Original format - perform actual inference
-        logits = _run_original_llama_inference(model, input_ids)
+        logits = _run_original_llama_inference(model, input_ids)  # Shape: (1, l, T)
       else:
         raise ValueError(f"Unknown model format: {model_format}")
       
-    # Return log probabilities
-    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-    return log_probs.squeeze(0).cpu().float().numpy()
+      # Convert to log probabilities: shape (l, T)
+      log_probs = torch.nn.functional.log_softmax(logits, dim=-1).squeeze(0)
+    
+    result = log_probs.cpu().float().numpy()  # Shape: (l, T)
+    return result
   
   return predict_fn
+
+
+def apply_top_k_filtering(log_probs: np.ndarray, k: int = 100) -> np.ndarray:
+  """Apply top-k filtering and renormalization as described in the paper.
+  
+  Paper: "In practice, the large models had only access to the top-k next token log-probabilities, 
+  for each context. We chose k = 100, which almost fully recovers the conditional distribution. 
+  Arithmetic coding can still be applied as the alphabet size is allowed to change while coding: 
+  what matters is that the conditional probabilities in each step sum to 1. 
+  Accordingly, we renormalize the top-k log-probabilities."
+  
+  Args:
+    log_probs: Log probabilities of shape (seq_len, vocab_size)
+    k: Number of top probabilities to keep (k=100 as per paper)
+    
+  Returns:
+    Filtered and renormalized log probabilities of shape (seq_len, vocab_size)
+  """
+  filtered_log_probs = []
+  
+  for i in range(log_probs.shape[0]):
+    # Get top-k indices for this position
+    top_k_indices = np.argpartition(log_probs[i], -k)[-k:]
+    
+    # Create filtered distribution: keep only top-k, set others to -inf
+    filtered_probs = np.full_like(log_probs[i], -np.inf)
+    filtered_probs[top_k_indices] = log_probs[i][top_k_indices]
+    
+    # Renormalize so probabilities sum to 1
+    # Paper: "Accordingly, we renormalize the top-k log-probabilities"
+    log_sum = np.log(np.sum(np.exp(filtered_probs[top_k_indices])))
+    filtered_probs[top_k_indices] = filtered_probs[top_k_indices] - log_sum
+    
+    filtered_log_probs.append(filtered_probs)
+  
+  result = np.stack(filtered_log_probs)
+  return result
 
 
 def create_llama_compression_function_extended(

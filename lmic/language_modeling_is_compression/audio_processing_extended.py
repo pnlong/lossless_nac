@@ -1,5 +1,7 @@
 """Extended audio processing functions for multiple bit depths."""
 
+import logging
+import os
 import numpy as np
 from typing import Iterator
 from . import ascii_mapping
@@ -46,6 +48,58 @@ def convert_to_target_bit_depth_extended(audio_data: np.ndarray, bit_depth: int)
     return audio_32bit.tobytes()
   else:
     raise ValueError(f"Unsupported bit depth: {bit_depth}")
+
+
+def process_stereo_blocking_extended(audio_data: np.ndarray, blocking_size: int) -> np.ndarray:
+  """Process stereo audio using interleaved blocking strategy.
+  
+  Args:
+    audio_data: Audio data with shape (samples, channels) from scipy.wavfile
+    blocking_size: Size of each block in samples
+    
+  Returns:
+    Processed audio data as 1D array with interleaved blocks
+    Pattern: [L_block1, R_block1, L_block2, R_block2, ...]
+    This doubles the effective sequence length compared to averaging.
+  """
+  if len(audio_data.shape) == 1:
+    # Mono audio - return as is
+    return audio_data
+  
+  elif len(audio_data.shape) == 2:
+    # Stereo audio - apply blocking strategy
+    samples, channels = audio_data.shape
+    
+    if channels == 2:
+      left_channel = audio_data[:, 0]  # Shape: (samples,)
+      right_channel = audio_data[:, 1]  # Shape: (samples,)
+      
+      # Split channels into blocks
+      left_blocks = []
+      right_blocks = []
+      
+      for i in range(0, samples, blocking_size):
+        left_block = left_channel[i:i + blocking_size]
+        right_block = right_channel[i:i + blocking_size]
+        
+        # Add all blocks, including the final partial block
+        left_blocks.append(left_block)
+        right_blocks.append(right_block)
+      
+      # Interleave blocks: [L_block1, R_block1, L_block2, R_block2, ...]
+      interleaved_blocks = []
+      for left_block, right_block in zip(left_blocks, right_blocks):
+        interleaved_blocks.append(left_block)
+        interleaved_blocks.append(right_block)
+      
+      # Concatenate all blocks
+      return np.concatenate(interleaved_blocks)
+    
+    else:
+      raise ValueError(f"Unsupported number of channels: {channels}")
+  
+  else:
+    raise ValueError(f"Unsupported audio data shape: {audio_data.shape}")
 
 
 def extract_audio_chunks_extended(audio_bytes: bytes, chunk_size: int, bit_depth: int) -> Iterator[bytes]:
@@ -95,17 +149,25 @@ def get_custom_audio_iterator_extended(
   chunk_count = 0
   random.shuffle(audio_files)
   
-  for audio_file in audio_files:
+  for file_index, audio_file in enumerate(audio_files):
     if chunk_count >= num_chunks:
       break
       
     try:
+      # Log when a new file is loaded
+      logging.debug(f"Loading audio file #{file_index + 1}: {os.path.basename(audio_file)}")
+      
       # Load audio file using scipy
       sr, audio_data = wavfile.read(audio_file)
       
-      # Convert to mono if stereo
+      # Handle stereo audio with interleaved blocking (doubles sequence length)
       if len(audio_data.shape) > 1:
-        audio_data = audio_data.mean(axis=1)
+        # Use interleaved blocking for stereo: [L_block1, R_block1, L_block2, R_block2, ...]
+        # This doubles the effective sequence length compared to averaging
+        audio_data = process_stereo_blocking_extended(audio_data, blocking_size)
+      else:
+        # Mono audio - keep as is
+        audio_data = audio_data
       
       # Normalize to [-1, 1] range
       if audio_data.dtype == np.int16:
@@ -121,13 +183,36 @@ def get_custom_audio_iterator_extended(
       # Convert to target bit depth
       audio_bytes = convert_to_target_bit_depth_extended(audio_data, bit_depth)
       
-      # Extract chunks with proper alignment
-      for chunk in extract_audio_chunks_extended(audio_bytes, chunk_size_bytes, bit_depth):
+      # Extract chunks with proper alignment - use random sampling
+      # First, collect all possible chunks
+      all_chunks = list(extract_audio_chunks_extended(audio_bytes, chunk_size_bytes, bit_depth))
+      total_possible_chunks = len(all_chunks)
+      
+      if total_possible_chunks == 0:
+        continue
+      
+      # Calculate how many chunks to take from this file (limit to 10 per file)
+      remaining_chunks_needed = num_chunks - chunk_count
+      chunks_to_take = min(remaining_chunks_needed, 10, total_possible_chunks)  # Max 10 chunks per file
+      
+      # Randomly sample chunks instead of taking first N
+      import random
+      selected_chunk_indices = random.sample(range(total_possible_chunks), chunks_to_take)
+      selected_chunk_indices.sort()  # Sort for consistent ordering
+      
+      # Yield the randomly selected chunks
+      logging.debug(f"Yielding {len(selected_chunk_indices)} chunks from {os.path.basename(audio_file)}")
+      for local_chunk_index, chunk_index in enumerate(selected_chunk_indices):
         if chunk_count >= num_chunks:
           break
+        
+        chunk = all_chunks[chunk_index]
+        logging.debug(f"Yielding chunk {local_chunk_index + 1}/{len(selected_chunk_indices)} from {os.path.basename(audio_file)} (global chunk #{chunk_count + 1})")
         yield chunk
         chunk_count += 1
+      
+      logging.debug(f"Finished processing {os.path.basename(audio_file)} - yielded {len(selected_chunk_indices)} chunks")
         
     except Exception as e:
-      print(f"Error processing {audio_file}: {e}")
+      logging.warning(f"Error processing {audio_file}: {e}")
       continue

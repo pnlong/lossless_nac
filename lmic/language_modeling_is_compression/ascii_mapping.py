@@ -18,6 +18,23 @@
 from typing import Callable, Tuple
 
 
+def _pack_lsb_bits(lsb_bits_list: list) -> bytes:
+  """Pack a list of LSB bits into bytes (8 bits per byte)."""
+  dropped_bits_bytes = []
+  for i in range(0, len(lsb_bits_list), 8):
+    # Get next 8 bits
+    bits = lsb_bits_list[i:i+8]
+    # Pad with zeros if less than 8 bits
+    while len(bits) < 8:
+      bits.append(0)
+    # Pack into byte
+    packed_byte = 0
+    for j, bit in enumerate(bits):
+      packed_byte |= (bit << j)
+    dropped_bits_bytes.append(packed_byte)
+  return bytes(dropped_bits_bytes)
+
+
 def ascii_map_8bit(data: bytes) -> Tuple[bytes, bytes]:
   """Map 8-bit data to ASCII range [0, 127] following the paper's approach.
   
@@ -30,7 +47,7 @@ def ascii_map_8bit(data: bytes) -> Tuple[bytes, bytes]:
     tuple: (ascii_bytes, dropped_lsb_bits)
   """
   ascii_bytes = []
-  dropped_bits = []
+  dropped_bits_list = []
   
   for byte in data:
     # Paper approach: divide by 2 (right-shift by 1), lose LSB
@@ -38,9 +55,12 @@ def ascii_map_8bit(data: bytes) -> Tuple[bytes, bytes]:
     lsb = byte & 1  # Extract the LSB that was lost
     
     ascii_bytes.append(ascii_byte)
-    dropped_bits.append(lsb)
+    dropped_bits_list.append(lsb)
   
-  return bytes(ascii_bytes), bytes(dropped_bits)
+  # Pack LSB bits into bytes (8 bits per byte)
+  dropped_bits_bytes = _pack_lsb_bits(dropped_bits_list)
+  
+  return bytes(ascii_bytes), dropped_bits_bytes
 
 
 def ascii_map_16bit(data: bytes) -> Tuple[bytes, bytes]:
@@ -60,7 +80,7 @@ def ascii_map_16bit(data: bytes) -> Tuple[bytes, bytes]:
     raise ValueError("16-bit data must have even number of bytes")
   
   ascii_bytes = []
-  dropped_bits = []
+  dropped_bits_list = []
   
   # Process each 16-bit sample
   for i in range(0, len(data), 2):
@@ -77,9 +97,12 @@ def ascii_map_16bit(data: bytes) -> Tuple[bytes, bytes]:
       lsb = byte_val & 1  # Extract the LSB that was lost
       
       ascii_bytes.append(ascii_byte)
-      dropped_bits.append(lsb)
+      dropped_bits_list.append(lsb)
   
-  return bytes(ascii_bytes), bytes(dropped_bits)
+  # Pack LSB bits into bytes (8 bits per byte)
+  dropped_bits_bytes = _pack_lsb_bits(dropped_bits_list)
+  
+  return bytes(ascii_bytes), dropped_bits_bytes
 
 
 def ascii_map_24bit(data: bytes) -> Tuple[bytes, bytes]:
@@ -99,7 +122,7 @@ def ascii_map_24bit(data: bytes) -> Tuple[bytes, bytes]:
     raise ValueError("24-bit data must have length divisible by 3")
   
   ascii_bytes = []
-  dropped_bits = []
+  dropped_bits_list = []
   
   # Process each 24-bit sample
   for i in range(0, len(data), 3):
@@ -117,9 +140,12 @@ def ascii_map_24bit(data: bytes) -> Tuple[bytes, bytes]:
       lsb = byte_val & 1  # Extract the LSB that was lost
       
       ascii_bytes.append(ascii_byte)
-      dropped_bits.append(lsb)
+      dropped_bits_list.append(lsb)
   
-  return bytes(ascii_bytes), bytes(dropped_bits)
+  # Pack LSB bits into bytes (8 bits per byte)
+  dropped_bits_bytes = _pack_lsb_bits(dropped_bits_list)
+  
+  return bytes(ascii_bytes), dropped_bits_bytes
 
 
 def ascii_map_32bit(data: bytes) -> Tuple[bytes, bytes]:
@@ -139,7 +165,7 @@ def ascii_map_32bit(data: bytes) -> Tuple[bytes, bytes]:
     raise ValueError("32-bit data must have length divisible by 4")
   
   ascii_bytes = []
-  dropped_bits = []
+  dropped_bits_list = []
   
   # Process each 32-bit sample
   for i in range(0, len(data), 4):
@@ -158,9 +184,12 @@ def ascii_map_32bit(data: bytes) -> Tuple[bytes, bytes]:
       lsb = byte_val & 1  # Extract the LSB that was lost
       
       ascii_bytes.append(ascii_byte)
-      dropped_bits.append(lsb)
+      dropped_bits_list.append(lsb)
   
-  return bytes(ascii_bytes), bytes(dropped_bits)
+  # Pack LSB bits into bytes (8 bits per byte)
+  dropped_bits_bytes = _pack_lsb_bits(dropped_bits_list)
+  
+  return bytes(ascii_bytes), dropped_bits_bytes
 
 
 def get_ascii_mapping_function_for_bit_depth(bit_depth: int) -> Callable[[bytes], Tuple[bytes, bytes]]:

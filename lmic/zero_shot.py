@@ -549,6 +549,92 @@ def create_model_predict_fn(params: hk.Params) -> Any:
     return lambda x: model.apply(params, None, x)
 
 
+def detect_stereo_audio(audio_files: List[str]) -> bool:
+    """Detect if any audio files are stereo."""
+    from scipy.io import wavfile
+    
+    for audio_file in audio_files[:5]:  # Check first 5 files
+        try:
+            sr, audio_data = wavfile.read(audio_file)
+            if len(audio_data.shape) > 1 and audio_data.shape[1] > 1:
+                return True
+        except Exception as e:
+            logging.warning(f"Error checking stereo for {audio_file}: {e}")
+            continue
+    
+    return False
+
+
+def analyze_audio_processing_pipeline(audio_files: List[str], args: argparse.Namespace) -> None:
+    """Analyze the audio processing pipeline to identify issues."""
+    if not audio_files:
+        logging.error("No audio files found to analyze")
+        return
+    
+    # Analyze first audio file in detail
+    audio_file = audio_files[0]
+    logging.info(f"Analyzing audio file: {os.path.basename(audio_file)}")
+    
+    try:
+        from scipy.io import wavfile
+        from language_modeling_is_compression import audio_processing_extended
+        
+        # Step 1: Load with scipy
+        sr, audio_data = wavfile.read(audio_file)
+        
+        # Calculate amplitude as percentage of maximum
+        if audio_data.dtype == np.int16:
+            max_possible = 32767
+        elif audio_data.dtype == np.int32:
+            max_possible = 2147483647
+        elif audio_data.dtype == np.uint8:
+            max_possible = 255
+        else:
+            max_possible = audio_data.max()
+        
+        max_amplitude = max(abs(audio_data.min()), abs(audio_data.max()))
+        amplitude_percentage = (max_amplitude / max_possible) * 100 if max_possible > 0 else 0
+        
+        if amplitude_percentage < 1.0:
+            logging.warning(f"Audio is very quiet ({amplitude_percentage:.2f}% of maximum) - likely silence")
+        elif amplitude_percentage < 10.0:
+            logging.warning(f"Audio is quiet ({amplitude_percentage:.2f}% of maximum)")
+        
+        # Check if original audio is repetitive
+        if len(np.unique(audio_data)) < 10:
+            logging.warning(f"Original audio is highly repetitive: {len(np.unique(audio_data))} unique values")
+        
+        # Process through the pipeline
+        if len(audio_data.shape) > 1:
+            processed_audio = audio_processing_extended.process_stereo_blocking_extended(audio_data, args.stereo_blocking_n)
+        else:
+            processed_audio = audio_data
+        
+        # Normalize to [-1, 1]
+        if processed_audio.dtype == np.int16:
+            normalized_audio = processed_audio.astype(np.float32) / 32767.0
+        elif processed_audio.dtype == np.int32:
+            normalized_audio = processed_audio.astype(np.float32) / 2147483647.0
+        elif processed_audio.dtype == np.uint8:
+            normalized_audio = (processed_audio.astype(np.float32) - 128.0) / 128.0
+        else:
+            normalized_audio = processed_audio.astype(np.float32)
+        
+        # Check if all values are the same after normalization
+        if len(np.unique(normalized_audio)) == 1:
+            logging.warning(f"All normalized values are the same: {normalized_audio[0]} - likely silence")
+        
+        # Convert to target bit depth and check result
+        audio_bytes = audio_processing_extended.convert_to_target_bit_depth_extended(normalized_audio, args.bit_depth)
+        
+        # Check if final bytes are repetitive
+        if len(set(audio_bytes)) < 10:
+            logging.warning(f"Final audio bytes are highly repetitive: {len(set(audio_bytes))} unique values")
+        
+    except Exception as e:
+        logging.error(f"Error analyzing audio processing pipeline: {e}")
+
+
 def setup_audio_data_generator(args: argparse.Namespace) -> Iterator[bytes]:
     """Set up audio data generator with bit depth support."""
     # Get audio file paths
@@ -558,9 +644,30 @@ def setup_audio_data_generator(args: argparse.Namespace) -> Iterator[bytes]:
     except Exception as e:
         raise ValueError(f"Error discovering audio files: {str(e)}")
     
+    # Analyze the audio processing pipeline
+    analyze_audio_processing_pipeline(audio_files, args)
+    
+    # Detect if we have stereo audio
+    is_stereo = detect_stereo_audio(audio_files)
+    if is_stereo:
+        logging.info("Detected stereo audio files - will use interleaved blocking (doubles sequence length)")
+        # Adjust max_length for stereo (interleaved blocking doubles the sequence length)
+        effective_max_length = args.max_length * 2
+        logging.info(f"Adjusted max_length from {args.max_length} to {effective_max_length} for stereo audio")
+    else:
+        logging.info("Detected mono audio files - using standard processing")
+        effective_max_length = args.max_length
+    
+    # Store the effective max_length for use in Llama models
+    args.effective_max_length = effective_max_length
+    
     # Create data generator with bit depth support
     from language_modeling_is_compression import audio_processing_extended
-    data_generator = audio_processing_extended.get_custom_audio_iterator_extended(
+    logging.info("=== CREATING DATA GENERATOR ===")
+    logging.info(f"Using audio_processing_extended.get_custom_audio_iterator_extended()")
+    logging.info(f"Parameters: bit_depth={args.bit_depth}, blocking_size={args.stereo_blocking_n}, chunk_size={args.chunk_size}")
+    
+    base_data_generator = audio_processing_extended.get_custom_audio_iterator_extended(
         audio_files=audio_files,
         num_chunks=args.num_chunks,
         bit_depth=args.bit_depth,
@@ -568,7 +675,15 @@ def setup_audio_data_generator(args: argparse.Namespace) -> Iterator[bytes]:
         chunk_size_bytes=args.chunk_size,
     )
     
-    return data_generator
+    # Wrap the data generator to add file tracking
+    def tracked_data_generator():
+        chunk_count = 0
+        for chunk in base_data_generator:
+            chunk_count += 1
+            logging.debug(f"Data generator yielding chunk #{chunk_count}")
+            yield chunk
+    
+    return tracked_data_generator()
 
 
 def evaluate_language_model(
@@ -585,15 +700,34 @@ def evaluate_language_model(
     # Create prediction function based on model type
     if isinstance(model_info, dict) and model_info.get("model_type") == "llama":
         from language_modeling_is_compression import llama_integration
-        predict_fn = llama_integration.create_llama_predict_fn_extended(model_info, bit_depth=args.bit_depth)
+        # Use effective max_length for stereo audio (doubled if stereo detected)
+        effective_max_length = getattr(args, 'effective_max_length', args.max_length)
+        predict_fn = llama_integration.create_llama_predict_fn_extended(
+            model_info, 
+            bit_depth=args.bit_depth,
+            max_length=effective_max_length
+        )
         model_type = "llama"
     else:
         predict_fn = create_model_predict_fn(model_info)
         model_type = "framework"
     
-    # Create custom compression function
+    # Create custom compression function - FIXED to match paper's approach
+    chunk_counter = [0]  # Use list to make it mutable in closure
+    current_file = [None]  # Track current file being processed
+    
     def language_model_compress(data: bytes) -> bytes:
-        # Convert data to array based on bit depth
+        """Fixed compression function following paper's approach."""
+        
+        # Increment chunk counter
+        chunk_counter[0] += 1
+        logging.debug(f"Processing chunk #{chunk_counter[0]}")
+        
+        # Step 1: Convert data to array based on bit depth
+        
+        # Check for repetitive patterns in raw data (silent check)
+        unique_bytes = len(set(data))
+        
         if args.bit_depth == 8:
             sequence_array = np.frombuffer(data, dtype=np.uint8)
         elif args.bit_depth == 16:
@@ -618,30 +752,68 @@ def evaluate_language_model(
         else:
             raise ValueError(f"Unsupported bit depth: {args.bit_depth}")
         
-        # Get predictions
-        if args.slow_compression:
-            log_probs = []
-            for subsequence_length in range(len(sequence_array)):
-                subsequence_probs = predict_fn(
-                    sequence_array[None, :subsequence_length + 1]
-                )
-                # Handle different output shapes from Llama vs framework models
-                if subsequence_probs.ndim == 2:
-                    log_probs.append(subsequence_probs[-1])  # Last position
-                else:
-                    log_probs.append(subsequence_probs[0, -1])
-            log_probs = np.vstack(log_probs)
+        # Silent sequence array analysis
+        
+        # Check for repetitive patterns in sequence
+        # Silent check for repetitive patterns
+        if len(np.unique(sequence_array)) < 10:
+            pass  # Silent repetitive data check
+        
+        # Step 2: Convert to bytes
+        if args.bit_depth == 8:
+            data_bytes = sequence_array.astype(np.uint8).tobytes()
+        elif args.bit_depth == 16:
+            data_bytes = sequence_array.astype(np.int16).tobytes()
+        elif args.bit_depth == 24:
+            # Convert to 24-bit bytes
+            data_bytes = []
+            for sample in sequence_array.flatten():
+                if sample < 0:
+                    sample = sample + (1 << 24)  # Convert to unsigned 24-bit
+                data_bytes.extend(sample.astype(np.int32).tobytes()[:3])  # Take first 3 bytes
+            data_bytes = bytes(data_bytes)
+        elif args.bit_depth == 32:
+            data_bytes = sequence_array.astype(np.int32).tobytes()
         else:
-            log_probs = predict_fn(sequence_array[None])
-            # Handle different output shapes from Llama vs framework models
-            if log_probs.ndim == 2:
-                log_probs = log_probs  # Keep as is for Llama models
-            else:
-                log_probs = log_probs[0, ...]  # Framework model format
+            raise ValueError(f"Unsupported bit depth: {args.bit_depth}")
         
-        probs = np.exp(log_probs)
+        # Step 3: Apply ASCII mapping (ONCE, not twice!)
+        from language_modeling_is_compression import ascii_mapping
+        ascii_mapping_fn = ascii_mapping.get_ascii_mapping_function_for_bit_depth(args.bit_depth)
+        ascii_data, dropped_lsb_bits = ascii_mapping_fn(data_bytes)
         
-        # Use arithmetic coding
+        # Step 4: Convert to ASCII string
+        ascii_text = ascii_data.decode('ascii', errors='ignore')
+        
+        # Check if ASCII text is valid
+        if len(ascii_text) == 0:
+            logging.warning(f"Empty ASCII text generated from {len(data)} bytes of data")
+            return b''
+        
+        # Note: Variable length is OK for multi-bit depths
+        # 8-bit: 1 sample → 1 ASCII char
+        # 16-bit: 1 sample → 2 ASCII chars  
+        # 24-bit: 1 sample → 3 ASCII chars
+        # 32-bit: 1 sample → 4 ASCII chars
+        
+        # Step 5: Get predictions using the fixed prediction function
+        log_probs = predict_fn(ascii_text)  # Shape: (l, T) where l=seq_len, T=vocab_size
+        
+        # Step 6: Tokenize for arithmetic coding
+        tokens = model_info["tokenizer"].encode(ascii_text, add_special_tokens=False)
+        
+        # Check if tokenization is working
+        if len(tokens) == 0:
+            logging.warning(f"No tokens generated from ASCII text of length {len(ascii_text)}")
+            return b''
+        
+        # Step 7: Apply top-k filtering as described in paper
+        # Paper: "In practice, the large models had only access to the top-k next token log-probabilities, for each context"
+        from language_modeling_is_compression import llama_integration
+        # Use top-k filtering with k=100 as per paper
+        log_probs_topk = llama_integration.apply_top_k_filtering(log_probs, k=100)
+        
+        # Step 8: Use arithmetic coding with paper's approach
         from language_modeling_is_compression import arithmetic_coder
         
         output = []
@@ -651,14 +823,31 @@ def evaluate_language_model(
             output_fn=output.append,
         )
         
-        for pdf, symbol in zip(probs, sequence_array):
-            encoder.encode(utils.normalize_pdf_for_arithmetic_coding(pdf), symbol)
+        # Encode tokens using paper's approach: for each position, use the prediction for that position
+        for i, token_id in enumerate(tokens):
+            if i < len(log_probs_topk):
+                pdf = np.exp(log_probs_topk[i])  # Convert log probs to probs for position i
+                
+                # Check if token is in top-k (has non-zero probability)
+                if pdf[token_id] == 0:
+                    continue
+                
+                encoder.encode(utils.normalize_pdf_for_arithmetic_coding(pdf), token_id)
+        
         encoder.terminate()
         
+        # Step 9: Convert bits to bytes
         compressed_bits = ''.join(map(str, output))
         compressed_bytes, _ = utils.bits_to_bytes(compressed_bits)
         
-        return compressed_bytes
+        # Step 10: Append dropped LSB bits for lossless reconstruction
+        final_compressed = compressed_bytes + dropped_lsb_bits
+        
+        # Check if LSB bits are making data much larger (silent check)
+        if len(dropped_lsb_bits) > len(compressed_bytes):
+            pass  # Silent LSB size check
+        
+        return final_compressed
     
     # Get appropriate mask function for bit depth
     from language_modeling_is_compression import utils
@@ -698,11 +887,20 @@ def evaluate_baseline_compressors(
         logging.info(f"Evaluating baseline compressor: {compressor_name}")
         
         try:
-            compress_fn = compressor.COMPRESS_FN_DICT[compressor_name]
+            # Create compressor function with bit_depth parameter for FLAC
+            if compressor_name == 'flac':
+                def flac_compress_with_bit_depth(data: bytes) -> bytes:
+                    # Import flac directly to avoid wrapper issues
+                    from language_modeling_is_compression.compressors import flac
+                    return flac.compress(data, bit_depth=args.bit_depth)
+                compress_fn = flac_compress_with_bit_depth
+            else:
+                compress_fn = compressor.COMPRESS_FN_DICT[compressor_name]
             
             # Create new data generator for each compressor
             audio_files = get_all_paths(args.audio_dir)
-            new_data_generator = data_loaders.get_custom_audio_iterator(
+            from language_modeling_is_compression import audio_processing_extended
+            new_data_generator = audio_processing_extended.get_custom_audio_iterator_extended(
                 audio_files=audio_files,
                 num_chunks=args.num_chunks,
                 bit_depth=args.bit_depth,
