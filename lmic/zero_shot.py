@@ -109,7 +109,7 @@ def setup_logging(verbose: bool = False) -> None:
 def parse_arguments() -> argparse.Namespace:
     """Parse and validate command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Zero-shot evaluation of language models on custom audio data",
+        description="Zero-shot evaluation of language models on custom audio data. Requires a CSV file (audio_dir.csv) with 'path' and 'is_mix' columns.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     
@@ -251,6 +251,12 @@ def parse_arguments() -> argparse.Namespace:
         help="Batch size for Llama model inference"
     )
     
+    parser.add_argument(
+        "--mixes_only",
+        action="store_true",
+        help="Only include audio files where is_mix=true in the CSV file (audio_dir.csv)"
+    )
+    
     return parser.parse_args()
 
 
@@ -298,6 +304,13 @@ def validate_arguments(args: argparse.Namespace) -> None:
         invalid_compressors = [c for c in args.baseline_compressors if c not in compressor.COMPRESS_FN_DICT]
         if invalid_compressors:
             raise ValueError(f"Invalid baseline compressors: {invalid_compressors}")
+    
+    # Validate CSV file (required for file discovery)
+    csv_file = args.audio_dir + ".csv"
+    if not os.path.exists(csv_file):
+        raise ValueError(f"CSV file does not exist: {csv_file}")
+    if not os.path.isfile(csv_file):
+        raise ValueError(f"CSV path is not a file: {csv_file}")
 
 
 def detect_model_type(model_path: str) -> str:
@@ -549,6 +562,37 @@ def create_model_predict_fn(params: hk.Params) -> Any:
     return lambda x: model.apply(params, None, x)
 
 
+def get_audio_files_from_csv(csv_file: str, audio_dir: str, mixes_only: bool = False) -> List[str]:
+    """Get audio files from CSV file, optionally filtered by is_mix column."""
+    import pandas as pd
+    
+    try:
+        # Read CSV with pandas
+        df = pd.read_csv(csv_file)
+        
+        # Filter by is_mix if requested
+        if mixes_only:
+            df = df[df["is_mix"]]
+        
+        # Get the paths and construct full paths
+        audio_files = []
+        for path in df["path"]:
+            full_path = os.path.join(audio_dir, path)
+            if os.path.exists(full_path):
+                audio_files.append(full_path)
+            else:
+                logging.warning(f"Audio file not found: {full_path}")
+        
+        filter_type = "mix files" if mixes_only else "all files"
+        logging.info(f"Found {len(audio_files)} {filter_type} from CSV {csv_file}")
+        return audio_files
+        
+    except Exception as e:
+        logging.error(f"Error reading CSV file {csv_file}: {e}")
+        logging.warning("Falling back to directory listing")
+        return get_all_paths(audio_dir)
+
+
 def detect_stereo_audio(audio_files: List[str]) -> bool:
     """Detect if any audio files are stereo."""
     from scipy.io import wavfile
@@ -637,10 +681,13 @@ def analyze_audio_processing_pipeline(audio_files: List[str], args: argparse.Nam
 
 def setup_audio_data_generator(args: argparse.Namespace) -> Iterator[bytes]:
     """Set up audio data generator with bit depth support."""
-    # Get audio file paths
+    # Get audio file paths from CSV
+    csv_file = args.audio_dir + ".csv"
     try:
-        audio_files = get_all_paths(args.audio_dir)
-        logging.info(f"Found {len(audio_files)} WAV files in {args.audio_dir}")
+        audio_files = get_audio_files_from_csv(csv_file, args.audio_dir, args.mixes_only)
+        if not audio_files:
+            filter_type = "mix files" if args.mixes_only else "files"
+            raise ValueError(f"No {filter_type} found in CSV {csv_file}")
     except Exception as e:
         raise ValueError(f"Error discovering audio files: {str(e)}")
     
@@ -897,8 +944,10 @@ def evaluate_baseline_compressors(
             else:
                 compress_fn = compressor.COMPRESS_FN_DICT[compressor_name]
             
-            # Create new data generator for each compressor
-            audio_files = get_all_paths(args.audio_dir)
+            # Create new data generator for each compressor (using same CSV-based approach)
+            csv_file = args.audio_dir + ".csv"
+            audio_files = get_audio_files_from_csv(csv_file, args.audio_dir, args.mixes_only)
+            
             from language_modeling_is_compression import audio_processing_extended
             new_data_generator = audio_processing_extended.get_custom_audio_iterator_extended(
                 audio_files=audio_files,
@@ -959,11 +1008,14 @@ def format_results(results: Dict[str, Any], args: argparse.Namespace) -> str:
     # Configuration section
     output.append("Configuration:")
     output.append(f"  Audio Directory: {args.audio_dir}")
+    output.append(f"  CSV File: {args.audio_dir}.csv")
     output.append(f"  Model: {args.model_path}")
     output.append(f"  Bit Depth: {args.bit_depth}")
     output.append(f"  Stereo Blocking: {args.stereo_blocking_n} samples")
     output.append(f"  Chunk Size: {args.chunk_size} bytes")
     output.append(f"  Number of Chunks: {args.num_chunks}")
+    if args.mixes_only:
+        output.append(f"  Mixes Only: Enabled (is_mix=true)")
     output.append("")
     
     # Results section
@@ -1037,6 +1089,7 @@ def save_results(results: Dict[str, Any], args: argparse.Namespace, output_file:
             "num_layers": args.num_layers,
             "num_heads": args.num_heads,
             "widening_factor": args.widening_factor,
+            "mixes_only": args.mixes_only,
         },
         "results": results,
         "summary": {}

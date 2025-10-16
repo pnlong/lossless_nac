@@ -146,7 +146,7 @@ if __name__ == "__main__":
                 clip = data[start_index:end_index] # get clip
                 if args.pad_clips_to_fixed_length and n_samples_in_clip < args.clip_length: # pad if necessary
                     clip = np.pad(array = clip, pad_width = [(0, args.clip_length - n_samples_in_clip), (0, 0)], mode = "constant") # end pad with zeros
-                filename = f"{args.output_dir}/out{i:0{dataset_fixed_width}}.{clip_idx}.wav" # generate unique filename based on dataset index, and clip
+                filename = f"{args.output_dir}/outtemp{i:0{dataset_fixed_width}}.{clip_idx}.wav" # generate unique filename based on dataset index, and clip
                 scipy.io.wavfile.write( # write WAV file
                     filename = filename,
                     rate = sample_rate,
@@ -156,7 +156,7 @@ if __name__ == "__main__":
 
         # otherwise, just write the data as a stereo file
         else:
-            filename = f"{args.output_dir}/out{i:0{dataset_fixed_width}}.wav" # generate unique filename based on dataset index
+            filename = f"{args.output_dir}/outtemp{i:0{dataset_fixed_width}}.wav" # generate unique filename based on dataset index
             scipy.io.wavfile.write( # write WAV file
                 filename = filename,
                 rate = sample_rate,

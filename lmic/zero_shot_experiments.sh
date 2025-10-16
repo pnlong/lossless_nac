@@ -7,8 +7,8 @@
 
 # paths
 software_path="/home/pnlong/lnac/lmic/zero_shot.py"
-mono_audio_dir="/graft4/datasets/pnlong/lnac/sashimi/data/musdb18mono"
-stereo_audio_dir="/graft4/datasets/pnlong/lnac/sashimi/data/musdb18stereo"
+mono_audio_dir="/graft3/datasets/pnlong/lnac/sashimi/data/musdb18mono"
+stereo_audio_dir="/graft3/datasets/pnlong/lnac/sashimi/data/musdb18stereo"
 llama_7b_path="/graft4/checkpoints/pnlong/lnac/lmic/llama/Llama-2-7b"
 llama_13b_path="/graft4/checkpoints/pnlong/lnac/lmic/llama/Llama-2-13b"
 llama_70b_path="/graft4/checkpoints/pnlong/lnac/lmic/llama/Llama-2-70b"
