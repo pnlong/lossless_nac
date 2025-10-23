@@ -130,6 +130,7 @@ def get_custom_audio_iterator_extended(
     bit_depth: int = 8,
     blocking_size: int = 1024,
     chunk_size_bytes: int = 2048,
+    chunks_per_file: int = 50,
 ) -> Iterator[bytes]:
   """Extended version of get_custom_audio_iterator with bit depth support.
   
@@ -139,6 +140,7 @@ def get_custom_audio_iterator_extended(
     bit_depth: Bit depth for audio processing (8, 16, 24, or 32)
     blocking_size: Size of blocks for stereo processing in samples
     chunk_size_bytes: Size of each chunk in bytes
+    chunks_per_file: Maximum number of chunks to sample from each file
     
   Yields:
     Audio chunks as bytes
@@ -191,9 +193,9 @@ def get_custom_audio_iterator_extended(
       if total_possible_chunks == 0:
         continue
       
-      # Calculate how many chunks to take from this file (limit to 10 per file)
+      # Calculate how many chunks to take from this file (limit to chunks_per_file)
       remaining_chunks_needed = num_chunks - chunk_count
-      chunks_to_take = min(remaining_chunks_needed, 10, total_possible_chunks)  # Max 10 chunks per file
+      chunks_to_take = min(remaining_chunks_needed, chunks_per_file, total_possible_chunks)
       
       # Randomly sample chunks instead of taking first N
       import random
