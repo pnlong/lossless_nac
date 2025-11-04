@@ -12,12 +12,14 @@ LLAMA_MODEL = 'llama-2-7b'
 VALID_LLAMA_MODELS = {'llama-2-7b', 'llama-2-13b', 'llama-2-70b'}
 TOP_K = 100 # top-k next token log-probabilities
 QUANTIZE_LLAMA_MODEL = False
+POST_TOKENIZATION_LENGTH_BYTES = 4 # number of bytes to store the post tokenization length
+POST_TOKENIZATION_LENGTH_ENDIANNESS = 'little' # endianness of the post tokenization length
 
 # whether to merge LMIC's data generators with our custom ones
 MERGE_LMIC_DATA_GENERATOR_FN_DICT = False
 
 # whether to use pydub for FLAC compression
-USE_PYDUB_FOR_FLAC = False
+USE_PYDUB_FOR_FLAC = False # pydub doesn't support variable bit depth
 
 # filepaths (general)
 AUDIO_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data"

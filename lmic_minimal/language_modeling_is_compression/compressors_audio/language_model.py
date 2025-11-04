@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 import functools
 from typing import Callable
+from math import ceil
 
 import haiku as hk
 import numpy as np
@@ -11,6 +12,7 @@ from language_modeling_is_compression import arithmetic_coder
 from language_modeling_is_compression import constants
 from language_modeling_is_compression import transformer
 from language_modeling_is_compression import utils
+from language_modeling_is_compression import utils_audio
 
 
 def _retrieve_model_params() -> hk.Params:
@@ -67,6 +69,9 @@ def compress(
   params = _retrieve_model_params()
   predict_fn = _retrieve_predict_fn(params)
 
+  # Convert the data into ASCII-decodable bytes
+  data, discarded_lsbs, _ = utils_audio.right_shift_bytes_by_one(data)
+
   # Convert the `data` into an array of integers (representing the bytes).
   sequence_array = np.frombuffer(data, dtype=np.uint8)
 
@@ -95,6 +100,9 @@ def compress(
   compressed_bits = ''.join(map(str, output))
   compressed_bytes, num_padded_bits = utils.bits_to_bytes(compressed_bits)
 
+  # Add the discarded LSBs to the compressed data
+  compressed_bytes = compressed_bytes + discarded_lsbs
+
   if return_num_padded_bits:
     return compressed_bytes, num_padded_bits
 
@@ -121,6 +129,10 @@ def decompress(
   """
   params = _retrieve_model_params()
   predict_fn = _retrieve_predict_fn(params)
+
+  # Extract the discarded LSBs from the compressed data
+  discarded_lsbs_length = ceil(uncompressed_length / 8) # length of the discarded LSBs in bytes
+  data, discarded_lsbs = data[:-discarded_lsbs_length], data[-discarded_lsbs_length:]
 
   data_iter = iter(utils.bytes_to_bits(data, num_padded_bits=num_padded_bits))
 
@@ -153,4 +165,9 @@ def decompress(
     probs = np.exp(predict_fn(sequence_array[None])[0, ...])
 
   # Remove the dummy token and convert to bytes.
-  return sequence_array[:-1].tobytes()
+  reconstructed_data = sequence_array[:-1].tobytes()
+
+  # Add the discarded LSBs to the reconstructed data
+  reconstructed_data = utils_audio.add_discarded_lsbs_back(reconstructed_data, discarded_lsbs)
+
+  return reconstructed_data

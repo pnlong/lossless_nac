@@ -29,6 +29,11 @@ _DATASET = flags.DEFINE_enum(
     data_loaders_audio.GET_AUDIO_DATA_GENERATOR_FN_DICT.keys(),
     'Dataset to use.',
 )
+_CHUNK_SIZE = flags.DEFINE_integer(
+    'chunk_size',
+    constants.CHUNK_SIZE,
+    'Chunk size (number of bytes).',
+)
 _NUM_CHUNKS = flags.DEFINE_integer(
     'num_chunks',
     constants.NUM_CHUNKS,
@@ -57,7 +62,6 @@ def evaluate_compressor_chunked(
     get_data_generator_fn: Callable[[], Generator[bytes, None, None]],
     num_chunks: int,
     count_header_only_once: bool = True,
-    mask_fn: Callable[[bytes], tuple[bytes, int]] | None = None,
     use_tqdm: bool = True,
 ) -> tuple[float, float]:
   """Evaluates the compressor on the chunked dataset.
@@ -68,10 +72,6 @@ def evaluate_compressor_chunked(
     num_chunks: The number of chunks to consider
     count_header_only_once: Whether to count the header as part of the
       compressed output only once for the whole dataset or for every chunk
-      individually.
-    mask_fn: The function that masks the data in case the compressor cannot
-      handle all possible byte values (e.g., language models can only process
-      ASCII-decodable data).
     use_tqdm: Whether to use a progress bar or not.
 
   Returns:
@@ -84,9 +84,6 @@ def evaluate_compressor_chunked(
     data_generator = tqdm.tqdm(data_generator, desc='Compressing data, chunked', total=num_chunks)
 
   for data in data_generator:
-    if mask_fn is not None:
-      data, missed_bits = mask_fn(data)
-      num_missed_bits += missed_bits
 
     t0 = time.perf_counter()
     compressed_data = compress_fn(data)
@@ -95,15 +92,6 @@ def evaluate_compressor_chunked(
     running_time += t1 - t0
     raw_length += len(data)
     compressed_length += len(compressed_data)
-
-  # Since language models are trained on ASCII strings, they cannot handle all
-  # byte values. Thus, we mask the data to be ASCII-decodable by zeroing
-  # `num_missed_bits` of the most significant bits. However, this means that we
-  # are effectively only compressing `num_bits - num_missed_bits` bits, so we
-  # rescale the `compressed_length` to account for this.
-  if mask_fn is not None:
-    num_bits = 8 * num_chunks * constants.CHUNK_SIZE_BYTES
-    compressed_length *= num_bits / (num_bits - num_missed_bits)
 
   # We only count the header once for classical compressors.
   if count_header_only_once:
@@ -142,6 +130,9 @@ def main(_) -> None:
   # log the command line arguments, only logging certain arguments for certain compressors
   logging.info('Compressor: %s', _COMPRESSOR.value)
   logging.info('Dataset: %s', _DATASET.value)
+  assert _CHUNK_SIZE.value > 0, f"Chunk size must be greater than 0. Provided chunk size: {_CHUNK_SIZE.value}."
+  logging.info('Chunk size: %s', _CHUNK_SIZE.value)
+  assert _NUM_CHUNKS.value > 0, f"Number of chunks must be greater than 0. Provided number of chunks: {_NUM_CHUNKS.value}."
   logging.info('Num chunks: %s', _NUM_CHUNKS.value)
   if _COMPRESSOR.value == 'flac':
     assert _BIT_DEPTH.value in constants_audio.VALID_BIT_DEPTHS, f"Invalid bit depth: {_BIT_DEPTH.value}. Valid bit depths are {constants_audio.VALID_BIT_DEPTHS}."
@@ -162,6 +153,7 @@ def main(_) -> None:
   compress_fn = compress_fn_dict[_COMPRESSOR.value]
   get_data_generator_fn = functools.partial(
       data_loaders_audio.GET_AUDIO_DATA_GENERATOR_FN_DICT[_DATASET.value],
+      chunk_size=_CHUNK_SIZE.value,
       num_chunks=_NUM_CHUNKS.value,
       bit_depth=_BIT_DEPTH.value,
   )
@@ -178,7 +170,6 @@ def main(_) -> None:
         get_data_generator_fn=get_data_generator_fn,
         num_chunks=_NUM_CHUNKS.value,
         count_header_only_once=True,
-        mask_fn=None,
     )
     logging.info('Unchunked: %.1f [%.1fs]', 100 * unchunked_rate, unchunked_time)
     logging.info('Chunked: %.1f [%.1fs]', 100 * chunked_rate, chunked_time)
@@ -190,7 +181,6 @@ def main(_) -> None:
         get_data_generator_fn=get_data_generator_fn,
         num_chunks=_NUM_CHUNKS.value,
         count_header_only_once=False,
-        mask_fn=utils.right_shift_bytes_by_one,
     )
     logging.info('Chunked: %.1f [%.1fs]', 100 * chunked_rate, chunked_time)
 

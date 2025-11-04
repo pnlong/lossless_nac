@@ -229,7 +229,7 @@ class _CoderBase:
     intervals = self._get_intervals(pdf)
     if not encoding:
       symbol = np.searchsorted(intervals, self._code, side="right") - 1
-    assert 0 <= symbol < pdf.size, ValueError(f"symbol: {symbol} is not in the range [0, {pdf.size})")
+    assert 0 <= symbol < pdf.size
     low_pre_split = self._low
     self._low, self._high = intervals[[symbol, symbol + 1]]
     # Due to integer arithmetics the integer representation of [low, high) has

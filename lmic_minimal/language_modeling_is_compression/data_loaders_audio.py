@@ -56,16 +56,31 @@ def _get_musdb18stereo_dataset():
     yield waveform
 
 
-def _extract_audio_patches(sample: bytes) -> Iterator[bytes]:
+def _validate_arguments(
+    chunk_size: int,
+    num_chunks: int,
+    bit_depth: int,
+) -> None:
+  """Validates arguments."""
+  assert chunk_size > 0, f"Chunk size must be greater than 0. Provided chunk size: {chunk_size}."
+  assert num_chunks > 0, f"Number of chunks must be greater than 0. Provided number of chunks: {num_chunks}."
+  assert bit_depth in constants_audio.VALID_BIT_DEPTHS, f"Invalid bit depth: {bit_depth}. Valid bit depths are {constants_audio.VALID_BIT_DEPTHS}."
+  assert (chunk_size / (bit_depth // 8) % 1) == 0, f"With given bit depth, cannot fit a whole number of samples into a chunk. The number of bytes per sample (bit_depth // 8) must evenly divide the chunk size. Provided chunk size: {chunk_size}. Provided bit depth: {bit_depth}."
+
+
+def _extract_audio_patches(
+    sample: bytes,
+    chunk_size: int = constants.CHUNK_SIZE_BYTES,
+) -> Iterator[bytes]:
   patches = np.array_split(
       np.frombuffer(sample, dtype=np.uint8),
       range(
-          constants.CHUNK_SIZE_BYTES,
+          chunk_size,
           len(sample),
-          constants.CHUNK_SIZE_BYTES,
+          chunk_size,
       ),
   )
-  if len(patches[-1]) != constants.CHUNK_SIZE_BYTES:
+  if len(patches[-1]) != chunk_size:
     patches.pop()
   return map(lambda x: x.tobytes(), patches)
 
@@ -95,19 +110,20 @@ def _convert_waveform_to_bytes(
 
 
 def get_musdb18mono_iterator(
+    chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
     bit_depth: int = constants_audio.BIT_DEPTH,
 ) -> Iterator[bytes]:
   """Returns an iterator for musdb18mono data."""
-  assert bit_depth in constants_audio.VALID_BIT_DEPTHS, f"Invalid bit depth: {bit_depth}. Valid bit depths are {constants_audio.VALID_BIT_DEPTHS}."
+  _validate_arguments(chunk_size, num_chunks, bit_depth)
   musdb18mono_dataset = _get_musdb18mono_dataset()
   musdb18mono_dataset = map( # convert waveform to bytes
-      functools.partial(_convert_waveform_to_bytes, bit_depth = bit_depth),
+      functools.partial(_convert_waveform_to_bytes, bit_depth=bit_depth),
       musdb18mono_dataset,
   )
   idx = 0
   for data in musdb18mono_dataset:
-    for patch in _extract_audio_patches(data):
+    for patch in _extract_audio_patches(data, chunk_size=chunk_size):
       if idx == num_chunks:
         return
       yield patch
@@ -123,22 +139,23 @@ def _interleave_stereo_waveform(
 
 
 def get_musdb18stereo_iterator(
+    chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
     bit_depth: int = constants_audio.BIT_DEPTH,
 ) -> Iterator[bytes]:
   """Returns an iterator for musdb18stereo data."""
-  assert bit_depth in constants_audio.VALID_BIT_DEPTHS, f"Invalid bit depth: {bit_depth}. Valid bit depths are {constants_audio.VALID_BIT_DEPTHS}."
+  _validate_arguments(chunk_size, num_chunks, bit_depth)
   musdb18stereo_dataset = map( # convert stereo waveform to pseudo-mono interleaved waveform
       _interleave_stereo_waveform,
       _get_musdb18stereo_dataset(),
   )
   musdb18stereo_dataset = map( # convert waveform to bytes
-      functools.partial(_convert_waveform_to_bytes, bit_depth = bit_depth),
+      functools.partial(_convert_waveform_to_bytes, bit_depth=bit_depth),
       musdb18stereo_dataset,
   )
   idx = 0
   for data in musdb18stereo_dataset:
-    for patch in _extract_audio_patches(data):
+    for patch in _extract_audio_patches(data, chunk_size=chunk_size):
       if idx == num_chunks:
         return
       yield patch
