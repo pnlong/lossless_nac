@@ -2,10 +2,8 @@
 
 from collections.abc import Iterator
 import warnings
-from typing import Any, Union
+from typing import Any
 from math import ceil
-from scipy.special import logsumexp
-from tqdm import tqdm
 
 import numpy as np
 import torch
@@ -87,17 +85,17 @@ def _ascii_text_to_bytes(text: str) -> bytes:
   return text.encode('ascii', errors='ignore')
 
 
-def _get_dummy_token_for_lossless_compression() -> np.ndarray:
+def _get_dummy_token_for_lossless_compression() -> torch.Tensor:
   """Gets dummy token for lossless compression."""
-  return np.zeros((1,), dtype=np.int64)
+  return torch.zeros((1,), dtype=torch.int64)
 
 
 def _predict_fn(
     model: LlamaForCausalLM,
     tokenizer: LlamaTokenizerFast,
-    token_array: Union[np.ndarray, torch.Tensor],
+    token_array: torch.Tensor,
     use_top_k_filtering: bool = True,
-) -> np.ndarray:
+) -> torch.Tensor:
   """Get token predictions from model for given token array.
   Args:
     model: The Llama model to use.
@@ -105,14 +103,11 @@ def _predict_fn(
     token_array: Array of token IDs (including dummy token at the end) of shape (1, l)
     use_top_k_filtering: Whether to use top-k filtering.
   Returns:
-    Array of shape (1, l, V) with token log-probabilities after top-k filtering
+    Tensor of shape (1, l, V) with token log-probabilities after top-k filtering
   """
 
   # get log probs from model, which yields shape (l, V)
-  if isinstance(token_array, np.ndarray):
-    input_ids = torch.tensor(token_array.tolist(), device=model.device)
-  else:
-    input_ids = token_array.to(model.device)
+  input_ids = token_array.to(model.device)
   V = len(tokenizer) # vocabulary size
   l = token_array.shape[-1]
   with torch.no_grad():
@@ -120,21 +115,20 @@ def _predict_fn(
     logits = outputs.logits[0] # Shape: (l, V)
     logits = logits.to(torch.float32)
     assert logits.shape == (l, V), f"logits shape: {logits.shape} does not match (l, V): {(l, V)}"
-  log_probs = torch.nn.functional.log_softmax(logits, dim=-1).cpu().numpy() # Shape: (l, V)
+  log_probs = torch.nn.functional.log_softmax(logits, dim=-1) # Shape: (l, V)
 
   # apply top-k filtering
   if use_top_k_filtering and constants_audio.TOP_K < V: # if top-k is less than the vocabulary size, apply top-k filtering
-    log_probs_topk = np.full((l, V), -np.inf, dtype=log_probs.dtype) # (l, V) array filled with -inf
-    for i in range(log_probs.shape[0]): # note that log_probs.shape[0] == l
-      pos_log_probs = log_probs[i] # Shape: (V,); for each position i, get the conditional distribution
-      top_k_indices = np.argsort(pos_log_probs)[-constants_audio.TOP_K:] # get top-k indices (k most likely tokens) (indices of the top-k probabilities)
-      log_probs_topk[i, top_k_indices] = pos_log_probs[top_k_indices] # set top-k probabilities to the original probabilities  
-    log_probs = log_probs_topk - logsumexp(log_probs_topk, axis=-1, keepdims=True)
+    log_probs_topk = torch.full((l, V), -torch.inf, dtype=log_probs.dtype).to(log_probs.device) # (l, V) tensor filled with -inf
+    top_k_indices = torch.argsort(log_probs, dim=-1)[:, -constants_audio.TOP_K:] # get top-k indices (k most likely tokens) (indices of the top-k probabilities), Shape: (l, constants_audio.TOP_K)
+    log_probs_topk[:, top_k_indices] = log_probs[:, top_k_indices] # set top-k probabilities to the original probabilities
+    log_probs = log_probs_topk - torch.logsumexp(log_probs_topk, dim=-1, keepdim=True)
+    del log_probs_topk, top_k_indices # free memory
   else: # if top-k is greater than the vocabulary size, use the full distribution
     pass
 
   # return log-probabilities, which is shape (1, l, V)
-  log_probs = np.expand_dims(log_probs, axis=0) # Shape: (1, l, V), add batch dimension
+  log_probs = torch.unsqueeze(log_probs, dim=0) # Shape: (1, l, V), add batch dimension
   return log_probs
 
 
@@ -182,10 +176,10 @@ def compress(
   post_tokenization_length = len(sequence_array) # post_tokenization_length = l
 
   # get probabilities from model
-  dummy_token = torch.from_numpy(_get_dummy_token_for_lossless_compression()).to(sequence_array.device) # Shape: (1,)
+  dummy_token = _get_dummy_token_for_lossless_compression().to(sequence_array.device) # Shape: (1,)
   if use_slow_lossless_compression: # slow lossless compression that matches the decompressor, O(n^2) runtime complexity
-    log_probs = np.zeros((post_tokenization_length, V), dtype=np.float32) # Shape: (l, V)
-    for subsequence_length in tqdm(range(len(log_probs)), desc='compressing'):
+    log_probs = torch.zeros((post_tokenization_length, V), dtype=torch.float32).to(sequence_array.device) # Shape: (l, V)
+    for subsequence_length in range(post_tokenization_length):
       subsequence_probs = _predict_fn(
           model,
           tokenizer,
@@ -199,8 +193,9 @@ def compress(
         torch.cat((sequence_array, dummy_token), dim=0)[None] # Shape: (1, l + 1)
     ) # Shape: (1, l + 1, V)
     log_probs = log_probs[0, 1:, :] # Shape: (l, V)
-  del dummy_token # free memory
+  log_probs = log_probs.cpu().numpy() # convert to numpy array
   probs = np.exp(log_probs)
+  del dummy_token, log_probs # free memory
  
   # STEP 6: Use arithmetic coding in token space (vocab size V=32000)
   # "We can pass them to an arithmetic encoder of vocabulary size V"
@@ -282,18 +277,25 @@ def decompress(
   # step, we need the pdf of the next token given all currently decompressed
   # tokens, but without a dummy token, the last pdf would be that of the last
   # already decompressed token. The value of the dummy token is irrelevant.
-  sequence_array = _get_dummy_token_for_lossless_compression()
-  for idx in tqdm(range(post_tokenization_length), desc='decompressing'):
-    probs = np.exp(_predict_fn(model, tokenizer, sequence_array[None])[0, ...])
+  dummy_token = _get_dummy_token_for_lossless_compression().to(model.device) # Shape: (1,)
+  sequence_array = torch.empty((post_tokenization_length,), dtype=dummy_token.dtype).to(model.device) # Shape: (l,); all zeros
+  for subsequence_length in range(post_tokenization_length):
+    log_probs = _predict_fn(
+        model,
+        tokenizer,
+        torch.cat((sequence_array[:subsequence_length], dummy_token), dim=0)[None] # Shape: (1, subsequence_length + 1)
+    )[0, ...] # Shape: (subsequence_length + 1, V)
+    probs_for_token = np.exp(log_probs[-1].cpu().numpy()) # Shape: (V,); conditional probability for this token
     token = decoder.decode(
-        utils.normalize_pdf_for_arithmetic_coding(probs[idx]) # Shape: (V,); conditional probability for this token
+        utils.normalize_pdf_for_arithmetic_coding(probs_for_token)
     )
-    sequence_array = np.insert(sequence_array, -1, token)
-  sequence_array = sequence_array[:-1] # remove the dummy token
+    sequence_array[subsequence_length] = token
+  del dummy_token # free memory
   
   # STEP 3: Convert tokens back to ASCII string
-  decoded_tokens = sequence_array.tolist() # convert to list
+  decoded_tokens = sequence_array.cpu().numpy().tolist() # convert to list
   ascii_text = tokenizer.decode(decoded_tokens) # convert tokens back to ASCII string
+  del sequence_array, decoded_tokens # free memory
   
   # STEP 4: Convert ASCII back to bytes
   reconstructed_data = _ascii_text_to_bytes(ascii_text) # convert ASCII string back to byte array

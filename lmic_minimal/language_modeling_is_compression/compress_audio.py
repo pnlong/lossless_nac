@@ -77,7 +77,7 @@ def evaluate_compressor_chunked(
   Returns:
     The compression rate and the total running time.
   """
-  num_missed_bits = running_time = raw_length = compressed_length = 0
+  running_time = raw_length = compressed_length = 0
 
   data_generator = get_data_generator_fn()
   if use_tqdm:
@@ -86,7 +86,10 @@ def evaluate_compressor_chunked(
   for data in data_generator:
 
     t0 = time.perf_counter()
-    compressed_data = compress_fn(data)
+    compressed_data = compress_fn(
+        data,
+        use_slow_lossless_compression=constants_audio.USE_SLOW_LOSSLESS_COMPRESSION_FOR_EVALS,
+    )
     t1 = time.perf_counter()
 
     running_time += t1 - t0

@@ -10,7 +10,7 @@ import audioop
 
 path = "/graft3/datasets/pnlong/lnac/sashimi/data/musdb18mono/train/Lushlife - Toynbee Suite.1.left.wav"
 sr, data = scipy.io.wavfile.read(path)
-i_start = 60000
+i_start = 4000
 chunk_size = 2048
 data = data[i_start:i_start + chunk_size]
 data = data.astype(np.int8)

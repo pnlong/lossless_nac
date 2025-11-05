@@ -15,6 +15,8 @@ import functools
 from language_modeling_is_compression import constants
 from language_modeling_is_compression import constants_audio
 
+np.random.seed(42)
+
 
 def _get_musdb18mono_dataset():
   """Returns an iterator that yields numpy arrays, one per song."""
@@ -72,6 +74,7 @@ def _extract_audio_patches(
     sample: bytes,
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
 ) -> Iterator[bytes]:
+  """Extracts audio patches from a sample."""
   patches = np.array_split(
       np.frombuffer(sample, dtype=np.uint8),
       range(
@@ -80,6 +83,8 @@ def _extract_audio_patches(
           chunk_size,
       ),
   )
+  if constants_audio.RANDOMIZE_CHUNKS: # shuffle patches randomly
+    np.random.shuffle(patches)
   if len(patches[-1]) != chunk_size:
     patches.pop()
   return map(lambda x: x.tobytes(), patches)
