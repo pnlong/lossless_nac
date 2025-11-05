@@ -57,7 +57,8 @@ def evaluate_compressor_chunked(
     get_data_generator_fn: Callable[[], Generator[bytes, None, None]],
     num_chunks: int,
     count_header_only_once: bool = True,
-    use_tqdm: bool = True,
+    use_tqdm: bool = constants_audio.USE_TQDM,
+    bit_depth: int = constants_audio.BIT_DEPTH,
 ) -> tuple[float, float]:
   """Evaluates the compressor on the chunked dataset.
 
@@ -68,6 +69,7 @@ def evaluate_compressor_chunked(
     count_header_only_once: Whether to count the header as part of the
       compressed output only once for the whole dataset or for every chunk
     use_tqdm: Whether to use a progress bar or not.
+    bit_depth: Bit depth of the audio data (used to create minimal valid sample for header calculation).
 
   Returns:
     The compression rate and the total running time.
@@ -76,7 +78,7 @@ def evaluate_compressor_chunked(
 
   data_generator = get_data_generator_fn()
   if use_tqdm:
-    data_generator = tqdm.tqdm(data_generator, desc='Compressing data, chunked', total=num_chunks)
+    data_generator = tqdm.tqdm(data_generator, desc='Compressing data, chunked', total=num_chunks, miniters=max(num_chunks // 100, 1), maxinterval=3600)
 
   for data in data_generator:
 
@@ -93,7 +95,8 @@ def evaluate_compressor_chunked(
 
   # We only count the header once for classical compressors.
   if count_header_only_once:
-    header_length = len(compress_fn((0).to_bytes(1, 'little')))
+    minimal_sample = (0).to_bytes(bit_depth // 8, byteorder='little', signed=False) # create a minimal valid sample based on bit depth (at least one sample worth of bytes)
+    header_length = len(compress_fn(minimal_sample))
     compressed_length -= header_length * (num_chunks - 1)
 
   return compressed_length / raw_length, running_time
@@ -103,6 +106,7 @@ def evaluate_compressor_unchunked(
     compress_fn: compressor.Compressor,
     get_data_generator_fn: Callable[[], Generator[bytes, None, None]],
     num_chunks: int,
+    use_tqdm: bool = constants_audio.USE_TQDM,
 ) -> tuple[float, float]:
   """Evaluates the compressor on the unchunked dataset.
 
@@ -110,12 +114,16 @@ def evaluate_compressor_unchunked(
     compress_fn: The function that compresses data.
     get_data_generator_fn: The function that creates a data generator.
     num_chunks: The number of chunks to consider.
+    use_tqdm: Whether to use a progress bar or not.
 
   Returns:
     The compression rate and the total running time.
   """
   all_data = bytearray()
-  for data in tqdm.tqdm(get_data_generator_fn(), desc='Compressing data, unchunked', total=num_chunks):
+  data_generator = get_data_generator_fn()
+  if use_tqdm:
+    data_generator = tqdm.tqdm(data_generator, desc='Compressing data, unchunked', total=num_chunks, miniters=max(num_chunks // 100, 1), maxinterval=3600)
+  for data in data_generator:
     all_data += data
   all_data = bytes(all_data)
   t0 = time.perf_counter()
@@ -164,6 +172,7 @@ def main(_) -> None:
         get_data_generator_fn=get_data_generator_fn,
         num_chunks=_NUM_CHUNKS.value,
         count_header_only_once=True,
+        bit_depth=_BIT_DEPTH.value,
     )
     logging.info('Unchunked: %.1f [%.1fs]', 100 * unchunked_rate, unchunked_time)
     logging.info('Chunked: %.1f [%.1fs]', 100 * chunked_rate, chunked_time)
@@ -175,6 +184,7 @@ def main(_) -> None:
         get_data_generator_fn=get_data_generator_fn,
         num_chunks=_NUM_CHUNKS.value,
         count_header_only_once=False,
+        bit_depth=_BIT_DEPTH.value,
     )
     logging.info('Chunked: %.1f [%.1fs]', 100 * chunked_rate, chunked_time)
 

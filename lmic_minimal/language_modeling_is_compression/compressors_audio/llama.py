@@ -136,7 +136,7 @@ def compress(
     data: bytes,
     llama_model: str = constants_audio.DEFAULT_LLAMA_MODEL,
     return_num_padded_bits: bool = False,
-    use_slow_lossless_compression: bool = False,
+    use_slow_lossless_compression: bool = constants_audio.USE_SLOW_LOSSLESS_COMPRESSION_FOR_EVALS,
 ) -> bytes | tuple[bytes, int]:
   """Compresses the `data` using arithmetic coding and a Llama model.
 

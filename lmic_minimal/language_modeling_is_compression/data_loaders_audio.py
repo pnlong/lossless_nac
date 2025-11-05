@@ -133,6 +133,8 @@ def get_musdb18mono_iterator(
         return
       yield patch
       idx += 1
+      if idx % constants_audio.CHUNKS_PER_SAMPLE == 0:
+        break
 
 
 def _interleave_stereo_waveform(
@@ -165,6 +167,8 @@ def get_musdb18stereo_iterator(
         return
       yield patch
       idx += 1
+      if idx % constants_audio.CHUNKS_PER_SAMPLE == 0:
+        break
 
 
 GET_AUDIO_DATA_GENERATOR_FN_DICT = { # ensure none of the keys are the same as GET_DATA_GENERATOR_FN_DICT in data_loaders.py, since its values will overwrite values with shared key names in this dictionary

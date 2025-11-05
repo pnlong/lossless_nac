@@ -7,8 +7,9 @@ VALID_BIT_DEPTHS = {8, 16, 24}
 # default sample rate
 SAMPLE_RATE = 44100
 
-# whether to shuffle chunks from each sample randomly
+# for chunking audio data
 RANDOMIZE_CHUNKS = True
+CHUNKS_PER_SAMPLE = 10
 
 # default llama model
 DEFAULT_LLAMA_MODEL = 'llama-2-7b'
@@ -27,6 +28,9 @@ USE_PYDUB_FOR_FLAC = False # pydub doesn't support variable bit depth
 
 # whether to use slow lossless compression for evals
 USE_SLOW_LOSSLESS_COMPRESSION_FOR_EVALS = False
+
+# use tqdm for progress bars
+USE_TQDM = True # enabled because we are writing to log files
 
 # filepaths (general)
 AUDIO_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data"
