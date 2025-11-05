@@ -20,27 +20,21 @@ class Compressor(Protocol):
 
 COMPRESSOR_TYPES = {
     'classical': ['flac', 'gzip', 'lzma', 'png'],
-    'arithmetic_coding': ['language_model', 'llama'],
+    'arithmetic_coding': ['language_model'] + constants_audio.VALID_LLAMA_MODELS,
 }
 
-# COMPRESS_FN_DICT: Mapping[str, Compressor] = { # using a function instead
-#     'flac': flac.compress,
-#     'gzip': functools.partial(gzip.compress, compresslevel=9),
-#     'language_model': language_model.compress,
-#     'lzma': lzma.compress,
-#     'png': png.compress,
-# }
 def get_compress_fn_dict(
     bit_depth: int = constants_audio.BIT_DEPTH,
     sample_rate: int = constants_audio.SAMPLE_RATE,
-    llama_model: str = constants_audio.LLAMA_MODEL,
   ) -> Mapping[str, Compressor]:
   """Returns the compress function dictionary."""
-  return {
+  compress_fn_dict = {
     'flac': functools.partial(flac.compress, bit_depth=bit_depth, sample_rate=sample_rate),
     'gzip': functools.partial(gzip.compress, compresslevel=9),
     'language_model': language_model.compress,
     'lzma': lzma.compress,
     'png': png.compress,
-    'llama': functools.partial(llama.compress, llama_model=llama_model),
   }
+  for llama_model in constants_audio.VALID_LLAMA_MODELS: # add llama models to the compress function dictionary
+    compress_fn_dict[llama_model] = functools.partial(llama.compress, llama_model=llama_model)
+  return compress_fn_dict

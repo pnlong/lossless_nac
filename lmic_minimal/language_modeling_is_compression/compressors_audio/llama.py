@@ -33,7 +33,7 @@ _HF_MODEL_CACHE = dict()
 
 
 def _load_llama_model(
-    llama_model: str,
+    llama_model: str = constants_audio.DEFAULT_LLAMA_MODEL,
     silence_progress_bar: bool = True,
 ) -> dict[str, Any]:
   """Loads HuggingFace Llama model with quantization.
@@ -94,7 +94,7 @@ def _predict_fn(
     model: LlamaForCausalLM,
     tokenizer: LlamaTokenizerFast,
     token_array: torch.Tensor,
-    use_top_k_filtering: bool = True,
+    use_top_k_filtering: bool = constants_audio.LLAMA_USE_TOP_K,
 ) -> torch.Tensor:
   """Get token predictions from model for given token array.
   Args:
@@ -134,7 +134,7 @@ def _predict_fn(
 
 def compress(
     data: bytes,
-    llama_model: str,
+    llama_model: str = constants_audio.DEFAULT_LLAMA_MODEL,
     return_num_padded_bits: bool = False,
     use_slow_lossless_compression: bool = False,
 ) -> bytes | tuple[bytes, int]:
@@ -228,7 +228,7 @@ def compress(
 
 def decompress(
     data: bytes,
-    llama_model: str = constants_audio.LLAMA_MODEL,
+    llama_model: str = constants_audio.DEFAULT_LLAMA_MODEL,
     num_padded_bits: int = 0,
     uncompressed_length: int = constants.CHUNK_SIZE_BYTES,
 ) -> bytes:

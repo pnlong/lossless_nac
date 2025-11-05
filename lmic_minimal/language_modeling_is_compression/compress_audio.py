@@ -4,6 +4,7 @@ from collections.abc import Generator
 import functools
 import time
 from typing import Callable
+import inspect
 
 from absl import app
 from absl import flags
@@ -31,7 +32,7 @@ _DATASET = flags.DEFINE_enum(
 )
 _CHUNK_SIZE = flags.DEFINE_integer(
     'chunk_size',
-    constants.CHUNK_SIZE,
+    constants.CHUNK_SIZE_BYTES,
     'Chunk size (number of bytes).',
 )
 _NUM_CHUNKS = flags.DEFINE_integer(
@@ -48,12 +49,6 @@ _SAMPLE_RATE = flags.DEFINE_integer(
     'sample_rate',
     constants_audio.SAMPLE_RATE,
     'Sample rate (Hz).',
-)
-_LLAMA_MODEL = flags.DEFINE_enum(
-    'llama_model',
-    constants_audio.LLAMA_MODEL,
-    constants_audio.VALID_LLAMA_MODELS,
-    'Llama model to use.',
 )
 
 
@@ -86,10 +81,10 @@ def evaluate_compressor_chunked(
   for data in data_generator:
 
     t0 = time.perf_counter()
-    compressed_data = compress_fn(
-        data,
-        use_slow_lossless_compression=constants_audio.USE_SLOW_LOSSLESS_COMPRESSION_FOR_EVALS,
-    )
+    if 'use_slow_lossless_compression' in inspect.signature(compress_fn).parameters.keys(): # if the compress function has a use_slow_lossless_compression keyword argument, pass it
+      compressed_data = compress_fn(data, use_slow_lossless_compression=constants_audio.USE_SLOW_LOSSLESS_COMPRESSION_FOR_EVALS)
+    else:
+      compressed_data = compress_fn(data)
     t1 = time.perf_counter()
 
     running_time += t1 - t0
@@ -143,15 +138,11 @@ def main(_) -> None:
   if _COMPRESSOR.value == 'flac':
     assert _SAMPLE_RATE.value > 0, f"Sample rate must be greater than 0. Provided sample rate: {_SAMPLE_RATE.value}."
     logging.info('Sample rate: %s', _SAMPLE_RATE.value)
-  if _COMPRESSOR.value == 'llama': # if the compressor is llama, we need to check if the llama model is valid
-    assert _LLAMA_MODEL.value in constants_audio.VALID_LLAMA_MODELS, f"Invalid llama model: {_LLAMA_MODEL.value}. Valid llama models are {constants_audio.VALID_LLAMA_MODELS}."
-    logging.info('Llama model: %s', _LLAMA_MODEL.value)
 
   # get the compress function and data generator function
   compress_fn_dict = compressor.get_compress_fn_dict( # get compress function dictionary
     bit_depth=_BIT_DEPTH.value,
     sample_rate=_SAMPLE_RATE.value,
-    llama_model=_LLAMA_MODEL.value,
   )
   compress_fn = compress_fn_dict[_COMPRESSOR.value]
   get_data_generator_fn = functools.partial(

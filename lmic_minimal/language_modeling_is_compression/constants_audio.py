@@ -11,8 +11,9 @@ SAMPLE_RATE = 44100
 RANDOMIZE_CHUNKS = True
 
 # default llama model
-LLAMA_MODEL = 'llama-2-7b'
-VALID_LLAMA_MODELS = {'llama-2-7b', 'llama-2-13b', 'llama-2-70b'}
+DEFAULT_LLAMA_MODEL = 'llama-2-7b'
+VALID_LLAMA_MODELS = ['llama-2-7b', 'llama-2-13b', 'llama-2-70b']
+LLAMA_USE_TOP_K = True
 TOP_K = 100 # top-k next token log-probabilities
 QUANTIZE_LLAMA_MODEL = False
 POST_TOKENIZATION_LENGTH_BYTES = 4 # number of bytes to store the post tokenization length
@@ -25,7 +26,7 @@ MERGE_LMIC_DATA_GENERATOR_FN_DICT = False
 USE_PYDUB_FOR_FLAC = False # pydub doesn't support variable bit depth
 
 # whether to use slow lossless compression for evals
-USE_SLOW_LOSSLESS_COMPRESSION_FOR_EVALS = True
+USE_SLOW_LOSSLESS_COMPRESSION_FOR_EVALS = False
 
 # filepaths (general)
 AUDIO_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data"
