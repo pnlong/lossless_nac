@@ -159,6 +159,8 @@ def compress(
     The compressed data.
   """
 
+  raise NotImplementedError("Trilobyte is not implemented yet.")
+
   # STEP 0: Convert the data into ASCII-decodable bytes
   data, discarded_lsbs, _ = utils_audio.right_shift_bytes_by_one(data)
     
@@ -252,6 +254,8 @@ def decompress(
   Returns:
     The decompressed data.
   """
+
+  raise NotImplementedError("Trilobyte is not implemented yet.")
 
   # STEP 0: Extract the post tokenization length from the compressed data
   post_tokenization_length = int.from_bytes(data[:constants_audio.POST_TOKENIZATION_LENGTH_BYTES], byteorder=constants_audio.POST_TOKENIZATION_LENGTH_ENDIANNESS, signed=False)

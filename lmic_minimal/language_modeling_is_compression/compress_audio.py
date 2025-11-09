@@ -174,8 +174,8 @@ def main(_) -> None:
         count_header_only_once=True,
         bit_depth=_BIT_DEPTH.value,
     )
-    logging.info('Unchunked: %.1f [%.1fs]', 100 * unchunked_rate, unchunked_time)
-    logging.info('Chunked: %.1f [%.1fs]', 100 * chunked_rate, chunked_time)
+    logging.info('Unchunked: %.1f (%.1fx) [%.1fs]', 100 * unchunked_rate, 1 / unchunked_rate, unchunked_time)
+    logging.info('Chunked: %.1f (%.1fx) [%.1fs]', 100 * chunked_rate, 1 / chunked_rate, chunked_time)
 
   # for arithmetic coding compressors, we evaluate the compressor on only the chunked data
   elif _COMPRESSOR.value in compressor.COMPRESSOR_TYPES['arithmetic_coding']:
@@ -186,7 +186,7 @@ def main(_) -> None:
         count_header_only_once=False,
         bit_depth=_BIT_DEPTH.value,
     )
-    logging.info('Chunked: %.1f [%.1fs]', 100 * chunked_rate, chunked_time)
+    logging.info('Chunked: %.1f (%.1fx) [%.1fs]', 100 * chunked_rate, 1 / chunked_rate, chunked_time)
 
   # unknown compressor
   else:

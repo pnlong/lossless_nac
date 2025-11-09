@@ -10,6 +10,7 @@ from language_modeling_is_compression.compressors_audio import flac
 from language_modeling_is_compression.compressors_audio import language_model
 from language_modeling_is_compression.compressors_audio import png
 from language_modeling_is_compression.compressors_audio import llama
+from language_modeling_is_compression.compressors_audio import trilobyte
 
 
 class Compressor(Protocol):
@@ -34,6 +35,7 @@ def get_compress_fn_dict(
     'language_model': language_model.compress,
     'lzma': lzma.compress,
     'png': png.compress,
+    'trilobyte': trilobyte.compress,
   }
   for llama_model in constants_audio.VALID_LLAMA_MODELS: # add llama models to the compress function dictionary
     compress_fn_dict[llama_model] = functools.partial(llama.compress, llama_model=llama_model)

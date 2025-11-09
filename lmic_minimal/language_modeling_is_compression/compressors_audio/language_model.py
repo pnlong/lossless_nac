@@ -7,12 +7,14 @@ from math import ceil
 
 import haiku as hk
 import numpy as np
+import torch.nn.functional as F
 
 from language_modeling_is_compression import arithmetic_coder
 from language_modeling_is_compression import constants
 from language_modeling_is_compression import transformer
 from language_modeling_is_compression import utils
 from language_modeling_is_compression import utils_audio
+from language_modeling_is_compression import constants_audio
 
 
 def _retrieve_model_params() -> hk.Params:
@@ -85,6 +87,11 @@ def compress(
     log_probs = np.vstack(log_probs)
   else:
     log_probs = predict_fn(sequence_array[None])[0, ...]
+  if constants_audio.OUTPUT_LOSS_AND_BPB_TO_VERIFY_COMPRESSION: # output loss and bits per byte for each chunk
+    loss = F.nll_loss(input=log_probs, target=sequence_array).item() # loss is the negative log-likelihood of the predicted tokens
+    bpb = loss / np.log(2).item()
+    print(f"Loss: {loss:8.4f}, BPB: {bpb:8.4f}")
+    del loss, bpb # free memory
   probs = np.exp(log_probs)
 
   output = list()

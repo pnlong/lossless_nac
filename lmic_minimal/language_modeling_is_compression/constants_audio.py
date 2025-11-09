@@ -20,8 +20,8 @@ QUANTIZE_LLAMA_MODEL = False
 POST_TOKENIZATION_LENGTH_BYTES = 4 # number of bytes to store the post tokenization length
 POST_TOKENIZATION_LENGTH_ENDIANNESS = 'little' # endianness of the post tokenization length
 
-# whether to merge LMIC's data generators with our custom ones
-MERGE_LMIC_DATA_GENERATOR_FN_DICT = False
+# print loss and bits per byte for each chunk with Llama
+OUTPUT_LOSS_AND_BPB_TO_VERIFY_COMPRESSION = True
 
 # whether to use pydub for FLAC compression
 USE_PYDUB_FOR_FLAC = False # pydub doesn't support variable bit depth
@@ -37,10 +37,25 @@ AUDIO_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data"
 
 # MUSDB18 Mono
 MUSDB18MONO_DATA_DIR = f"{AUDIO_DATA_DIR}/musdb18mono"
-MUSDB18MONO_MIXES_ONLY = False
-MUSDB18MONO_PARTITION = "all" # "train" or "valid"
 
 # MUSDB18 Stereo
 MUSDB18STEREO_DATA_DIR = f"{AUDIO_DATA_DIR}/musdb18stereo"
-MUSDB18STEREO_MIXES_ONLY = False
-MUSDB18STEREO_PARTITION = "all" # "train" or "valid"
+
+# LibriSpeech
+LIBRISPEECH_SPLIT = "dev-clean" # "dev-clean" or "train-clean-100"
+LIBRISPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/librispeech/LibriSpeech/{LIBRISPEECH_SPLIT}"
+
+# LJSpeech
+LJSPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/ljspeech"
+
+# Epidemic Sound
+EPIDEMIC_SOUND_DATA_DIR = "/graft1/datasets/kechen/epidemic/epidemic_sound" # pando
+
+# VCTK (speech)
+VCTK_DATA_DIR = "/graft2/datasets/znovack/VCTK-Corpus-0.92/wav48_silence_trimmed" # pando
+
+# Torrent Data 16-bit
+TORRENT_DATA_DATA_DIR = "/graft3/datasets/znovack/trilobyte" # yggdrasil
+
+# Birdvox bioacoustic data
+BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox/unit10" # yggdrasil
