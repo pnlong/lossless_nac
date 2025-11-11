@@ -1,8 +1,9 @@
 """Utility functions for audio data."""
 
 from language_modeling_is_compression import utils
+from typing import Tuple
 
-def right_shift_bytes_by_one(data: bytes) -> tuple[bytes, bytes, int]:
+def right_shift_bytes_by_one(data: bytes) -> Tuple[bytes, bytes, int]:
   """Returns right-shifted bytes, i.e., divided by 2, and the number of bytes.
 
   Our language models were trained on ASCII data. However, not all bytes can be

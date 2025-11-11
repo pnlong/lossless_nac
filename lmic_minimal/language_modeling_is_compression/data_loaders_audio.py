@@ -12,12 +12,12 @@ import pandas as pd
 import numpy as np
 import scipy.io.wavfile
 import soundfile as sf
-import librosa
 import functools
 import glob
 
 from language_modeling_is_compression import constants
 from language_modeling_is_compression import constants_audio
+from language_modeling_is_compression import utils_audio
 
 np.random.seed(42)
 
@@ -137,9 +137,7 @@ def _get_birdvox_dataset() -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.BIRDVOX_DATA_DIR}/**/*.flac", recursive=True):
-    waveform, sample_rate = librosa.load(path, sr=None, dtype=np.float32)
-    waveform = (waveform * ((2 ** 15) - 1)).astype(np.int16)
-    # waveform, sample_rate = sf.read(path, dtype=np.int16) # get the audio as a numpy array, assuming 16-bit signed audio, which birdvox uses
+    waveform, sample_rate = sf.read(path, dtype=np.int16) # get the audio as a numpy array, assuming 16-bit signed audio, which birdvox uses
     yield waveform
 
 
