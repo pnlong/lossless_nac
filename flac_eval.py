@@ -72,6 +72,43 @@ BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox/unit06" # yggdrasil
 # HELPER FUNCTIONS
 ##################################################
 
+
+def load_audio(
+    path: str,
+    bit_depth: int,
+    expected_sample_rate: int = None,
+) -> Tuple[np.ndarray, int]:
+    """
+    Load an audio file and convert it to the target bit depth.
+    
+    Args:
+        path: The path to the audio file.
+        bit_depth: The target bit depth. See VALID_BIT_DEPTHS for valid bit depths.
+        expected_sample_rate: The expected sample rate. If None, the sample rate will not be checked.
+    
+    Returns:
+        The waveform and sample rate. Note that waveform will always be signed integer data type.
+    """
+
+    # ensure bit depth is valid
+    assert bit_depth in VALID_BIT_DEPTHS, f"Invalid bit depth: {bit_depth}. Valid bit depths are {VALID_BIT_DEPTHS}."
+
+    # read audio file
+    waveform, sample_rate = sf.read(file = path, dtype = np.float32) # get the audio as a numpy array
+    waveform_dtype = np.int8 if bit_depth == 8 else np.int16 if bit_depth == 16 else np.int32
+    waveform = (waveform * ((2 ** (bit_depth - 1)) - 1)).astype(waveform_dtype)
+
+    # make assertions
+    if expected_sample_rate is not None:
+        assert sample_rate == expected_sample_rate, f"Sample rate mismatch: {sample_rate} != {expected_sample_rate}."
+    waveform_min, waveform_max = waveform.min(), waveform.max()
+    expected_waveform_min, expected_waveform_max = -(2 ** (bit_depth - 1)), (2 ** (bit_depth - 1)) - 1
+    assert waveform_min >= expected_waveform_min and waveform_max <= expected_waveform_max, f"Waveform must be in the range [{expected_waveform_min}, {expected_waveform_max}]. Got min {waveform_min} and max {waveform_max}."
+    
+    # return waveform and sample rate
+    return waveform, sample_rate
+
+
 def convert_bit_depth(
     waveform: np.ndarray,
     bit_depth: int,
@@ -153,6 +190,7 @@ class Dataset:
         name: str,
         sample_rate: int,
         bit_depth: int,
+        native_bit_depth: int,
         is_mono: bool,
         paths: List[str],
     ):
@@ -160,6 +198,7 @@ class Dataset:
         self.name: str = name
         self.sample_rate: int = sample_rate
         self.bit_depth: int = bit_depth
+        self.native_bit_depth: int = native_bit_depth
         self.is_mono: bool = is_mono
         self.paths: List[str] = paths
 
@@ -175,6 +214,19 @@ class Dataset:
         """Return the number of items in the dataset."""
         return len(self.paths)
 
+    def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
+        """Return the item at the given index."""
+        waveform, sample_rate = load_audio(
+            path = self.paths[index],
+            bit_depth = self.native_bit_depth,
+            expected_sample_rate = self.sample_rate,
+        )
+        waveform = convert_bit_depth(
+            waveform = waveform,
+            bit_depth = self.bit_depth,
+        )
+        return waveform, sample_rate
+
 ##################################################
 
 
@@ -185,14 +237,14 @@ class Dataset:
 class MUSDB18MonoDataset(Dataset):
     """Dataset for MUSDB18 Mono."""
 
-    native_bit_depth: int = 16
-
     def __init__(
         self,
-        bit_depth: int = native_bit_depth,
+        bit_depth: int = None,
         mixes_only: bool = False,
         partition: str = None,
     ):
+        native_bit_depth: int = 16
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
         self.mixes_only: bool = mixes_only
         self.partition: str = partition
         paths = self._get_paths()
@@ -200,17 +252,10 @@ class MUSDB18MonoDataset(Dataset):
             name = "musdb18mono" + ("_mixes" if self.mixes_only else "") + (f"_{partition}" if partition is not None else ""),
             sample_rate = 44100,
             bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
             is_mono = True,
             paths = paths,
         )
-
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
-        """Return the item at the given index."""
-        sample_rate, waveform = scipy.io.wavfile.read(self.paths[index])
-        assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
-        assert waveform.dtype == np.int16, f"Expected waveform to be np.int16, but is {waveform.dtype}."
-        waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
-        return waveform, sample_rate
 
     def _get_paths(self) -> List[str]:
         """Return the paths of the dataset."""
@@ -229,14 +274,14 @@ class MUSDB18MonoDataset(Dataset):
 class MUSDB18StereoDataset(Dataset):
     """Dataset for MUSDB18 Stereo."""
 
-    native_bit_depth: int = 16
-
     def __init__(
         self,
-        bit_depth: int = native_bit_depth,
+        bit_depth: int = None,
         mixes_only: bool = False,
         partition: str = None,
     ):
+        native_bit_depth: int = 16
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
         self.mixes_only: bool = mixes_only
         self.partition: str = partition
         paths = self._get_paths()
@@ -244,17 +289,10 @@ class MUSDB18StereoDataset(Dataset):
             name = "musdb18stereo" + ("_mixes" if self.mixes_only else "") + (f"_{partition}" if partition is not None else ""),
             sample_rate = 44100,
             bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
             is_mono = False,
             paths = paths,
         )
-
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
-        """Return the item at the given index."""
-        sample_rate, waveform = scipy.io.wavfile.read(self.paths[index])
-        assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
-        assert waveform.dtype == np.int16, f"Expected waveform to be np.int16, but is {waveform.dtype}."
-        waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
-        return waveform, sample_rate
 
     def _get_paths(self) -> List[str]:
         """Return the paths of the dataset."""
@@ -273,28 +311,21 @@ class MUSDB18StereoDataset(Dataset):
 class LibriSpeechDataset(Dataset):
     """Dataset for LibriSpeech."""
 
-    native_bit_depth: int = 16
-
     def __init__(
         self,
-        bit_depth: int = native_bit_depth,
+        bit_depth: int = None,
     ):
+        native_bit_depth: int = 16
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
         paths = self._get_paths()
         super().__init__(
             name = "librispeech",
             sample_rate = 16000,
             bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
             is_mono = True,
             paths = paths,
         )
-
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
-        """Return the item at the given index."""
-        waveform, sample_rate = sf.read(file = self.paths[index], dtype = np.int16)
-        assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
-        assert waveform.dtype == np.int16, f"Expected waveform to be np.int16, but is {waveform.dtype}."
-        waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
-        return waveform, sample_rate
 
     def _get_paths(self) -> List[str]:
         """Return the paths of the dataset."""
@@ -306,28 +337,21 @@ class LibriSpeechDataset(Dataset):
 class LJSpeechDataset(Dataset):
     """Dataset for LJSpeech."""
 
-    native_bit_depth: int = 16
-
     def __init__(
         self,
-        bit_depth: int = native_bit_depth,
+        bit_depth: int = None,
     ):
+        native_bit_depth: int = 16
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
         paths = self._get_paths()
         super().__init__(
             name = "ljspeech",
             sample_rate = 22050,
             bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
             is_mono = True,
             paths = paths,
         )
-
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
-        """Return the item at the given index."""
-        sample_rate, waveform = scipy.io.wavfile.read(self.paths[index])
-        assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
-        assert waveform.dtype == np.int16, f"Expected waveform to be np.int16, but is {waveform.dtype}."
-        waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
-        return waveform, sample_rate
 
     def _get_paths(self) -> List[str]:
         """Return the paths of the dataset."""
@@ -339,31 +363,21 @@ class LJSpeechDataset(Dataset):
 class EpidemicSoundDataset(Dataset):
     """Dataset for Epidemic Sound."""
 
-    native_bit_depth: int = 24
-    
     def __init__(
         self,
-        bit_depth: int = native_bit_depth,
+        bit_depth: int = None,
     ):
+        native_bit_depth: int = 24
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
         paths = self._get_paths()
         super().__init__(
             name = "epidemic",
             sample_rate = 48000,
             bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
             is_mono = True,
             paths = paths,
         )
-
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
-        """Return the item at the given index."""
-        waveform, sample_rate = sf.read(file = self.paths[index], dtype = np.float32)
-        waveform = (waveform * ((2 ** 23) - 1)).astype(np.int32) # convert to 24-bit
-        assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
-        assert waveform.dtype == np.int32, f"Expected waveform to be np.int32, but is {waveform.dtype}."
-        waveform_min, waveform_max = waveform.min(), waveform.max()
-        assert waveform_min >= -(2 ** 23) and waveform_max <= (2 ** 23) - 1, f"Waveform must be in the range [-(2 ** 23), (2 ** 23) - 1]. Got min {waveform_min} and max {waveform_max}."
-        waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
-        return waveform, sample_rate
 
     def _get_paths(self) -> List[str]:
         """Return the paths of the dataset."""
@@ -375,28 +389,21 @@ class EpidemicSoundDataset(Dataset):
 class VCTKDataset(Dataset):
     """Dataset for VCTK."""
 
-    native_bit_depth: int = 16
-    
     def __init__(
         self,
-        bit_depth: int = native_bit_depth,
+        bit_depth: int = None,
     ):
+        native_bit_depth: int = 16
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
         paths = self._get_paths()
         super().__init__(
             name = "vctk",
             sample_rate = 48000,
             bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
             is_mono = True,
             paths = paths,
         )
-
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
-        """Return the item at the given index."""
-        waveform, sample_rate = sf.read(file = self.paths[index], dtype = np.int16)
-        assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
-        assert waveform.dtype == np.int16, f"Expected waveform to be np.int16, but is {waveform.dtype}."
-        waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
-        return waveform, sample_rate
 
     def _get_paths(self) -> List[str]:
         """Return the paths of the dataset."""
@@ -419,26 +426,10 @@ class TorrentDataset(Dataset):
             name = f"torrent{native_bit_depth}b" + (f"_{subset}" if subset is not None else ""),
             sample_rate = 48000,
             bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
             is_mono = False,
             paths = paths,
         )
-
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
-        """Return the item at the given index."""
-        if self.native_bit_depth == 16:
-            waveform, sample_rate = sf.read(file = self.paths[index], dtype = np.int16)
-            assert waveform.dtype == np.int16, f"Expected waveform to be np.int16, but is {waveform.dtype}."
-        elif self.native_bit_depth == 24:
-            waveform, sample_rate = sf.read(file = self.paths[index], dtype = np.float32)
-            waveform = (waveform * ((2 ** 23) - 1)).astype(np.int32) # convert to 24-bit
-            assert waveform.dtype == np.int32, f"Expected waveform to be np.int32, but is {waveform.dtype}."
-            waveform_min, waveform_max = waveform.min(), waveform.max()
-            assert waveform_min >= -(2 ** 23) and waveform_max <= (2 ** 23) - 1, f"Waveform must be in the range [-(2 ** 23), (2 ** 23) - 1]. Got min {waveform_min} and max {waveform_max}."
-        else:
-            raise ValueError(f"Invalid native bit depth: {self.native_bit_depth}. Valid native bit depths are 16 and 24.")
-        assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
-        waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
-        return waveform, sample_rate
 
     def _get_paths(self, subset: str) -> List[str]:
         """Return the paths of the dataset."""
@@ -456,17 +447,17 @@ class TorrentDataset(Dataset):
 # Torrent Dataset 16-bit
 class Torrent16BDataset(TorrentDataset):
     """Dataset for Torrented Audio Files (16-bit)."""
-
-    native_bit_depth: int = 16
     
     def __init__(
         self,
-        bit_depth: int = native_bit_depth,
+        bit_depth: int = None,
         subset: str = None,
     ):
+        native_bit_depth: int = 16
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
         super().__init__(
             bit_depth = bit_depth,
-            native_bit_depth = self.native_bit_depth,
+            native_bit_depth = native_bit_depth,
             subset = subset,
         )
 
@@ -475,16 +466,16 @@ class Torrent16BDataset(TorrentDataset):
 class Torrent24BDataset(TorrentDataset):
     """Dataset for Torrented Audio Files (24-bit)."""
 
-    native_bit_depth: int = 24
-    
     def __init__(
         self,
-        bit_depth: int = native_bit_depth,
+        bit_depth: int = None,
         subset: str = None,
     ):
+        native_bit_depth: int = 24
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
         super().__init__(
             bit_depth = bit_depth,
-            native_bit_depth = self.native_bit_depth,
+            native_bit_depth = native_bit_depth,
             subset = subset,
         )
 
@@ -493,28 +484,21 @@ class Torrent24BDataset(TorrentDataset):
 class BirdvoxDataset(Dataset):
     """Dataset for Birdvox."""
 
-    native_bit_depth: int = 16
-    
     def __init__(
         self,
-        bit_depth: int = native_bit_depth,
+        bit_depth: int = None,
     ):
+        native_bit_depth: int = 16
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
         paths = self._get_paths()
         super().__init__(
             name = "birdvox",
             sample_rate = 24000,
             bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
             is_mono = True,
             paths = paths,
         )
-
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
-        """Return the item at the given index."""
-        waveform, sample_rate = sf.read(file = self.paths[index], dtype = np.int16) # get the audio as a numpy array, assuming 16-bit signed audio, which birdvox uses
-        assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
-        assert waveform.dtype == np.int16, f"Expected waveform to be np.int16, but is {waveform.dtype}."
-        waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
-        return waveform, sample_rate
 
     def _get_paths(self) -> List[str]:
         """Return the paths of the dataset."""
