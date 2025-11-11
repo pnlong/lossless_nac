@@ -16,12 +16,9 @@ from typing import List, Tuple
 import tempfile
 import soundfile as sf
 import scipy.io.wavfile
-import librosa
 import pandas as pd
 import glob
 import datetime
-import subprocess
-import io
 
 ##################################################
 
@@ -342,7 +339,7 @@ class LJSpeechDataset(Dataset):
 class EpidemicSoundDataset(Dataset):
     """Dataset for Epidemic Sound."""
 
-    native_bit_depth: int = 16
+    native_bit_depth: int = 24
     
     def __init__(
         self,
@@ -351,7 +348,7 @@ class EpidemicSoundDataset(Dataset):
         paths = self._get_paths()
         super().__init__(
             name = "epidemic",
-            sample_rate = 24000,
+            sample_rate = 48000,
             bit_depth = bit_depth,
             is_mono = True,
             paths = paths,
@@ -359,9 +356,12 @@ class EpidemicSoundDataset(Dataset):
 
     def __getitem__(self, index: int) -> Tuple[np.ndarray, int]:
         """Return the item at the given index."""
-        waveform, sample_rate = sf.read(file = self.paths[index], dtype = np.int16)
+        waveform, sample_rate = sf.read(file = self.paths[index], dtype = np.float32)
+        waveform = (waveform * ((2 ** 23) - 1)).astype(np.int32) # convert to 24-bit
         assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
-        assert waveform.dtype == np.int16, f"Expected waveform to be np.int16, but is {waveform.dtype}."
+        assert waveform.dtype == np.int32, f"Expected waveform to be np.int32, but is {waveform.dtype}."
+        waveform_min, waveform_max = waveform.min(), waveform.max()
+        assert waveform_min >= -(2 ** 23) and waveform_max <= (2 ** 23) - 1, f"Waveform must be in the range [-(2 ** 23), (2 ** 23) - 1]. Got min {waveform_min} and max {waveform_max}."
         waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
         return waveform, sample_rate
 
@@ -384,7 +384,7 @@ class VCTKDataset(Dataset):
         paths = self._get_paths()
         super().__init__(
             name = "vctk",
-            sample_rate = 24000,
+            sample_rate = 48000,
             bit_depth = bit_depth,
             is_mono = True,
             paths = paths,
@@ -431,12 +431,12 @@ class TorrentDataset(Dataset):
         elif self.native_bit_depth == 24:
             waveform, sample_rate = sf.read(file = self.paths[index], dtype = np.float32)
             waveform = (waveform * ((2 ** 23) - 1)).astype(np.int32) # convert to 24-bit
-            # waveform = np.clip(a = waveform, a_min = 0, a_max = 3)
             assert waveform.dtype == np.int32, f"Expected waveform to be np.int32, but is {waveform.dtype}."
             waveform_min, waveform_max = waveform.min(), waveform.max()
             assert waveform_min >= -(2 ** 23) and waveform_max <= (2 ** 23) - 1, f"Waveform must be in the range [-(2 ** 23), (2 ** 23) - 1]. Got min {waveform_min} and max {waveform_max}."
         else:
             raise ValueError(f"Invalid native bit depth: {self.native_bit_depth}. Valid native bit depths are 16 and 24.")
+        assert sample_rate == self.sample_rate, f"Sample rate mismatch: {sample_rate} != {self.sample_rate}."
         waveform = convert_bit_depth(waveform = waveform, bit_depth = self.bit_depth)
         return waveform, sample_rate
 
