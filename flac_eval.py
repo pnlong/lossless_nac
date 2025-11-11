@@ -224,7 +224,7 @@ class Dataset:
 
     def get_description(self) -> str:
         """Return a description of the dataset."""
-        return f"{self.name} dataset ({len(self)} files, {self.sample_rate} Hz, {self.bit_depth}-bit, {'mono' if self.is_mono else 'stereo'})"
+        return f"{self.name} dataset ({len(self)} files, " + (f"{self.sample_rate} Hz" if self.sample_rate is not None else "variable sample rate") + f", {self.bit_depth}-bit, {'mono' if self.is_mono else 'stereo'})"
 
     def __len__(self):
         """Return the number of items in the dataset."""
@@ -447,7 +447,7 @@ class TorrentDataset(Dataset):
         )
         super().__init__(
             name = f"torrent{native_bit_depth}b" + (f"_{subset}" if subset is not None else ""),
-            sample_rate = 48000,
+            sample_rate = 44100,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
             is_mono = False,
