@@ -72,6 +72,22 @@ BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox/unit06" # yggdrasil
 # HELPER FUNCTIONS
 ##################################################
 
+def load_output_results(
+    filepath: str = DEFAULT_OUTPUT_FILEPATH,
+) -> pd.DataFrame:
+    """
+    Load the output results from a file.
+    
+    Args:
+        filepath: The path to the file.
+    
+    Returns:
+        A pandas DataFrame containing the output results.
+    """
+    results = pd.read_csv(filepath_or_buffer = filepath, sep = ",", header = 0, index_col = False)
+    results = results[["dataset", "bit_depth", "is_native_bit_depth", "overall_compression_rate"]]
+    return results
+
 
 def load_audio(
     path: str,
@@ -233,8 +249,47 @@ class Dataset:
 # DATASETS
 ##################################################
 
+# MUSDB18 Dataset Base Class
+class MUSDB18Dataset(Dataset):
+    """Dataset for MUSDB18."""
+
+    def __init__(
+        self,
+        is_mono: bool,
+        bit_depth: int = None,
+        mixes_only: bool = False,
+        partition: str = None,
+    ):
+        native_bit_depth: int = 16
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        self.mixes_only: bool = mixes_only
+        self.partition: str = partition
+        paths = self._get_paths()
+        super().__init__(
+            name = "musdb18" + ("mono" if is_mono else "stereo") + ("_mixes" if self.mixes_only else "") + (f"_{partition}" if partition is not None else ""),
+            sample_rate = 44100,
+            bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
+            is_mono = is_mono,
+            paths = paths,
+        )
+
+    def _get_paths(self) -> List[str]:
+        """Return the paths of the dataset."""
+        data_dir = MUSDB18MONO_DATA_DIR if self.is_mono else MUSDB18STEREO_DATA_DIR
+        musdb18 = pd.read_csv(filepath_or_buffer = f"{data_dir}/mixes.csv", sep = ",", header = 0, index_col = False)
+        musdb18["path"] = musdb18["path"].apply(lambda path: f"{data_dir}/{path}")
+        if self.mixes_only: # include only mixes, instead of everything
+            musdb18 = musdb18[musdb18["is_mix"]]
+        if self.partition == "train": # include only the "train" partition
+            musdb18 = musdb18[musdb18["is_train"]]
+        elif self.partition == "valid": # include only the "valid" partition
+            musdb18 = musdb18[~musdb18["is_train"]]
+        return musdb18["path"].tolist()
+
+
 # MUSDB18 Mono Dataset
-class MUSDB18MonoDataset(Dataset):
+class MUSDB18MonoDataset(MUSDB18Dataset):
     """Dataset for MUSDB18 Mono."""
 
     def __init__(
@@ -243,35 +298,16 @@ class MUSDB18MonoDataset(Dataset):
         mixes_only: bool = False,
         partition: str = None,
     ):
-        native_bit_depth: int = 16
-        bit_depth = native_bit_depth if bit_depth is None else bit_depth
-        self.mixes_only: bool = mixes_only
-        self.partition: str = partition
-        paths = self._get_paths()
         super().__init__(
-            name = "musdb18mono" + ("_mixes" if self.mixes_only else "") + (f"_{partition}" if partition is not None else ""),
-            sample_rate = 44100,
-            bit_depth = bit_depth,
-            native_bit_depth = native_bit_depth,
             is_mono = True,
-            paths = paths,
+            bit_depth = bit_depth,
+            mixes_only = mixes_only,
+            partition = partition,
         )
-
-    def _get_paths(self) -> List[str]:
-        """Return the paths of the dataset."""
-        musdb18mono = pd.read_csv(filepath_or_buffer = f"{MUSDB18MONO_DATA_DIR}/mixes.csv", sep = ",", header = 0, index_col = False)
-        musdb18mono["path"] = musdb18mono["path"].apply(lambda path: f"{MUSDB18MONO_DATA_DIR}/{path}")
-        if self.mixes_only: # include only mixes, instead of everything
-            musdb18mono = musdb18mono[musdb18mono["is_mix"]]
-        if self.partition == "train": # include only the "train" partition
-            musdb18mono = musdb18mono[musdb18mono["is_train"]]
-        elif self.partition == "valid": # include only the "valid" partition
-            musdb18mono = musdb18mono[~musdb18mono["is_train"]]
-        return musdb18mono["path"].tolist()
 
 
 # MUSDB18 Stereo Dataset
-class MUSDB18StereoDataset(Dataset):
+class MUSDB18StereoDataset(MUSDB18Dataset):
     """Dataset for MUSDB18 Stereo."""
 
     def __init__(
@@ -280,31 +316,12 @@ class MUSDB18StereoDataset(Dataset):
         mixes_only: bool = False,
         partition: str = None,
     ):
-        native_bit_depth: int = 16
-        bit_depth = native_bit_depth if bit_depth is None else bit_depth
-        self.mixes_only: bool = mixes_only
-        self.partition: str = partition
-        paths = self._get_paths()
         super().__init__(
-            name = "musdb18stereo" + ("_mixes" if self.mixes_only else "") + (f"_{partition}" if partition is not None else ""),
-            sample_rate = 44100,
-            bit_depth = bit_depth,
-            native_bit_depth = native_bit_depth,
             is_mono = False,
-            paths = paths,
+            bit_depth = bit_depth,
+            mixes_only = mixes_only,
+            partition = partition,
         )
-
-    def _get_paths(self) -> List[str]:
-        """Return the paths of the dataset."""
-        musdb18stereo = pd.read_csv(filepath_or_buffer = f"{MUSDB18STEREO_DATA_DIR}/mixes.csv", sep = ",", header = 0, index_col = False)
-        musdb18stereo["path"] = musdb18stereo["path"].apply(lambda path: f"{MUSDB18STEREO_DATA_DIR}/{path}")
-        if self.mixes_only: # include only mixes, instead of everything
-            musdb18stereo = musdb18stereo[musdb18stereo["is_mix"]]
-        if self.partition == "train": # include only the "train" partition
-            musdb18stereo = musdb18stereo[musdb18stereo["is_train"]]
-        elif self.partition == "valid": # include only the "valid" partition
-            musdb18stereo = musdb18stereo[~musdb18stereo["is_train"]]
-        return musdb18stereo["path"].tolist()
 
 
 # LibriSpeech Dataset
