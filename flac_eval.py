@@ -262,11 +262,9 @@ class MUSDB18Dataset(Dataset):
     ):
         native_bit_depth: int = 16
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
-        self.mixes_only: bool = mixes_only
-        self.partition: str = partition
-        paths = self._get_paths()
+        paths = self._get_paths(is_mono = is_mono, mixes_only = mixes_only, partition = partition)
         super().__init__(
-            name = "musdb18" + ("mono" if is_mono else "stereo") + ("_mixes" if self.mixes_only else "") + (f"_{partition}" if partition is not None else ""),
+            name = "musdb18" + ("mono" if is_mono else "stereo") + ("_mixes" if mixes_only else "") + (f"_{partition}" if partition is not None else ""),
             sample_rate = 44100,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
@@ -274,16 +272,21 @@ class MUSDB18Dataset(Dataset):
             paths = paths,
         )
 
-    def _get_paths(self) -> List[str]:
+    def _get_paths(
+        self,
+        is_mono: bool,
+        mixes_only: bool,
+        partition: str,
+    ) -> List[str]:
         """Return the paths of the dataset."""
-        data_dir = MUSDB18MONO_DATA_DIR if self.is_mono else MUSDB18STEREO_DATA_DIR
+        data_dir = MUSDB18MONO_DATA_DIR if is_mono else MUSDB18STEREO_DATA_DIR
         musdb18 = pd.read_csv(filepath_or_buffer = f"{data_dir}/mixes.csv", sep = ",", header = 0, index_col = False)
         musdb18["path"] = musdb18["path"].apply(lambda path: f"{data_dir}/{path}")
-        if self.mixes_only: # include only mixes, instead of everything
+        if mixes_only: # include only mixes, instead of everything
             musdb18 = musdb18[musdb18["is_mix"]]
-        if self.partition == "train": # include only the "train" partition
+        if partition == "train": # include only the "train" partition
             musdb18 = musdb18[musdb18["is_train"]]
-        elif self.partition == "valid": # include only the "valid" partition
+        elif partition == "valid": # include only the "valid" partition
             musdb18 = musdb18[~musdb18["is_train"]]
         return musdb18["path"].tolist()
 
