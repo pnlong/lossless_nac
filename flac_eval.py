@@ -441,7 +441,10 @@ class TorrentDataset(Dataset):
         native_bit_depth: int,
         subset: str,
     ):
-        paths = self._get_paths(subset = subset)
+        paths = self._get_paths(
+            native_bit_depth = native_bit_depth,
+            subset = subset,
+        )
         super().__init__(
             name = f"torrent{native_bit_depth}b" + (f"_{subset}" if subset is not None else ""),
             sample_rate = 48000,
@@ -451,16 +454,20 @@ class TorrentDataset(Dataset):
             paths = paths,
         )
 
-    def _get_paths(self, subset: str) -> List[str]:
+    def _get_paths(
+        self,
+        native_bit_depth: int,
+        subset: str,
+    ) -> List[str]:
         """Return the paths of the dataset."""
         if subset == "pro":
-            paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/Pro/{self.native_bit_depth}b/**/*.flac", recursive = True)
+            paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/Pro/{native_bit_depth}b/**/*.flac", recursive = True)
         elif subset == "amateur":
-            paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/train/Amateur/{self.native_bit_depth}b/**/*.flac", recursive = True)
+            paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/train/Amateur/{native_bit_depth}b/**/*.flac", recursive = True)
         elif subset == "freeload":
-            paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/train/Freeload/{self.native_bit_depth}b/**/*.flac", recursive = True)
+            paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/train/Freeload/{native_bit_depth}b/**/*.flac", recursive = True)
         else:
-            paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/**/{self.native_bit_depth}b/**/*.flac", recursive = True)
+            paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/**/{native_bit_depth}b/**/*.flac", recursive = True)
         return paths
 
 
