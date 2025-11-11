@@ -30,7 +30,7 @@ import datetime
 DEFAULT_OUTPUT_FILEPATH = "/home/pnlong/lnac/flac_eval_results.csv"
 
 # FLAC compression level
-FLAC_COMPRESSION_LEVEL = 5
+DEFAULT_FLAC_COMPRESSION_LEVEL = 5
 
 # valid bit depths
 VALID_BIT_DEPTHS = (8, 16, 24)
@@ -624,19 +624,18 @@ if __name__ == "__main__":
     # SETUP
     ##################################################
 
-    # assertions
-    assert FLAC_COMPRESSION_LEVEL >= 0 and FLAC_COMPRESSION_LEVEL <= 8, f"Invalid FLAC compression level: {FLAC_COMPRESSION_LEVEL}. Valid compression levels are 0 to 8."
-
     # parse arguments
     def parse_args(args = None, namespace = None):
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "FLAC Evaluation", description = "Evalute FLAC Compression.") # create argument parser
         parser.add_argument("--dataset", type = str, required = True, choices = get_dataset_choices(), help = "Dataset to evaluate.")
         parser.add_argument("--bit_depth", type = int, default = None, choices = VALID_BIT_DEPTHS, help = "Bit depth of the audio files.")
+        parser.add_argument("--flac_compression_level", type = int, default = DEFAULT_FLAC_COMPRESSION_LEVEL, choices = list(range(0, 9)), help = "Compression level for FLAC.")
         parser.add_argument("--output_filepath", type = str, default = DEFAULT_OUTPUT_FILEPATH, help = "Absolute filepath (CSV file) to append the evaluation results to.")
         parser.add_argument("--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
         parser.add_argument("--reset", action = "store_true", help = "Reset the output file.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
+        assert args.flac_compression_level >= 0 and args.flac_compression_level <= 8, f"Invalid FLAC compression level: {args.flac_compression_level}. Valid compression levels are 0 to 8."
         return args # return parsed arguments
     args = parse_args()
 
@@ -732,7 +731,7 @@ if __name__ == "__main__":
                 data = waveform,
                 samplerate = sample_rate,
                 format = "FLAC",
-                compression_level = FLAC_COMPRESSION_LEVEL / 8, # soundfile uses compression level [0.0, 1.0], so convert integer compression level to float compression level (maximum FLAC compression level is 8)
+                compression_level = args.flac_compression_level / 8, # soundfile uses compression level [0.0, 1.0], so convert integer compression level to float compression level (maximum FLAC compression level is 8)
             )
             compressed_size = getsize(flac_filepath)
 
@@ -790,7 +789,7 @@ if __name__ == "__main__":
         "std_compression_rate": std_compression_rate,
         "max_compression_rate": max_compression_rate,
         "min_compression_rate": min_compression_rate,
-        "flac_compression_level": FLAC_COMPRESSION_LEVEL,
+        "flac_compression_level": args.flac_compression_level,
         "datetime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # current datetime
     }]).to_csv(path_or_buf = args.output_filepath, sep = ",", na_rep = "NA", header = False, index = False, mode = "a")
 
