@@ -447,7 +447,7 @@ class TorrentDataset(Dataset):
         )
         super().__init__(
             name = f"torrent{native_bit_depth}b" + (f"_{subset}" if subset is not None else ""),
-            sample_rate = 44100,
+            sample_rate = None,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
             is_mono = False,
