@@ -93,7 +93,6 @@ def load_output_results(
 
 def load_audio(
     path: str,
-    bit_depth: int,
     expected_sample_rate: int = None,
 ) -> Tuple[np.ndarray, int]:
     """
@@ -101,15 +100,11 @@ def load_audio(
     
     Args:
         path: The path to the audio file.
-        bit_depth: The target bit depth. See VALID_BIT_DEPTHS for valid bit depths.
         expected_sample_rate: The expected sample rate. If None, the sample rate will not be checked.
     
     Returns:
         The waveform and sample rate. Note that waveform will always be signed integer data type.
     """
-
-    # ensure bit depth is valid
-    assert bit_depth in VALID_BIT_DEPTHS, f"Invalid bit depth: {bit_depth}. Valid bit depths are {VALID_BIT_DEPTHS}."
 
     # read audio file
     try:
@@ -121,86 +116,13 @@ def load_audio(
         waveform.export(stream, format = "FLAC") # export as corrected FLAC file
         waveform, sample_rate = sf.read(file = stream, dtype = np.float32) # get the audio as a numpy array
         del stream
-    waveform_dtype = np.int8 if bit_depth == 8 else np.int16 if bit_depth == 16 else np.int32
-    waveform = (waveform * ((2 ** (bit_depth - 1)) - 1)).astype(waveform_dtype)
 
     # make assertions
     if expected_sample_rate is not None:
         assert sample_rate == expected_sample_rate, f"Sample rate mismatch: {sample_rate} != {expected_sample_rate}."
-    waveform_min, waveform_max = waveform.min(), waveform.max()
-    expected_waveform_min, expected_waveform_max = -(2 ** (bit_depth - 1)), (2 ** (bit_depth - 1)) - 1
-    assert waveform_min >= expected_waveform_min and waveform_max <= expected_waveform_max, f"Waveform must be in the range [{expected_waveform_min}, {expected_waveform_max}]. Got min {waveform_min} and max {waveform_max}."
     
     # return waveform and sample rate
     return waveform, sample_rate
-
-
-def convert_bit_depth(
-    waveform: np.ndarray,
-    bit_depth: int,
-) -> np.ndarray:
-    """
-    Convert the bit depth of the waveform to the target bit depth.
-    
-    Args:
-        waveform: The waveform to convert.
-        bit_depth: The target bit depth.
-    
-    Returns:
-        The converted waveform.
-    """
-
-    # confirm that bit depth is in fact 24-bit
-    if waveform.dtype == np.int32 or waveform.dtype == np.uint32:
-        waveform_min, waveform_max = waveform.min(), waveform.max()
-        assert waveform_min >= -(2 ** 23) and waveform_max <= (2 ** 23) - 1, f"24-bit waveform must be in the range [-(2 ** 23), (2 ** 23) - 1]. Got min {waveform_min} and max {waveform_max}."
-
-    # go through different data types
-    if waveform.dtype == np.int8:
-        if bit_depth == 8:
-            new_waveform = waveform # no conversion needed
-        elif bit_depth == 16:
-            new_waveform = waveform.astype(np.int16) * (2 ** 8) # convert to 16-bit
-        elif bit_depth == 24:
-            new_waveform = waveform.astype(np.int32) * (2 ** 8) # convert to 24-bit
-    elif waveform.dtype == np.uint8:
-        if bit_depth == 8:
-            new_waveform = waveform # no conversion needed
-        elif bit_depth == 16:
-            new_waveform = waveform.astype(np.uint16) * (2 ** 8) # convert to 16-bit
-        elif bit_depth == 24:
-            new_waveform = waveform.astype(np.uint32) * (2 ** 8) # convert to 24-bit
-    elif waveform.dtype == np.int16:
-        if bit_depth == 8:
-            new_waveform = (waveform / (2 ** 8)).astype(np.int8) # convert to 8-bit
-        elif bit_depth == 16:
-            new_waveform = waveform # no conversion needed
-        elif bit_depth == 24:
-            new_waveform = waveform.astype(np.int32) * (2 ** 8) # convert to 24-bit
-    elif waveform.dtype == np.uint16:
-        if bit_depth == 8:
-            new_waveform = (waveform / (2 ** 8)).astype(np.uint8) # convert to 8-bit
-        elif bit_depth == 16:
-            new_waveform = waveform # no conversion needed
-        elif bit_depth == 24:
-            new_waveform = waveform.astype(np.uint32) * (2 ** 8) # convert to 24-bit
-    elif waveform.dtype == np.int32: # 24-bit signed masquerading as 32-bit because numpy doesn't support 24-bit
-        if bit_depth == 8:
-            new_waveform = (waveform / (2 ** 16)).astype(np.int8) # convert to 8-bit
-        elif bit_depth == 16:
-            new_waveform = (waveform / (2 ** 8)).astype(np.int16) # convert to 16-bit
-        elif bit_depth == 24:
-            new_waveform = waveform # no conversion needed
-    elif waveform.dtype == np.uint32:
-        if bit_depth == 8:
-            new_waveform = (waveform / (2 ** 16)).astype(np.uint8) # convert to 8-bit
-        elif bit_depth == 16:
-            new_waveform = (waveform / (2 ** 8)).astype(np.uint16) # convert to 16-bit
-        elif bit_depth == 24:
-            new_waveform = waveform # no conversion needed
-    else:
-        raise ValueError(f"Invalid waveform dtype: {waveform.dtype}. Valid dtypes are np.int8, np.uint8, np.int16, np.uint16, np.int32, and np.uint32.")
-    return new_waveform
 
 ##################################################
 
@@ -246,12 +168,7 @@ class Dataset:
         """Return the item at the given index."""
         waveform, sample_rate = load_audio(
             path = self.paths[index],
-            bit_depth = self.native_bit_depth,
             expected_sample_rate = self.sample_rate,
-        )
-        waveform = convert_bit_depth(
-            waveform = waveform,
-            bit_depth = self.bit_depth,
         )
         return waveform, sample_rate
 
@@ -690,6 +607,7 @@ if __name__ == "__main__":
 
     # get dataset
     dataset = get_dataset(dataset_name = args.dataset, bit_depth = args.bit_depth)
+    assert dataset.bit_depth in VALID_BIT_DEPTHS, f"Dataset bit depth {dataset.bit_depth} is not a valid bit depth. Valid bit depths are {VALID_BIT_DEPTHS}."
     
     # log some information about the dataset
     dataset_name = f" {dataset.name.upper()}, {'pseudo-' if dataset.native_bit_depth != dataset.bit_depth else ''}{dataset.bit_depth}-bit " # add spaces on side so it looks nicer
@@ -720,22 +638,17 @@ if __name__ == "__main__":
 
             # get waveform
             waveform, sample_rate = dataset[index]
+            assert waveform.dtype == np.float32, f"Waveform must be a float32 numpy array, but got {waveform.dtype}."
 
-            # convert to either 16-bit or 32-bit for soundfile, which only supports 16-bit and 32-bit
-            waveform_dtype = waveform.dtype
-            if waveform.itemsize == 1: # 8-bit
-                waveform = waveform.astype(np.int16)
-                if waveform_dtype == np.int8: # convert signed to unsigned 8-bit
-                    waveform += 2 ** 7
+            # get correct PCM subtype for soundfile
+            if dataset.bit_depth == 8:
                 subtype = "PCM_U8"
-            elif waveform.itemsize == 2: # 16-bit
-                if waveform_dtype == np.uint16: # convert unsigned to signed 16-bit
-                    waveform = (waveform.astype(np.int32) - (2 ** 15)).astype(np.int16)
+            elif dataset.bit_depth == 16:
                 subtype = "PCM_16"
-            elif waveform.itemsize == 4: # 24-bit masquerading as 32-bit because numpy doesn't support 24-bit
-                if waveform_dtype == np.uint32: # convert unsigned to signed 24-bit
-                    waveform = (waveform.astype(np.int32) - (2 ** 23))
+            elif dataset.bit_depth == 24:
                 subtype = "PCM_24"
+            else:
+                raise ValueError(f"Invalid bit depth: {dataset.bit_depth}. Valid bit depths are {VALID_BIT_DEPTHS}.")
 
             # write original waveform to temporary file
             wav_filepath = f"{tmp_dir}/original.wav"
