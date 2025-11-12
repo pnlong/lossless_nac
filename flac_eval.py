@@ -7,7 +7,7 @@
 
 import argparse
 import sys
-from os.path import getsize, exists
+from os.path import getsize, exists, basename, dirname
 import multiprocessing
 from tqdm import tqdm
 import logging
@@ -20,6 +20,7 @@ import pandas as pd
 import glob
 import datetime
 import io
+import subprocess
 
 ##################################################
 
@@ -65,7 +66,7 @@ VCTK_DATA_DIR = "/graft2/datasets/znovack/VCTK-Corpus-0.92/wav48_silence_trimmed
 TORRENT_DATA_DATA_DIR = "/graft3/datasets/znovack/trilobyte" # yggdrasil
 
 # Birdvox bioacoustic data
-BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox" # yggdrasil
+BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox/unit06" # yggdrasil
 
 ##################################################
 
@@ -541,6 +542,7 @@ class BirdvoxDataset(Dataset):
     def _get_paths(self) -> List[str]:
         """Return the paths of the dataset."""
         paths = glob.glob(f"{BIRDVOX_DATA_DIR}/**/*.flac", recursive = True)
+        paths = [path for path in paths if basename(dirname(path)) != "split_data"] # exclude split_data directory
         return paths
 
 ##################################################
@@ -693,6 +695,7 @@ if __name__ == "__main__":
     dataset_name = f" {dataset.name.upper()}, {'pseudo-' if dataset.native_bit_depth != dataset.bit_depth else ''}{dataset.bit_depth}-bit " # add spaces on side so it looks nicer
     line_character, line_width = "=", 100
     logger.info(f"{dataset_name:{line_character}^{line_width}}") # print dataset name with equal signs
+    logger.info(f"Running Command: python {' '.join(sys.argv)}")
     logger.info(f"Dataset: {dataset.get_description()}")
 
     ##################################################
@@ -744,15 +747,20 @@ if __name__ == "__main__":
                 subtype = subtype,
             )
             raw_size = getsize(wav_filepath)
+            # raw_size = np.prod(waveform.shape) * dataset.bit_depth // 8
 
             # compress waveform to temporary file
             flac_filepath = f"{tmp_dir}/compressed.flac"
-            sf.write(
-                file = flac_filepath,
-                data = waveform,
-                samplerate = sample_rate,
-                format = "FLAC",
-                compression_level = args.flac_compression_level / 8, # soundfile uses compression level [0.0, 1.0], so convert integer compression level to float compression level (maximum FLAC compression level is 8)
+            subprocess.run(args = [
+                    "flac",
+                    "-o", flac_filepath,
+                    f"-{args.flac_compression_level}",
+                    "--force",
+                    wav_filepath,
+                ], 
+                check = True,
+                stdout = subprocess.DEVNULL,
+                stderr = subprocess.DEVNULL,
             )
             compressed_size = getsize(flac_filepath)
 

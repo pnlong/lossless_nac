@@ -11,9 +11,9 @@ from typing import Callable, Dict
 import pandas as pd
 import numpy as np
 import scipy.io.wavfile
-import soundfile as sf
 import functools
 import glob
+from os.path import basename, dirname
 
 from language_modeling_is_compression import constants
 from language_modeling_is_compression import constants_audio
@@ -131,7 +131,7 @@ def _get_torrent_dataset(
 def _get_birdvox_dataset() -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   # Return an iterator that yields one track at a time
-  for path in glob.iglob(f"{constants_audio.BIRDVOX_DATA_DIR}/**/*.flac", recursive=True):
+  for path in filter(lambda path: basename(dirname(path)) != "split_data", glob.iglob(f"{constants_audio.BIRDVOX_DATA_DIR}/**/*.flac", recursive=True)):
     waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
     yield waveform
 
