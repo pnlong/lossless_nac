@@ -15,10 +15,11 @@ import numpy as np
 from typing import List, Tuple
 import tempfile
 import soundfile as sf
-import scipy.io.wavfile
+import pydub
 import pandas as pd
 import glob
 import datetime
+import io
 
 ##################################################
 
@@ -64,7 +65,7 @@ VCTK_DATA_DIR = "/graft2/datasets/znovack/VCTK-Corpus-0.92/wav48_silence_trimmed
 TORRENT_DATA_DATA_DIR = "/graft3/datasets/znovack/trilobyte" # yggdrasil
 
 # Birdvox bioacoustic data
-BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox/unit06" # yggdrasil
+BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox" # yggdrasil
 
 ##################################################
 
@@ -110,7 +111,15 @@ def load_audio(
     assert bit_depth in VALID_BIT_DEPTHS, f"Invalid bit depth: {bit_depth}. Valid bit depths are {VALID_BIT_DEPTHS}."
 
     # read audio file
-    waveform, sample_rate = sf.read(file = path, dtype = np.float32) # get the audio as a numpy array
+    try:
+        waveform, sample_rate = sf.read(file = path, dtype = np.float32) # get the audio as a numpy array
+    except Exception as e: # if soundfile fails, use alternative method, which reads the file as a pydub AudioSegment and then converts to a numpy array
+        # warnings.warn(f"Error reading audio file {path} with soundfile, using alternative method: {e}", category = RuntimeWarning)
+        waveform = pydub.AudioSegment.from_file(file = path, format = path.split(".")[-1])
+        stream = io.BytesIO()
+        waveform.export(stream, format = "FLAC") # export as corrected FLAC file
+        waveform, sample_rate = sf.read(file = stream, dtype = np.float32) # get the audio as a numpy array
+        del stream
     waveform_dtype = np.int8 if bit_depth == 8 else np.int16 if bit_depth == 16 else np.int32
     waveform = (waveform * ((2 ** (bit_depth - 1)) - 1)).astype(waveform_dtype)
 
@@ -217,6 +226,8 @@ class Dataset:
         self.native_bit_depth: int = native_bit_depth
         self.is_mono: bool = is_mono
         self.paths: List[str] = paths
+        if len(self.paths) == 0:
+            raise ValueError(f"No paths found for dataset: {self.name}.")
 
     def __str__(self) -> str:
         """Return a string representation of the dataset."""

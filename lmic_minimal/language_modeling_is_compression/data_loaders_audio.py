@@ -43,7 +43,7 @@ def _get_musdb18mono_dataset(
 
   # Return an iterator that yields one track at a time
   for path in musdb18mono["path"]:
-    sample_rate, waveform = scipy.io.wavfile.read(path) # get the mixture audio as a numpy array
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
     yield waveform
 
 
@@ -68,7 +68,7 @@ def _get_musdb18stereo_dataset(
 
   # Return an iterator that yields one track at a time
   for path in musdb18stereo["path"]:
-    sample_rate, waveform = scipy.io.wavfile.read(path) # get the mixture audio as a numpy array
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
     yield waveform
 
 
@@ -76,7 +76,7 @@ def _get_librispeech_dataset() -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.LIBRISPEECH_DATA_DIR}/**/*.flac", recursive=True):
-    waveform, sample_rate = sf.read(path, dtype=np.int16) # get the audio as a numpy array, assuming 16-bit signed audio, which librispeech uses
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
     yield waveform
 
 
@@ -84,7 +84,7 @@ def _get_ljspeech_dataset() -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.LJSPEECH_DATA_DIR}/**/*.wav", recursive=True):
-    sample_rate, waveform = scipy.io.wavfile.read(path) # get the audio as a numpy array
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
     yield waveform
 
 
@@ -92,7 +92,7 @@ def _get_epidemic_dataset() -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.EPIDEMIC_SOUND_DATA_DIR}/**/*.flac", recursive=True):
-    waveform, sample_rate = sf.read(path, dtype=np.int16) # get the audio as a numpy array, assuming 16-bit signed audio, which librispeech uses
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
     yield waveform
 
 
@@ -100,7 +100,7 @@ def _get_vctk_dataset() -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.VCTK_DATA_DIR}/**/*.flac", recursive=True):
-    waveform, sample_rate = sf.read(path, dtype=np.int16) # get the audio as a numpy array, assuming 16-bit signed audio, which vctk uses
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
     yield waveform
 
 
@@ -109,6 +109,7 @@ def _get_torrent_dataset(
     subset: str,
 ) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
+  assert native_bit_depth == 16 or native_bit_depth == 24, f"Invalid native bit depth: {native_bit_depth}. Valid native bit depths for Torrent data are 16 and 24."
   assert subset is None or subset in ("pro", "amateur", "freeload"), f"Invalid subset: {subset}. Valid subsets are None, 'pro', 'amateur', and 'freeload'."
 
   # Get paths
@@ -123,13 +124,7 @@ def _get_torrent_dataset(
 
   # Return an iterator that yields one track at a time
   for path in paths:
-    if native_bit_depth == 16:
-      waveform, sample_rate = sf.read(path, dtype=np.int16) # get the audio as a numpy array, assuming 16-bit signed audio, which torrent uses
-    elif native_bit_depth == 24:
-      waveform, sample_rate = sf.read(path, dtype=np.float32)
-      waveform = (waveform * ((2 ** 23) - 1)).astype(np.int32) # convert to 24-bit
-    else:
-      raise ValueError(f"Invalid native bit depth: {native_bit_depth}. Valid native bit depths are 16 and 24.")
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth)
     yield waveform
 
 
@@ -137,7 +132,7 @@ def _get_birdvox_dataset() -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.BIRDVOX_DATA_DIR}/**/*.flac", recursive=True):
-    waveform, sample_rate = sf.read(path, dtype=np.int16) # get the audio as a numpy array, assuming 16-bit signed audio, which birdvox uses
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
     yield waveform
 
 
