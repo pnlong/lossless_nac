@@ -747,11 +747,13 @@ if __name__ == "__main__":
                 subtype = subtype,
             )
             raw_size = getsize(wav_filepath)
-            # raw_size = np.prod(waveform.shape) * dataset.bit_depth // 8
+            theoretical_raw_size = np.prod(waveform.shape) * (dataset.bit_depth // 8)
+            raw_size_percent_difference = abs((raw_size - theoretical_raw_size) / theoretical_raw_size)
+            assert raw_size_percent_difference < 0.01, f"Raw size mismatch: % difference between raw size and theoretical raw size is {raw_size_percent_difference * 100:.2%}, which is greater than 1%." # check that raw size is within 1% of theoretical raw size
 
             # compress waveform to temporary file
             flac_filepath = f"{tmp_dir}/compressed.flac"
-            subprocess.run(args = [
+            _ = subprocess.run(args = [
                     "flac",
                     "-o", flac_filepath,
                     f"-{args.flac_compression_level}",
