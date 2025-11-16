@@ -24,7 +24,7 @@ np.random.seed(42)
 
 def _get_musdb18mono_dataset(
     partition: str = None,
-    mixes_only: bool = False,
+    subset: str = None,
 ) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   assert partition is None or partition in ("train", "valid"), f"Invalid partition: {partition}. Valid partitions are None, 'train', and 'valid'."
@@ -34,8 +34,10 @@ def _get_musdb18mono_dataset(
   musdb18mono["path"] = musdb18mono["path"].apply(lambda path: f"{constants_audio.MUSDB18MONO_DATA_DIR}/{path}")
 
   # filter dataset
-  if mixes_only: # include only mixes, instead of everything
+  if subset == "mixes": # include only mixes, instead of everything
     musdb18mono = musdb18mono[musdb18mono["is_mix"]]
+  elif subset == "stems": # include only stems, instead of everything
+    musdb18mono = musdb18mono[~musdb18mono["is_mix"]]
   if partition == "train": # include only the "train" partition
     musdb18mono = musdb18mono[musdb18mono["is_train"]]
   elif partition == "valid": # include only the "valid" partition
@@ -49,7 +51,7 @@ def _get_musdb18mono_dataset(
 
 def _get_musdb18stereo_dataset(
     partition: str = None,
-    mixes_only: bool = False,
+    subset: str = None,
 ) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   assert partition is None or partition in ("train", "valid"), f"Invalid partition: {partition}. Valid partitions are None, 'train', and 'valid'."
@@ -59,8 +61,10 @@ def _get_musdb18stereo_dataset(
   musdb18stereo["path"] = musdb18stereo["path"].apply(lambda path: f"{constants_audio.MUSDB18STEREO_DATA_DIR}/{path}")
 
   # filter dataset
-  if mixes_only: # include only mixes, instead of everything
+  if subset == "mixes": # include only mixes, instead of everything
     musdb18stereo = musdb18stereo[musdb18stereo["is_mix"]]
+  elif subset == "stems": # include only stems, instead of everything
+    musdb18stereo = musdb18stereo[~musdb18stereo["is_mix"]]
   if partition == "train": # include only the "train" partition
     musdb18stereo = musdb18stereo[musdb18stereo["is_train"]]
   elif partition == "valid": # include only the "valid" partition
@@ -265,10 +269,10 @@ def get_musdb18mono_iterator(
     num_chunks: int = constants.NUM_CHUNKS,
     bit_depth: int = constants_audio.BIT_DEPTH,
     partition: str = None,
-    mixes_only: bool = False,
+    subset: str = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for musdb18mono data."""
-  musdb18mono_dataset = _get_musdb18mono_dataset(partition=partition, mixes_only=mixes_only)
+  musdb18mono_dataset = _get_musdb18mono_dataset(partition=partition, subset=subset)
   return get_dataset_iterator(musdb18mono_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
@@ -277,10 +281,10 @@ def get_musdb18stereo_iterator(
     num_chunks: int = constants.NUM_CHUNKS,
     bit_depth: int = constants_audio.BIT_DEPTH,
     partition: str = None,
-    mixes_only: bool = False,
+    subset: str = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for musdb18stereo data."""
-  musdb18stereo_dataset = _get_musdb18stereo_dataset(partition=partition, mixes_only=mixes_only)
+  musdb18stereo_dataset = _get_musdb18stereo_dataset(partition=partition, subset=subset)
   return get_dataset_iterator(musdb18stereo_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
@@ -350,10 +354,10 @@ def get_birdvox_iterator(
 def get_audio_data_generator_fn_dict() -> Dict[str, Callable[[], Iterator[bytes]]]:
   """Return the choices of datasets."""
   audio_data_generator_fn_dict = dict()
-  for mixes_only in (False, True): # False for all, True for mixes only
+  for subset in (None, "mixes", "stems"): # None for all, "mixes" for mixes only, "stems" for stems only
     for partition in (None, "train", "valid"): # None for all, "train" for train, "valid" for valid
-      audio_data_generator_fn_dict["musdb18mono" + ("_mixes" if mixes_only else "") + (f"_{partition}" if partition is not None else "")] = functools.partial(get_musdb18mono_iterator, partition=partition, mixes_only=mixes_only)
-      audio_data_generator_fn_dict["musdb18stereo" + ("_mixes" if mixes_only else "") + (f"_{partition}" if partition is not None else "")] = functools.partial(get_musdb18stereo_iterator, partition=partition, mixes_only=mixes_only)
+      audio_data_generator_fn_dict["musdb18mono" + (f"_{subset}" if subset is not None else "") + (f"_{partition}" if partition is not None else "")] = functools.partial(get_musdb18mono_iterator, partition=partition, subset=subset)
+      audio_data_generator_fn_dict["musdb18stereo" + (f"_{subset}" if subset is not None else "") + (f"_{partition}" if partition is not None else "")] = functools.partial(get_musdb18stereo_iterator, partition=partition, subset=subset)
   audio_data_generator_fn_dict["librispeech"] = get_librispeech_iterator
   audio_data_generator_fn_dict["ljspeech"] = get_ljspeech_iterator
   audio_data_generator_fn_dict["epidemic"] = get_epidemic_iterator

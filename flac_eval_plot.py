@@ -2,33 +2,82 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+# Configuration
+PLOTS_SHARE_Y_AXIS = True
+X_AXIS_LABEL = "FLAC Compression Level"
+Y_AXIS_LABEL = "Compression Rate (x)"
+
 # Load the CSV file
 df = pd.read_csv("/home/pnlong/lnac/flac_eval_results.csv")
 
 # Filter for is_native_bit_depth == True
 df_filtered = df[df["is_native_bit_depth"] == True]
 
-# Create the line plot
-plt.figure(figsize=(10, 6))
+# Split data into three groups
+musdb18_mask = df_filtered["dataset"].str.startswith("musdb18")
+torrent_mask = df_filtered["dataset"].str.startswith("torrent")
+df_musdb18 = df_filtered[musdb18_mask]
+df_torrent = df_filtered[torrent_mask]
+df_other = df_filtered[~musdb18_mask & ~torrent_mask]
+
+# Create figure with three subplots (horizontal)
+fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=PLOTS_SHARE_Y_AXIS)
+
+# First subplot: MUSDB18
+ax1 = axes[0]
 sns.lineplot(
-    data=df_filtered,
+    data=df_musdb18,
     x="flac_compression_level",
     y="overall_compression_rate",
     hue="dataset",
-    marker="o"
+    marker="o",
+    ax=ax1
 )
+ax1.set_xlabel(X_AXIS_LABEL)
+ax1.set_ylabel(Y_AXIS_LABEL)
+ax1.set_title("FLAC on MUSDB18")
+ax1.grid(True)
+ax1.legend(title="Dataset", loc="upper left")
 
-# Set labels and title
-plt.xlabel("FLAC Compression Level")
-plt.ylabel("Compression Rate")
-plt.title("Comparing FLAC Compression Levels")
+# Second subplot: Torrent
+ax2 = axes[1]
+sns.lineplot(
+    data=df_torrent,
+    x="flac_compression_level",
+    y="overall_compression_rate",
+    hue="dataset",
+    marker="o",
+    ax=ax2
+)
+ax2.set_xlabel(X_AXIS_LABEL)
+if not PLOTS_SHARE_Y_AXIS:
+    ax2.set_ylabel(Y_AXIS_LABEL)
+ax2.set_title("FLAC on Torrented Data")
+ax2.grid(True)
+ax2.legend(title="Dataset", loc="upper left")
 
-# Add legend
-plt.legend(title="Dataset", bbox_to_anchor=(1.05, 1), loc="upper left")
+# Third subplot: Everything else
+ax3 = axes[2]
+sns.lineplot(
+    data=df_other,
+    x="flac_compression_level",
+    y="overall_compression_rate",
+    hue="dataset",
+    marker="o",
+    ax=ax3
+)
+ax3.set_xlabel(X_AXIS_LABEL)
+if not PLOTS_SHARE_Y_AXIS:
+    ax3.set_ylabel(Y_AXIS_LABEL)
+ax3.set_title("FLAC on More")
+ax3.grid(True)
+ax3.legend(title="Dataset", loc="upper left")
+
+# Overall title
+fig.suptitle("Comparing FLAC Compression Levels", fontsize=16, y=1.02)
 
 # Adjust layout to prevent label cutoff
 plt.tight_layout()
 
-# Show the plot
-plt.show()
-
+# Save the plot
+plt.savefig("flac_eval_plot.pdf", dpi=300, bbox_inches="tight")

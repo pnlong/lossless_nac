@@ -186,14 +186,14 @@ class MUSDB18Dataset(Dataset):
         self,
         is_mono: bool,
         bit_depth: int = None,
-        mixes_only: bool = False,
+        subset: str = None,
         partition: str = None,
     ):
         native_bit_depth: int = 16
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
-        paths = self._get_paths(is_mono = is_mono, mixes_only = mixes_only, partition = partition)
+        paths = self._get_paths(is_mono = is_mono, subset = subset, partition = partition)
         super().__init__(
-            name = "musdb18" + ("mono" if is_mono else "stereo") + ("_mixes" if mixes_only else "") + (f"_{partition}" if partition is not None else ""),
+            name = "musdb18" + ("mono" if is_mono else "stereo") + (f"_{subset}" if subset is not None else "") + (f"_{partition}" if partition is not None else ""),
             sample_rate = 44100,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
@@ -204,15 +204,17 @@ class MUSDB18Dataset(Dataset):
     def _get_paths(
         self,
         is_mono: bool,
-        mixes_only: bool,
+        subset: str,
         partition: str,
     ) -> List[str]:
         """Return the paths of the dataset."""
         data_dir = MUSDB18MONO_DATA_DIR if is_mono else MUSDB18STEREO_DATA_DIR
         musdb18 = pd.read_csv(filepath_or_buffer = f"{data_dir}/mixes.csv", sep = ",", header = 0, index_col = False)
         musdb18["path"] = musdb18["path"].apply(lambda path: f"{data_dir}/{path}")
-        if mixes_only: # include only mixes, instead of everything
+        if subset == "mixes": # include only mixes, instead of everything
             musdb18 = musdb18[musdb18["is_mix"]]
+        elif subset == "stems": # include only stems, instead of everything
+            musdb18 = musdb18[~musdb18["is_mix"]]
         if partition == "train": # include only the "train" partition
             musdb18 = musdb18[musdb18["is_train"]]
         elif partition == "valid": # include only the "valid" partition
@@ -227,13 +229,13 @@ class MUSDB18MonoDataset(MUSDB18Dataset):
     def __init__(
         self,
         bit_depth: int = None,
-        mixes_only: bool = False,
+        subset: str = None,
         partition: str = None,
     ):
         super().__init__(
             is_mono = True,
             bit_depth = bit_depth,
-            mixes_only = mixes_only,
+            subset = subset,
             partition = partition,
         )
 
@@ -245,13 +247,13 @@ class MUSDB18StereoDataset(MUSDB18Dataset):
     def __init__(
         self,
         bit_depth: int = None,
-        mixes_only: bool = False,
+        subset: str = None,
         partition: str = None,
     ):
         super().__init__(
             is_mono = False,
             bit_depth = bit_depth,
-            mixes_only = mixes_only,
+            subset = subset,
             partition = partition,
         )
 
@@ -473,9 +475,9 @@ def get_dataset_choices() -> List[str]:
     """Return the choices of datasets."""
     dataset_choices = []
     for mono_stereo in ("mono", "stereo"): # musdb18 mono or stereo
-        for mixes in ("", "_mixes"): # "" for all, "_mixes" for mixes only
+        for mixes in ("", "_mixes", "_stems"): # "" for all, "_mixes" for mixes only, "_stems" for stems only
             for partition in ("", "_train", "_valid"): # "" for all, "_train" for train, "_valid" for valid
-                dataset_choices.append("musdb18" + mono_stereo + mixes + partition) # e.g. "musdb18mono_mixes_train", "musdb18stereo_train", "musdb18stereo_valid", etc.
+                dataset_choices.append("musdb18" + mono_stereo + mixes + partition) # e.g. "musdb18mono_mixes_train", "musdb18stereo_stems_train", "musdb18stereo_valid", etc.
     dataset_choices.append("librispeech") # librispeech
     dataset_choices.append("ljspeech") # ljspeech
     dataset_choices.append("epidemic") # epidemicsound
@@ -508,16 +510,20 @@ def get_dataset(
 
     # factory ladder
     if dataset_name.startswith("musdb18mono") or dataset_name.startswith("musdb18stereo"):
-        mixes_only = ("mixes" in dataset_name)
+        subset = None # default to all
+        if "mixes" in dataset_name:
+            subset = "mixes"
+        elif "stems" in dataset_name:
+            subset = "stems"
         partition = None # default to all
         if "train" in dataset_name:
             partition = "train"
         elif "valid" in dataset_name:
             partition = "valid"
         if dataset_name.startswith("musdb18mono"):
-            dataset = MUSDB18MonoDataset(bit_depth = bit_depth, mixes_only = mixes_only, partition = partition) if bit_depth is not None else MUSDB18MonoDataset(mixes_only = mixes_only, partition = partition) # use default bit depth if not specified
+            dataset = MUSDB18MonoDataset(bit_depth = bit_depth, subset = subset, partition = partition) if bit_depth is not None else MUSDB18MonoDataset(subset = subset, partition = partition) # use default bit depth if not specified
         elif dataset_name.startswith("musdb18stereo"):
-            dataset = MUSDB18StereoDataset(bit_depth = bit_depth, mixes_only = mixes_only, partition = partition) if bit_depth is not None else MUSDB18StereoDataset(mixes_only = mixes_only, partition = partition) # use default bit depth if not specified
+            dataset = MUSDB18StereoDataset(bit_depth = bit_depth, subset = subset, partition = partition) if bit_depth is not None else MUSDB18StereoDataset(subset = subset, partition = partition) # use default bit depth if not specified
     elif dataset_name == "librispeech":
         dataset = LibriSpeechDataset(bit_depth = bit_depth) if bit_depth is not None else LibriSpeechDataset() # use default bit depth if not specified
     elif dataset_name == "ljspeech":
@@ -571,8 +577,11 @@ if __name__ == "__main__":
         parser.add_argument("--dataset", type = str, required = True, choices = get_dataset_choices(), help = "Dataset to evaluate.")
         parser.add_argument("--bit_depth", type = int, default = None, choices = VALID_BIT_DEPTHS, help = "Bit depth of the audio files.")
         parser.add_argument("--flac_compression_level", type = int, default = DEFAULT_FLAC_COMPRESSION_LEVEL, choices = list(range(0, 9)), help = "Compression level for FLAC.")
-        parser.add_argument("--output_filepath", type = str, default = DEFAULT_OUTPUT_FILEPATH, help = "Absolute filepath (CSV file) to append the evaluation results to.")
+        parser.add_argument("--output_filepath", type = str, default = DEFAULT_OUTPUT_FILEPATH, help = "Absolute filepath to output CSV file.")
         parser.add_argument("--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
+        parser.add_argument("--disable_constant_subframes", action = "store_true", help = "Disable constant subframes for FLAC.")
+        parser.add_argument("--disable_fixed_subframes", action = "store_true", help = "Disable fixed subframes for FLAC.")
+        parser.add_argument("--disable_verbatim_subframes", action = "store_true", help = "Disable verbatim subframes for FLAC.")
         parser.add_argument("--reset", action = "store_true", help = "Reset the output file.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         assert args.flac_compression_level >= 0 and args.flac_compression_level <= 8, f"Invalid FLAC compression level: {args.flac_compression_level}. Valid compression levels are 0 to 8."
@@ -588,7 +597,8 @@ if __name__ == "__main__":
     logger.addHandler(console_handler)
 
     # set up output file if necessary, writing column names
-    if not exists(args.output_filepath) or args.reset:
+    output_filepath = args.output_filepath
+    if not exists(output_filepath) or args.reset:
         pd.DataFrame(columns = [
             "dataset",
             "bit_depth",
@@ -602,8 +612,11 @@ if __name__ == "__main__":
             "max_compression_rate",
             "min_compression_rate",
             "flac_compression_level",
+            "disable_constant_subframes",
+            "disable_fixed_subframes",
+            "disable_verbatim_subframes",
             "datetime",
-        ]).to_csv(path_or_buf = args.output_filepath, sep = ",", na_rep = "NA", header = True, index = False, mode = "w")
+        ]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = "NA", header = True, index = False, mode = "w")
 
     # get dataset
     dataset = get_dataset(dataset_name = args.dataset, bit_depth = args.bit_depth)
@@ -670,8 +683,15 @@ if __name__ == "__main__":
             _ = subprocess.run(args = [
                     "flac",
                     "-o", flac_filepath,
-                    f"-{args.flac_compression_level}",
+                    f"--compression-level-{args.flac_compression_level}",
                     "--force",
+                ] + (
+                    ["--disable-constant-subframes"] if args.disable_constant_subframes else []
+                ) + (
+                    ["--disable-fixed-subframes"] if args.disable_fixed_subframes else []
+                ) + (
+                    ["--disable-verbatim-subframes"] if args.disable_verbatim_subframes else []
+                ) + [
                     wav_filepath,
                 ], 
                 check = True,
@@ -735,8 +755,11 @@ if __name__ == "__main__":
         "max_compression_rate": max_compression_rate,
         "min_compression_rate": min_compression_rate,
         "flac_compression_level": args.flac_compression_level,
+        "disable_constant_subframes": args.disable_constant_subframes,
+        "disable_fixed_subframes": args.disable_fixed_subframes,
+        "disable_verbatim_subframes": args.disable_verbatim_subframes,
         "datetime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # current datetime
-    }]).to_csv(path_or_buf = args.output_filepath, sep = ",", na_rep = "NA", header = False, index = False, mode = "a")
+    }]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = "NA", header = False, index = False, mode = "a")
 
     ##################################################
 

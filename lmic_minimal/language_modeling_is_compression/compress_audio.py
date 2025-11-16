@@ -5,6 +5,8 @@ import functools
 import time
 from typing import Callable
 import inspect
+import pandas as pd
+from os.path import exists
 
 from absl import app
 from absl import flags
@@ -14,7 +16,6 @@ import tqdm
 from language_modeling_is_compression import constants
 from language_modeling_is_compression import constants_audio
 from language_modeling_is_compression import data_loaders_audio
-from language_modeling_is_compression import utils
 from language_modeling_is_compression.compressors_audio import compressor
 
 
@@ -146,7 +147,7 @@ def main(_) -> None:
   if _COMPRESSOR.value == 'flac':
     assert _SAMPLE_RATE.value > 0, f"Sample rate must be greater than 0. Provided sample rate: {_SAMPLE_RATE.value}."
     logging.info('Sample rate: %s', _SAMPLE_RATE.value)
-
+  
   # get the compress function and data generator function
   compress_fn_dict = compressor.get_compress_fn_dict( # get compress function dictionary
     bit_depth=_BIT_DEPTH.value,
@@ -179,6 +180,18 @@ def main(_) -> None:
 
   # for arithmetic coding compressors, we evaluate the compressor on only the chunked data
   elif _COMPRESSOR.value in compressor.COMPRESSOR_TYPES['arithmetic_coding']:
+    if not exists(constants_audio.LLAMA_EVAL_OUTPUT_FILEPATH): # write column names to output file if it doesn't exist
+      pd.DataFrame(
+        columns = [
+          'compressor', 'dataset', 'chunk_size', 'num_chunks', 'bit_depth', 'compression_rate', 'compression_time'
+        ]).to_csv(
+          path_or_buf=constants_audio.LLAMA_EVAL_OUTPUT_FILEPATH,
+          sep=',',
+          na_rep='NA',
+          header=True,
+          index=False,
+          mode='w',
+        )
     chunked_rate, chunked_time = evaluate_compressor_chunked(
         compress_fn=compress_fn,
         get_data_generator_fn=get_data_generator_fn,
@@ -187,6 +200,22 @@ def main(_) -> None:
         bit_depth=_BIT_DEPTH.value,
     )
     logging.info('Chunked: %.1f (%.1fx) [%.1fs]', 100 * chunked_rate, 1 / chunked_rate, chunked_time)
+    pd.DataFrame(data = [{
+      'compressor': _COMPRESSOR.value,
+      'dataset': _DATASET.value,
+      'chunk_size': _CHUNK_SIZE.value,
+      'num_chunks': _NUM_CHUNKS.value,
+      'bit_depth': _BIT_DEPTH.value,
+      'compression_rate': 1 / chunked_rate,
+      'compression_time': chunked_time,
+    }]).to_csv(
+      path_or_buf=constants_audio.LLAMA_EVAL_OUTPUT_FILEPATH,
+      sep=',',
+      na_rep='NA',
+      header=False,
+      index=False,
+      mode='a',
+    )
 
   # unknown compressor
   else:
