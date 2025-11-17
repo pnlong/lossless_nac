@@ -1,6 +1,20 @@
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import argparse
+
+# read in arguments
+def parse_args(args = None, namespace = None):
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(prog = "Plot", description = "Plot FLAC Evaluation Results") # create argument parser
+    parser.add_argument("--input_filepath", type = str, default = "/home/pnlong/lnac/flac_eval_results.csv", help = "Absolute filepath to the input CSV file.")
+    parser.add_argument("--disable_constant_subframes", action = "store_true", help = "Disable constant subframes for FLAC.")
+    parser.add_argument("--disable_fixed_subframes", action = "store_true", help = "Disable fixed subframes for FLAC.")
+    parser.add_argument("--disable_verbatim_subframes", action = "store_true", help = "Disable verbatim subframes for FLAC.")
+    parser.add_argument("--output_filepath", type = str, default = "/home/pnlong/lnac/flac_eval_plot.pdf", help = "Absolute filepath to the output PDF file.")
+    args = parser.parse_args(args = args, namespace = namespace) # parse arguments
+    return args # return parsed arguments
+args = parse_args()
 
 # Configuration
 PLOTS_SHARE_Y_AXIS = True
@@ -8,10 +22,13 @@ X_AXIS_LABEL = "FLAC Compression Level"
 Y_AXIS_LABEL = "Compression Rate (x)"
 
 # Load the CSV file
-df = pd.read_csv("/home/pnlong/lnac/flac_eval_results.csv")
+df = pd.read_csv(args.input_filepath)
 
 # Filter for is_native_bit_depth == True
 df_filtered = df[df["is_native_bit_depth"] == True]
+df_filtered = df_filtered[df_filtered["disable_constant_subframes"] == args.disable_constant_subframes]
+df_filtered = df_filtered[df_filtered["disable_fixed_subframes"] == args.disable_fixed_subframes]
+df_filtered = df_filtered[df_filtered["disable_verbatim_subframes"] == args.disable_verbatim_subframes]
 
 # Split data into three groups
 musdb18_mask = df_filtered["dataset"].str.startswith("musdb18")
@@ -37,7 +54,7 @@ ax1.set_xlabel(X_AXIS_LABEL)
 ax1.set_ylabel(Y_AXIS_LABEL)
 ax1.set_title("FLAC on MUSDB18")
 ax1.grid(True)
-ax1.legend(title="Dataset", loc="upper left")
+ax1.legend(title="Dataset", loc="upper right")
 
 # Second subplot: Torrent
 ax2 = axes[1]
@@ -80,4 +97,4 @@ fig.suptitle("Comparing FLAC Compression Levels", fontsize=16, y=1.02)
 plt.tight_layout()
 
 # Save the plot
-plt.savefig("flac_eval_plot.pdf", dpi=300, bbox_inches="tight")
+plt.savefig(args.output_filepath, dpi=300, bbox_inches="tight")
