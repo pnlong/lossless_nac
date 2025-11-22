@@ -140,6 +140,30 @@ def _get_birdvox_dataset() -> Iterator[np.ndarray]:
     yield waveform
 
 
+def _get_beethoven_dataset() -> Iterator[np.ndarray]:
+  """Returns an iterator that yields numpy arrays, one per song."""
+  # Return an iterator that yields one track at a time
+  for path in glob.iglob(f"{constants_audio.BEETHOVEN_DATA_DIR}/**/*.wav", recursive=True):
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=8)
+    yield waveform
+
+
+def _get_youtube_mix_dataset() -> Iterator[np.ndarray]:
+  """Returns an iterator that yields numpy arrays, one per song."""
+  # Return an iterator that yields one track at a time
+  for path in glob.iglob(f"{constants_audio.YOUTUBE_MIX_DATA_DIR}/**/*.wav", recursive=True):
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=8)
+    yield waveform
+
+
+def _get_sc09_dataset() -> Iterator[np.ndarray]:
+  """Returns an iterator that yields numpy arrays, one per song."""
+  # Return an iterator that yields one track at a time
+  for path in glob.iglob(f"{constants_audio.SC09_DATA_DIR}/**/*.wav", recursive=True):
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=8)
+    yield waveform
+
+
 def _validate_arguments(
     chunk_size: int,
     num_chunks: int,
@@ -350,6 +374,36 @@ def get_birdvox_iterator(
   return get_dataset_iterator(birdvox_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
+def get_beethoven_iterator(
+    chunk_size: int = constants.CHUNK_SIZE_BYTES,
+    num_chunks: int = constants.NUM_CHUNKS,
+    bit_depth: int = constants_audio.BIT_DEPTH,
+) -> Iterator[bytes]:
+  """Returns an iterator for beethoven data."""
+  beethoven_dataset = _get_beethoven_dataset()
+  return get_dataset_iterator(beethoven_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
+
+
+def get_youtube_mix_iterator(
+    chunk_size: int = constants.CHUNK_SIZE_BYTES,
+    num_chunks: int = constants.NUM_CHUNKS,
+    bit_depth: int = constants_audio.BIT_DEPTH,
+) -> Iterator[bytes]:
+  """Returns an iterator for youtube_mix data."""
+  youtube_mix_dataset = _get_youtube_mix_dataset()
+  return get_dataset_iterator(youtube_mix_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
+
+
+def get_sc09_iterator(
+    chunk_size: int = constants.CHUNK_SIZE_BYTES,
+    num_chunks: int = constants.NUM_CHUNKS,
+    bit_depth: int = constants_audio.BIT_DEPTH,
+) -> Iterator[bytes]:
+  """Returns an iterator for sc09 data."""
+  sc09_dataset = _get_sc09_dataset()
+  return get_dataset_iterator(sc09_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
+
+
 # dictionary of audio data generator functions
 def get_audio_data_generator_fn_dict() -> Dict[str, Callable[[], Iterator[bytes]]]:
   """Return the choices of datasets."""
@@ -366,5 +420,8 @@ def get_audio_data_generator_fn_dict() -> Dict[str, Callable[[], Iterator[bytes]
     for subset in (None, "pro", "amateur", "freeload"):
       audio_data_generator_fn_dict[f"torrent{native_bit_depth}b" + (f"_{subset}" if subset is not None else "")] = functools.partial(get_torrent_iterator, native_bit_depth=native_bit_depth, subset=subset)
   audio_data_generator_fn_dict["birdvox"] = get_birdvox_iterator
+  audio_data_generator_fn_dict["beethoven"] = get_beethoven_iterator
+  audio_data_generator_fn_dict["youtube_mix"] = get_youtube_mix_iterator
+  audio_data_generator_fn_dict["sc09"] = get_sc09_iterator
   return audio_data_generator_fn_dict
 GET_AUDIO_DATA_GENERATOR_FN_DICT = get_audio_data_generator_fn_dict()

@@ -113,3 +113,12 @@ done
 
 # birdvox
 python "${SOFTWARE}" --dataset "birdvox" "${common_args[@]}"
+
+# beethoven piano sonatas
+python "${SOFTWARE}" --dataset "beethoven" "${common_args[@]}"
+
+# youtube mix
+python "${SOFTWARE}" --dataset "youtube_mix" "${common_args[@]}"
+
+# sc09 speech
+python "${SOFTWARE}" --dataset "sc09" "${common_args[@]}"

@@ -62,3 +62,12 @@ TORRENT_DATA_DATA_DIR = "/graft3/datasets/znovack/trilobyte" # yggdrasil
 
 # Birdvox bioacoustic data
 BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox/unit06" # yggdrasil
+
+# Beethoven Piano Sonatas
+BEETHOVEN_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/beethoven" # yggdrasil
+
+# YouTubeMix Audio Dataset
+YOUTUBE_MIX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/youtube_mix" # yggdrasil
+
+# SC09 Speech Dataset
+SC09_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/sc09" # yggdrasil

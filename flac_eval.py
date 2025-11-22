@@ -68,6 +68,15 @@ TORRENT_DATA_DATA_DIR = "/graft3/datasets/znovack/trilobyte" # yggdrasil
 # Birdvox bioacoustic data
 BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox/unit06" # yggdrasil
 
+# Beethoven Piano Sonatas
+BEETHOVEN_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/beethoven" # yggdrasil
+
+# YouTubeMix Audio Dataset
+YOUTUBE_MIX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/youtube_mix" # yggdrasil
+
+# SC09 Speech Dataset
+SC09_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/sc09" # yggdrasil
+
 ##################################################
 
 
@@ -464,6 +473,84 @@ class BirdvoxDataset(Dataset):
         paths = [path for path in paths if basename(dirname(path)) != "split_data"] # exclude split_data directory
         return paths
 
+
+# Beethoven Dataset
+class BeethovenDataset(Dataset):
+    """Dataset for Beethoven Piano Sonatas."""
+
+    def __init__(
+        self,
+        bit_depth: int = None,
+    ):
+        native_bit_depth: int = 8
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        paths = self._get_paths()
+        super().__init__(
+            name = "beethoven",
+            sample_rate = 16000,
+            bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
+            is_mono = True,
+            paths = paths,
+        )
+
+    def _get_paths(self) -> List[str]:
+        """Return the paths of the dataset."""
+        paths = glob.glob(f"{BEETHOVEN_DATA_DIR}/**/*.wav", recursive = True)
+        return paths
+
+
+# YouTubeMix Dataset
+class YouTubeMixDataset(Dataset):
+    """Dataset for YouTubeMix."""
+
+    def __init__(
+        self,
+        bit_depth: int = None,
+    ):
+        native_bit_depth: int = 8
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        paths = self._get_paths()
+        super().__init__(
+            name = "youtube_mix",
+            sample_rate = 16000,
+            bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
+            is_mono = True,
+            paths = paths,
+        )
+
+    def _get_paths(self) -> List[str]:
+        """Return the paths of the dataset."""
+        paths = glob.glob(f"{YOUTUBE_MIX_DATA_DIR}/**/*.wav", recursive = True)
+        return paths
+
+
+# SC09 Speech Dataset
+class SC09SpeechDataset(Dataset):
+    """Dataset for SC09 Speech."""
+
+    def __init__(
+        self,
+        bit_depth: int = None,
+    ):
+        native_bit_depth: int = 8
+        bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        paths = self._get_paths()
+        super().__init__(
+            name = "sc09",
+            sample_rate = 16000,
+            bit_depth = bit_depth,
+            native_bit_depth = native_bit_depth,
+            is_mono = True,
+            paths = paths,
+        )
+
+    def _get_paths(self) -> List[str]:
+        """Return the paths of the dataset."""
+        paths = glob.glob(f"{SC09_DATA_DIR}/**/*.wav", recursive = True)
+        return paths
+
 ##################################################
 
 
@@ -486,6 +573,9 @@ def get_dataset_choices() -> List[str]:
         for torrent_subset in ("", "_pro", "_amateur", "_freeload"):
             dataset_choices.append("torrent" + str(bit_depth) + "b" + torrent_subset) # e.g. "torrent16b", "torrent16b_pro", "torrent16b_amateur", "torrent16b_freeload", "torrent24b", "torrent24b_pro", "torrent24b_amateur", "torrent24b_freeload", etc.
     dataset_choices.append("birdvox") # birdvox
+    dataset_choices.append("beethoven") # beethoven
+    dataset_choices.append("youtube_mix") # youtube_mix
+    dataset_choices.append("sc09") # sc09
     return dataset_choices
 
 # factory function to get dataset
@@ -546,6 +636,12 @@ def get_dataset(
             dataset = Torrent24BDataset(bit_depth = bit_depth, subset = subset) if bit_depth is not None else Torrent24BDataset(subset = subset) # use default bit depth if not specified
     elif dataset_name == "birdvox":
         dataset = BirdvoxDataset(bit_depth = bit_depth) if bit_depth is not None else BirdvoxDataset() # use default bit depth if not specified
+    elif dataset_name == "beethoven":
+        dataset = BeethovenDataset(bit_depth = bit_depth) if bit_depth is not None else BeethovenDataset() # use default bit depth if not specified
+    elif dataset_name == "youtube_mix":
+        dataset = YouTubeMixDataset(bit_depth = bit_depth) if bit_depth is not None else YouTubeMixDataset() # use default bit depth if not specified
+    elif dataset_name == "sc09":
+        dataset = SC09SpeechDataset(bit_depth = bit_depth) if bit_depth is not None else SC09SpeechDataset() # use default bit depth if not specified
     else:
         raise ValueError(error_message)
 
