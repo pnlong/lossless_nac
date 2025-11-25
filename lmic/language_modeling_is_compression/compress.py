@@ -82,9 +82,6 @@ def evaluate_compressor_chunked(
     data_generator = tqdm.tqdm(data_generator, total=num_chunks)
 
   for data in data_generator:
-    # Calculate raw length BEFORE masking to ensure consistent comparison
-    raw_length += len(data)
-    
     if mask_fn is not None:
       data, missed_bits = mask_fn(data)
       num_missed_bits += missed_bits
@@ -94,6 +91,7 @@ def evaluate_compressor_chunked(
     t1 = time.perf_counter()
 
     running_time += t1 - t0
+    raw_length += len(data)
     compressed_length += len(compressed_data)
 
   # Since language models are trained on ASCII strings, they cannot handle all

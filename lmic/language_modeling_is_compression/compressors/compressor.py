@@ -36,13 +36,8 @@ COMPRESSOR_TYPES = {
     'arithmetic_coding': ['language_model'],
 }
 
-# Create FLAC wrapper that can accept bit_depth parameter
-def flac_compress_wrapper(data: bytes, bit_depth: int = 8) -> bytes:
-    """Wrapper for FLAC compression that accepts bit_depth parameter."""
-    return flac.compress(data, bit_depth=bit_depth)
-
 COMPRESS_FN_DICT: Mapping[str, Compressor] = {
-    'flac': flac_compress_wrapper,
+    'flac': flac.compress,
     'gzip': functools.partial(gzip.compress, compresslevel=9),
     'language_model': language_model.compress,
     'lzma': lzma.compress,

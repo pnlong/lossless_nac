@@ -17,42 +17,21 @@
 
 import audioop
 import io
-import numpy as np
 
 import pydub
 
 
-def compress(data: bytes, bit_depth: int = 16) -> bytes:
+def compress(data: bytes) -> bytes:
   """Returns data compressed with the FLAC codec.
 
   Args:
-    data: Audio data bytes
-    bit_depth: Bit depth of the audio data (8, 16, 24, or 32)
+    data: Assumes 1 byte per sample (`sample_width`), meaning 256 possible
+      values, and 1 channel and a `frame_rate` of 16kHz.
   """
-  if bit_depth == 8:
-    sample_width = 1
-  elif bit_depth == 16:
-    sample_width = 2
-  elif bit_depth == 24:
-    raise NotImplementedError("24-bit audio not supported by FLAC compressor")
-  elif bit_depth == 32:
-    raise NotImplementedError("32-bit audio not supported by FLAC compressor")
-  else:
-    raise ValueError(f"Unsupported bit depth: {bit_depth}")
-  
-  # Ensure data length is aligned to sample width
-  if len(data) == 0:
-    return b""
-  
-  remainder = len(data) % sample_width
-  if remainder != 0:
-    # Truncate trailing bytes to enforce alignment
-    data = data[:len(data) - remainder]
-  
   sample = pydub.AudioSegment(
       data=data,
       channels=1,
-      sample_width=sample_width,
+      sample_width=1,
       frame_rate=16000,
   )
   return sample.export(
@@ -61,29 +40,18 @@ def compress(data: bytes, bit_depth: int = 16) -> bytes:
   ).read()
 
 
-def decompress(data: bytes, bit_depth: int = 16) -> bytes:
+def decompress(data: bytes) -> bytes:
   """Decompresses `data` losslessly using the FLAC codec.
 
   Args:
-    data: The data to be decompressed
-    bit_depth: Bit depth of the original audio data (8, 16, 24, or 32)
+    data: The data to be decompressed. Assumes 2 bytes per sample (16 bit).
 
   Returns:
-    The decompressed data in the original bit depth format
+    The decompressed data. Assumes 1 byte per sample (8 bit).
   """
-  if bit_depth == 24:
-    raise NotImplementedError("24-bit audio not supported by FLAC decompressor")
-  elif bit_depth == 32:
-    raise NotImplementedError("32-bit audio not supported by FLAC decompressor")
-  elif bit_depth not in [8, 16]:
-    raise ValueError(f"Unsupported bit depth: {bit_depth}")
-  
   sample = pydub.AudioSegment.from_file(io.BytesIO(data), format='flac')
-  
-  if bit_depth == 8:
-    # Convert from 16-bit to 8-bit: FLAC outputs 16-bit, but original was 8-bit
-    # Convert samples from 16 bit to 8 bit and add 128 since 16 bit is signed
-    return audioop.bias(audioop.lin2lin(sample.raw_data, 2, 1), 1, 128)
-  elif bit_depth == 16:
-    # FLAC outputs 16-bit, which matches our original format
-    return sample.raw_data
+  # FLAC assumes that data is 16 bit. However, since our original data is 8 bit,
+  # we need to convert the samples from 16 bit to 8 bit (i.e., changing from two
+  # channels to one channel with `lin2lin`) and add 128 since 16 bit is signed
+  # (i.e., adding 128 using `bias`).
+  return audioop.bias(audioop.lin2lin(sample.raw_data, 2, 1), 1, 128)

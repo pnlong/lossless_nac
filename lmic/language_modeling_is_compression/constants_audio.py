@@ -33,7 +33,7 @@ USE_SLOW_LOSSLESS_COMPRESSION_FOR_EVALS = False
 USE_TQDM = True # enabled because we are writing to log files
 
 # output filepath for evaluation results
-LLAMA_EVAL_OUTPUT_FILEPATH = "/home/pnlong/lnac/llama_eval_results.csv"
+EVAL_OUTPUT_FILEPATH = "/home/pnlong/lnac/lmic/lmic_eval_results.csv"
 
 # filepaths (general)
 AUDIO_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data"

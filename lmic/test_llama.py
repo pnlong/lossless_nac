@@ -1,5 +1,5 @@
 import sys
-sys.path.insert(0, "/home/pnlong/lnac/lmic_minimal")
+sys.path.insert(0, "/home/pnlong/lnac/lmic")
 from language_modeling_is_compression.compressors_audio import llama
 from language_modeling_is_compression.compressors_audio import flac
 

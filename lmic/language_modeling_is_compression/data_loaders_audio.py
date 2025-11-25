@@ -1,10 +1,5 @@
 """Implements data loaders for new audio datasets (excluding LibriSpeech, which is already in data_loaders.py)."""
 
-# To add a new audio data loader:
-# 1. Create _get_<dataset name>_dataset() function (see _get_librispeech_dataset() for reference in data_loaders.py).
-# 2. Create get_<dataset name>_iterator(num_chunks: int = constants.NUM_CHUNKS, bit_depth: int = constants_audio.BIT_DEPTH) -> Iterator[bytes] function (see get_librispeech_iterator() for reference in data_loaders.py).
-# 3. Add key '<dataset name>' with value get_<dataset name>_iterator to this file's GET_AUDIO_DATA_GENERATOR_FN_DICT, which will be merged with GET_DATA_GENERATOR_FN_DICT in data_loaders.py.
-
 import audioop
 from collections.abc import Iterator
 from typing import Callable, Dict
@@ -25,13 +20,19 @@ np.random.seed(42)
 def _get_musdb18mono_dataset(
     partition: str = None,
     subset: str = None,
+    is_mu_law: bool = None,
 ) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   assert partition is None or partition in ("train", "valid"), f"Invalid partition: {partition}. Valid partitions are None, 'train', and 'valid'."
 
   # Load MUSDB18 dataset
-  musdb18mono = pd.read_csv(filepath_or_buffer=f"{constants_audio.MUSDB18MONO_DATA_DIR}/mixes.csv", sep=',', header=0, index_col=False)
+  musdb18mono = pd.read_csv(filepath_or_buffer=f"{constants_audio.MUSDB18MONO_DATA_DIR}/mixes.csv", sep=",", header=0, index_col=False)
   musdb18mono["path"] = musdb18mono["path"].apply(lambda path: f"{constants_audio.MUSDB18MONO_DATA_DIR}/{path}")
+
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="musdb18mono")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="musdb18mono")
 
   # filter dataset
   if subset == "mixes": # include only mixes, instead of everything
@@ -45,20 +46,26 @@ def _get_musdb18mono_dataset(
 
   # Return an iterator that yields one track at a time
   for path in musdb18mono["path"]:
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
 def _get_musdb18stereo_dataset(
     partition: str = None,
     subset: str = None,
+    is_mu_law: bool = None,
 ) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   assert partition is None or partition in ("train", "valid"), f"Invalid partition: {partition}. Valid partitions are None, 'train', and 'valid'."
 
   # Load MUSDB18 dataset
-  musdb18stereo = pd.read_csv(filepath_or_buffer=f"{constants_audio.MUSDB18STEREO_DATA_DIR}/mixes.csv", sep=',', header=0, index_col=False)
+  musdb18stereo = pd.read_csv(filepath_or_buffer=f"{constants_audio.MUSDB18STEREO_DATA_DIR}/mixes.csv", sep=",", header=0, index_col=False)
   musdb18stereo["path"] = musdb18stereo["path"].apply(lambda path: f"{constants_audio.MUSDB18STEREO_DATA_DIR}/{path}")
+
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="musdb18stereo")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="musdb18stereo")
 
   # filter dataset
   if subset == "mixes": # include only mixes, instead of everything
@@ -72,49 +79,83 @@ def _get_musdb18stereo_dataset(
 
   # Return an iterator that yields one track at a time
   for path in musdb18stereo["path"]:
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
-def _get_librispeech_dataset() -> Iterator[np.ndarray]:
+def _get_librispeech_dataset(
+    is_mu_law: bool = None,
+) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="librispeech")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="librispeech")
+
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.LIBRISPEECH_DATA_DIR}/**/*.flac", recursive=True):
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
-def _get_ljspeech_dataset() -> Iterator[np.ndarray]:
+def _get_ljspeech_dataset(
+    is_mu_law: bool = None,
+) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="ljspeech")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="ljspeech")
+
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.LJSPEECH_DATA_DIR}/**/*.wav", recursive=True):
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
-def _get_epidemic_dataset() -> Iterator[np.ndarray]:
+def _get_epidemic_dataset(
+    is_mu_law: bool = None,
+) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="epidemic")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="epidemic")
+
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.EPIDEMIC_SOUND_DATA_DIR}/**/*.flac", recursive=True):
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
-def _get_vctk_dataset() -> Iterator[np.ndarray]:
+def _get_vctk_dataset(
+    is_mu_law: bool = None,
+) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="vctk")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="vctk")
+
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.VCTK_DATA_DIR}/**/*.flac", recursive=True):
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
 def _get_torrent_dataset(
     native_bit_depth: int,
     subset: str,
+    is_mu_law: bool = None,
 ) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   assert native_bit_depth == 16 or native_bit_depth == 24, f"Invalid native bit depth: {native_bit_depth}. Valid native bit depths for Torrent data are 16 and 24."
   assert subset is None or subset in ("pro", "amateur", "freeload"), f"Invalid subset: {subset}. Valid subsets are None, 'pro', 'amateur', and 'freeload'."
+
+  # get dataset specs
+  # native_bit_depth = get_native_bit_depth(dataset=f"torrent{native_bit_depth}b") # don't need because it is already provided
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset=f"torrent{native_bit_depth}b")
 
   # Get paths
   if subset == "pro":
@@ -128,39 +169,67 @@ def _get_torrent_dataset(
 
   # Return an iterator that yields one track at a time
   for path in paths:
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
-def _get_birdvox_dataset() -> Iterator[np.ndarray]:
+def _get_birdvox_dataset(
+    is_mu_law: bool = None,
+) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="birdvox")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="birdvox")
+
   # Return an iterator that yields one track at a time
   for path in filter(lambda path: basename(dirname(path)) != "split_data", glob.iglob(f"{constants_audio.BIRDVOX_DATA_DIR}/**/*.flac", recursive=True)):
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=16)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
-def _get_beethoven_dataset() -> Iterator[np.ndarray]:
+def _get_beethoven_dataset(
+    is_mu_law: bool = None,
+) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="beethoven")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="beethoven")
+
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.BEETHOVEN_DATA_DIR}/**/*.wav", recursive=True):
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=8)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
-def _get_youtube_mix_dataset() -> Iterator[np.ndarray]:
+def _get_youtube_mix_dataset(
+    is_mu_law: bool = None,
+) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="youtube_mix")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="youtube_mix")
+
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.YOUTUBE_MIX_DATA_DIR}/**/*.wav", recursive=True):
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=8)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
-def _get_sc09_dataset() -> Iterator[np.ndarray]:
+def _get_sc09_dataset(
+    is_mu_law: bool = None,
+) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
+  # get dataset specs
+  native_bit_depth = get_native_bit_depth(dataset="sc09")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="sc09")
+
   # Return an iterator that yields one track at a time
   for path in glob.iglob(f"{constants_audio.SC09_DATA_DIR}/**/*.wav", recursive=True):
-    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=8)
+    waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
     yield waveform
 
 
@@ -172,7 +241,7 @@ def _validate_arguments(
   """Validates arguments."""
   assert chunk_size > 0, f"Chunk size must be greater than 0. Provided chunk size: {chunk_size}."
   assert num_chunks > 0, f"Number of chunks must be greater than 0. Provided number of chunks: {num_chunks}."
-  assert bit_depth in constants_audio.VALID_BIT_DEPTHS, f"Invalid bit depth: {bit_depth}. Valid bit depths are {constants_audio.VALID_BIT_DEPTHS}."
+  assert bit_depth is not None and bit_depth in constants_audio.VALID_BIT_DEPTHS, f"Invalid bit depth: {bit_depth}. Valid bit depths are {constants_audio.VALID_BIT_DEPTHS}."
   assert (chunk_size / (bit_depth // 8) % 1) == 0, f"With given bit depth, cannot fit a whole number of samples into a chunk. The number of bytes per sample (bit_depth // 8) must evenly divide the chunk size. Provided chunk size: {chunk_size}. Provided bit depth: {bit_depth}."
 
 
@@ -291,122 +360,177 @@ def get_dataset_iterator(
 def get_musdb18mono_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
     partition: str = None,
     subset: str = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for musdb18mono data."""
-  musdb18mono_dataset = _get_musdb18mono_dataset(partition=partition, subset=subset)
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="musdb18mono")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="musdb18mono")
+  musdb18mono_dataset = _get_musdb18mono_dataset(partition=partition, subset=subset, is_mu_law=is_mu_law)
   return get_dataset_iterator(musdb18mono_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_musdb18stereo_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
     partition: str = None,
     subset: str = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for musdb18stereo data."""
-  musdb18stereo_dataset = _get_musdb18stereo_dataset(partition=partition, subset=subset)
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="musdb18stereo")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="musdb18stereo")
+  musdb18stereo_dataset = _get_musdb18stereo_dataset(partition=partition, subset=subset, is_mu_law=is_mu_law)
   return get_dataset_iterator(musdb18stereo_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_librispeech_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for librispeech data."""
-  librispeech_dataset = _get_librispeech_dataset()
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="librispeech")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="librispeech")
+  librispeech_dataset = _get_librispeech_dataset(is_mu_law=is_mu_law)
   return get_dataset_iterator(librispeech_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_ljspeech_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for ljspeech data."""
-  ljspeech_dataset = _get_ljspeech_dataset()
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="ljspeech")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="ljspeech")
+  ljspeech_dataset = _get_ljspeech_dataset(is_mu_law=is_mu_law)
   return get_dataset_iterator(ljspeech_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_epidemic_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for epidemic data."""
-  epidemic_dataset = _get_epidemic_dataset()
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="epidemic")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="epidemic")
+  epidemic_dataset = _get_epidemic_dataset(is_mu_law=is_mu_law)
   return get_dataset_iterator(epidemic_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_vctk_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for vctk data."""
-  vctk_dataset = _get_vctk_dataset()
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="vctk")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="vctk")
+  vctk_dataset = _get_vctk_dataset(is_mu_law=is_mu_law)
   return get_dataset_iterator(vctk_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_torrent_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
-    native_bit_depth: int = constants_audio.TORRENT_DATA_NATIVE_BIT_DEPTH,
+    bit_depth: int = None,
+    native_bit_depth: int = 16, # default to 16-bit
     subset: str = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for torrent data."""
-  torrent_dataset = _get_torrent_dataset(native_bit_depth=native_bit_depth, subset=subset)
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset=f"torrent{native_bit_depth}b")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset=f"torrent{native_bit_depth}b")
+  torrent_dataset = _get_torrent_dataset(native_bit_depth=native_bit_depth, subset=subset, is_mu_law=is_mu_law)
   return get_dataset_iterator(torrent_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_birdvox_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for birdvox data."""
-  birdvox_dataset = _get_birdvox_dataset()
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="birdvox")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="birdvox")
+  birdvox_dataset = _get_birdvox_dataset(is_mu_law=is_mu_law)
   return get_dataset_iterator(birdvox_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_beethoven_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for beethoven data."""
-  beethoven_dataset = _get_beethoven_dataset()
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="beethoven")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="beethoven")
+  beethoven_dataset = _get_beethoven_dataset(is_mu_law=is_mu_law)
   return get_dataset_iterator(beethoven_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_youtube_mix_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for youtube_mix data."""
-  youtube_mix_dataset = _get_youtube_mix_dataset()
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="youtube_mix")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="youtube_mix")
+  youtube_mix_dataset = _get_youtube_mix_dataset(is_mu_law=is_mu_law)
   return get_dataset_iterator(youtube_mix_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 def get_sc09_iterator(
     chunk_size: int = constants.CHUNK_SIZE_BYTES,
     num_chunks: int = constants.NUM_CHUNKS,
-    bit_depth: int = constants_audio.BIT_DEPTH,
+    bit_depth: int = None,
+    is_mu_law: bool = None,
 ) -> Iterator[bytes]:
   """Returns an iterator for sc09 data."""
-  sc09_dataset = _get_sc09_dataset()
+  if bit_depth is None:
+    bit_depth = get_native_bit_depth(dataset="sc09")
+  if is_mu_law is None:
+    is_mu_law = get_is_mu_law(dataset="sc09")
+  sc09_dataset = _get_sc09_dataset(is_mu_law=is_mu_law)
   return get_dataset_iterator(sc09_dataset, chunk_size=chunk_size, num_chunks=num_chunks, bit_depth=bit_depth)
 
 
 # dictionary of audio data generator functions
 def get_audio_data_generator_fn_dict() -> Dict[str, Callable[[], Iterator[bytes]]]:
-  """Return the choices of datasets."""
+  """Return the choices of datasets, with the corresponding data loader functions."""
   audio_data_generator_fn_dict = dict()
   for subset in (None, "mixes", "stems"): # None for all, "mixes" for mixes only, "stems" for stems only
     for partition in (None, "train", "valid"): # None for all, "train" for train, "valid" for valid
@@ -425,3 +549,61 @@ def get_audio_data_generator_fn_dict() -> Dict[str, Callable[[], Iterator[bytes]
   audio_data_generator_fn_dict["sc09"] = get_sc09_iterator
   return audio_data_generator_fn_dict
 GET_AUDIO_DATA_GENERATOR_FN_DICT = get_audio_data_generator_fn_dict()
+
+
+# get default bit depth for a given dataset
+def get_native_bit_depth(
+    dataset: str,
+) -> int:
+  """Returns the default bit depth for a given dataset."""
+  assert dataset in GET_AUDIO_DATA_GENERATOR_FN_DICT.keys(), f"Invalid dataset: {dataset}. Valid datasets are {GET_AUDIO_DATA_GENERATOR_FN_DICT.keys()}."
+  if (
+    dataset == "beethoven" or
+    dataset == "youtube_mix" or
+    dataset == "sc09"
+  ):
+    return 8
+  elif (
+    dataset.startswith("musdb18mono") or 
+    dataset.startswith("musdb18stereo") or
+    dataset == "librispeech" or
+    dataset == "ljspeech" or
+    dataset == "epidemic" or
+    dataset == "vctk" or
+    dataset.startswith("torrent16b") or
+    dataset == "birdvox"
+    ):
+    return 16
+  elif (
+    dataset.startswith("torrent24b")
+  ):
+    return 24
+  else:
+    raise ValueError(f"Invalid dataset: {dataset}.")
+
+
+# get whether the dataset is mu-law encoded
+def get_is_mu_law(
+    dataset: str,
+) -> bool:
+  """Returns whether the dataset is mu-law encoded."""
+  assert dataset in GET_AUDIO_DATA_GENERATOR_FN_DICT.keys(), f"Invalid dataset: {dataset}. Valid datasets are {GET_AUDIO_DATA_GENERATOR_FN_DICT.keys()}."
+  if (
+    dataset == "beethoven" or
+    dataset == "youtube_mix" or
+    dataset == "sc09"
+  ):
+    return False
+  elif (
+    dataset.startswith("musdb18mono") or 
+    dataset.startswith("musdb18stereo") or
+    dataset == "librispeech" or
+    dataset == "ljspeech" or
+    dataset == "epidemic" or
+    dataset == "vctk" or
+    dataset.startswith("torrent") or
+    dataset == "birdvox"
+  ):
+    return True
+  else:
+    raise ValueError(f"Invalid dataset: {dataset}.")

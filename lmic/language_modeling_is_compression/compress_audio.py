@@ -8,8 +8,7 @@ import inspect
 import pandas as pd
 from os.path import exists
 
-from absl import app
-from absl import flags
+import argparse
 from absl import logging
 import tqdm
 
@@ -19,38 +18,69 @@ from language_modeling_is_compression import data_loaders_audio
 from language_modeling_is_compression.compressors_audio import compressor
 
 
-_COMPRESSOR = flags.DEFINE_enum(
-    'compressor',
-    'flac',
-    compressor.COMPRESSOR_TYPES['classical'] + compressor.COMPRESSOR_TYPES['arithmetic_coding'],
-    'Compressor to use.',
-)
-_DATASET = flags.DEFINE_enum(
-    'dataset',
-    'musdb18mono',
-    data_loaders_audio.GET_AUDIO_DATA_GENERATOR_FN_DICT.keys(),
-    'Dataset to use.',
-)
-_CHUNK_SIZE = flags.DEFINE_integer(
-    'chunk_size',
-    constants.CHUNK_SIZE_BYTES,
-    'Chunk size (number of bytes).',
-)
-_NUM_CHUNKS = flags.DEFINE_integer(
-    'num_chunks',
-    constants.NUM_CHUNKS,
-    'Number of chunks.',
-)
-_BIT_DEPTH = flags.DEFINE_integer(
-    'bit_depth',
-    constants_audio.BIT_DEPTH,
-    'Bit depth (8, 16, or 24).',
-)
-_SAMPLE_RATE = flags.DEFINE_integer(
-    'sample_rate',
-    constants_audio.SAMPLE_RATE,
-    'Sample rate (Hz).',
-)
+def parse_args():
+  """Parse command line arguments."""
+  # parse arguments
+  parser = argparse.ArgumentParser(description='Evaluates a compressor, designed for audio data.')
+  parser.add_argument(
+      '--output_filepath',
+      type=str,
+      default=constants_audio.EVAL_OUTPUT_FILEPATH,
+      help='Output filepath (CSV file).',
+  )
+  parser.add_argument(
+      '--compressor',
+      type=str,
+      default='flac',
+      choices=compressor.COMPRESSOR_TYPES['classical'] + compressor.COMPRESSOR_TYPES['arithmetic_coding'],
+      help='Compressor to use.',
+  )
+  parser.add_argument(
+      '--dataset',
+      type=str,
+      default='musdb18mono',
+      choices=list(data_loaders_audio.GET_AUDIO_DATA_GENERATOR_FN_DICT.keys()),
+      help='Dataset to use.',
+  )
+  parser.add_argument(
+      '--chunk_size',
+      type=int,
+      default=constants.CHUNK_SIZE_BYTES,
+      help='Chunk size (number of bytes).',
+  )
+  parser.add_argument(
+      '--num_chunks',
+      type=int,
+      default=constants.NUM_CHUNKS,
+      help='Number of chunks.',
+  )
+  parser.add_argument(
+      '--bit_depth',
+      type=int,
+      default=None,
+      help='Bit depth (8, 16, or 24). Default is None, which means the bit depth is determined by the dataset.',
+  )
+  parser.add_argument(
+      '--is_mu_law',
+      type=bool,
+      default=None,
+      help='Whether to use mu-law encoding. Default is None, which means the is_mu_law is determined by the dataset.',
+  )
+  parser.add_argument(
+      '--sample_rate',
+      type=int,
+      default=constants_audio.SAMPLE_RATE,
+      help='Sample rate (Hz). Only necessary for FLAC compression.',
+  )
+  args = parser.parse_args()
+
+  # set default arguments if not provided
+  if args.bit_depth is None:
+    args.bit_depth = data_loaders_audio.get_native_bit_depth(dataset=args.dataset)
+  if args.is_mu_law is None:
+    args.is_mu_law = data_loaders_audio.get_is_mu_law(dataset=args.dataset)
+  
+  return args
 
 
 def evaluate_compressor_chunked(
@@ -133,57 +163,59 @@ def evaluate_compressor_unchunked(
   return len(compressed_data) / len(all_data), t1 - t0
 
 
-def main(_) -> None:
+def main(args) -> None:
   # log the command line arguments, only logging certain arguments for certain compressors
-  logging.info('Compressor: %s', _COMPRESSOR.value)
-  logging.info('Dataset: %s', _DATASET.value)
-  assert _CHUNK_SIZE.value > 0, f"Chunk size must be greater than 0. Provided chunk size: {_CHUNK_SIZE.value}."
-  logging.info('Chunk size: %s', _CHUNK_SIZE.value)
-  assert _NUM_CHUNKS.value > 0, f"Number of chunks must be greater than 0. Provided number of chunks: {_NUM_CHUNKS.value}."
-  logging.info('Num chunks: %s', _NUM_CHUNKS.value)
-  if _COMPRESSOR.value == 'flac':
-    assert _BIT_DEPTH.value in constants_audio.VALID_BIT_DEPTHS, f"Invalid bit depth: {_BIT_DEPTH.value}. Valid bit depths are {constants_audio.VALID_BIT_DEPTHS}."
-    logging.info('Bit depth: %s', _BIT_DEPTH.value)
-  if _COMPRESSOR.value == 'flac':
-    assert _SAMPLE_RATE.value > 0, f"Sample rate must be greater than 0. Provided sample rate: {_SAMPLE_RATE.value}."
-    logging.info('Sample rate: %s', _SAMPLE_RATE.value)
+  logging.info('Compressor: %s', args.compressor)
+  logging.info('Dataset: %s', args.dataset)
+  assert args.chunk_size > 0, f"Chunk size must be greater than 0. Provided chunk size: {args.chunk_size}."
+  logging.info('Chunk size: %s', args.chunk_size)
+  assert args.num_chunks > 0, f"Number of chunks must be greater than 0. Provided number of chunks: {args.num_chunks}."
+  logging.info('Num chunks: %s', args.num_chunks)
+  assert args.bit_depth in constants_audio.VALID_BIT_DEPTHS, f"Invalid bit depth: {args.bit_depth}. Valid bit depths are {constants_audio.VALID_BIT_DEPTHS}."
+  logging.info('Bit depth: %s', args.bit_depth)
+  assert args.is_mu_law is not None, f"is_mu_law is not set. Provided is_mu_law: {args.is_mu_law}."
+  logging.info('Is mu-law: %s', args.is_mu_law)
+  if args.compressor == 'flac':
+    assert args.sample_rate > 0, f"Sample rate must be greater than 0. Provided sample rate: {args.sample_rate}."
+    logging.info('Sample rate: %s', args.sample_rate)
   
   # get the compress function and data generator function
   compress_fn_dict = compressor.get_compress_fn_dict( # get compress function dictionary
-    bit_depth=_BIT_DEPTH.value,
-    sample_rate=_SAMPLE_RATE.value,
+    bit_depth=args.bit_depth,
+    sample_rate=args.sample_rate,
   )
-  compress_fn = compress_fn_dict[_COMPRESSOR.value]
+  compress_fn = compress_fn_dict[args.compressor]
   get_data_generator_fn = functools.partial(
-      data_loaders_audio.GET_AUDIO_DATA_GENERATOR_FN_DICT[_DATASET.value],
-      chunk_size=_CHUNK_SIZE.value,
-      num_chunks=_NUM_CHUNKS.value,
-      bit_depth=_BIT_DEPTH.value,
+      data_loaders_audio.GET_AUDIO_DATA_GENERATOR_FN_DICT[args.dataset],
+      chunk_size=args.chunk_size,
+      num_chunks=args.num_chunks,
+      bit_depth=args.bit_depth,
+      is_mu_law=args.is_mu_law,
   )
 
   # for classical compressors, we evaluate the compressor on the unchunked and chunked data
-  if _COMPRESSOR.value in compressor.COMPRESSOR_TYPES['classical']:
+  if args.compressor in compressor.COMPRESSOR_TYPES['classical']:
     unchunked_rate, unchunked_time = evaluate_compressor_unchunked(
         compress_fn=compress_fn,
         get_data_generator_fn=get_data_generator_fn,
-        num_chunks=_NUM_CHUNKS.value,
+        num_chunks=args.num_chunks,
     )
     chunked_rate, chunked_time = evaluate_compressor_chunked(
         compress_fn=compress_fn,
         get_data_generator_fn=get_data_generator_fn,
-        num_chunks=_NUM_CHUNKS.value,
+        num_chunks=args.num_chunks,
         count_header_only_once=True,
-        bit_depth=_BIT_DEPTH.value,
+        bit_depth=args.bit_depth,
     )
     logging.info('Unchunked: %.1f (%.1fx) [%.1fs]', 100 * unchunked_rate, 1 / unchunked_rate, unchunked_time)
     logging.info('Chunked: %.1f (%.1fx) [%.1fs]', 100 * chunked_rate, 1 / chunked_rate, chunked_time)
 
   # for arithmetic coding compressors, we evaluate the compressor on only the chunked data
-  elif _COMPRESSOR.value in compressor.COMPRESSOR_TYPES['arithmetic_coding']:
+  elif args.compressor in compressor.COMPRESSOR_TYPES['arithmetic_coding']:
     if not exists(constants_audio.LLAMA_EVAL_OUTPUT_FILEPATH): # write column names to output file if it doesn't exist
       pd.DataFrame(
         columns = [
-          'compressor', 'dataset', 'chunk_size', 'num_chunks', 'bit_depth', 'compression_rate', 'compression_time'
+          'compressor', 'dataset', 'chunk_size', 'num_chunks', 'bit_depth', 'is_native_bit_depth', 'is_mu_law', 'matches_native_quantization', 'compression_rate', 'compression_time'
         ]).to_csv(
           path_or_buf=constants_audio.LLAMA_EVAL_OUTPUT_FILEPATH,
           sep=',',
@@ -195,21 +227,24 @@ def main(_) -> None:
     chunked_rate, chunked_time = evaluate_compressor_chunked(
         compress_fn=compress_fn,
         get_data_generator_fn=get_data_generator_fn,
-        num_chunks=_NUM_CHUNKS.value,
+        num_chunks=args.num_chunks,
         count_header_only_once=False,
-        bit_depth=_BIT_DEPTH.value,
+        bit_depth=args.bit_depth,
     )
     logging.info('Chunked: %.1f (%.1fx) [%.1fs]', 100 * chunked_rate, 1 / chunked_rate, chunked_time)
     pd.DataFrame(data = [{
-      'compressor': _COMPRESSOR.value,
-      'dataset': _DATASET.value,
-      'chunk_size': _CHUNK_SIZE.value,
-      'num_chunks': _NUM_CHUNKS.value,
-      'bit_depth': _BIT_DEPTH.value,
+      'compressor': args.compressor,
+      'dataset': args.dataset,
+      'chunk_size': args.chunk_size,
+      'num_chunks': args.num_chunks,
+      'bit_depth': args.bit_depth,
+      'is_native_bit_depth': args.bit_depth == data_loaders_audio.get_native_bit_depth(dataset=args.dataset),
+      'is_mu_law': args.is_mu_law,
+      'matches_native_quantization': args.is_mu_law == data_loaders_audio.get_is_mu_law(dataset=args.dataset),
       'compression_rate': 1 / chunked_rate,
       'compression_time': chunked_time,
     }]).to_csv(
-      path_or_buf=constants_audio.LLAMA_EVAL_OUTPUT_FILEPATH,
+      path_or_buf=args.output_filepath,
       sep=',',
       na_rep='NA',
       header=False,
@@ -219,7 +254,8 @@ def main(_) -> None:
 
   # unknown compressor
   else:
-    raise ValueError(f"Unknown compressor: {_COMPRESSOR.value}. For classical compressors, use one of {compressor.COMPRESSOR_TYPES['classical']}. For arithmetic coding compressors, use one of {compressor.COMPRESSOR_TYPES['arithmetic_coding']}.")
+    raise ValueError(f"Unknown compressor: {args.compressor}. For classical compressors, use one of {compressor.COMPRESSOR_TYPES['classical']}. For arithmetic coding compressors, use one of {compressor.COMPRESSOR_TYPES['arithmetic_coding']}.")
 
 if __name__ == '__main__':
-  app.run(main)
+  args = parse_args()
+  main(args)

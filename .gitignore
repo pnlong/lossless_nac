@@ -17,4 +17,9 @@ flac_lossy_estimating/
 sashimi/outputs_clarified/
 sashimi/s4/outputs/
 
-lmic_minimal/outputs/
+lmic/outputs/
+
+flac_eval_results.csv
+flac_eval_plot*.pdf
+lmic/lmic_eval_results.csv
+lmic/lmic_eval_plot*.pdf

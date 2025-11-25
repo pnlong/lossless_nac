@@ -7,9 +7,6 @@ numpy
 optax
 pillow
 pydub
-scipy
-soundfile
 tensorflow
 tensorflow_datasets
 tqdm
-wandb

@@ -92,7 +92,7 @@ class _CoderBase:
   def __str__(self) -> str:
     """Returns string describing internal state."""
     if self._base > 16:
-      raise ValueError("`__str__` with `base` exceeding 16 not implmeneted.")
+      raise ValueError("`__str__` with `base` exceeding 16 not implemented.")
 
     p = 1 + _log_power_of_b(self._base_to_pm1, base=self._base)
 

@@ -46,7 +46,12 @@ def add_discarded_lsbs_back(shifted_bytes: bytes, discarded_lsbs: bytes) -> byte
   return reconstructed_bytes
 
 
-def load_audio(path: str, bit_depth: int, expected_sample_rate: int = None) -> Tuple[np.ndarray, int]:
+def load_audio(
+    path: str,
+    bit_depth: int,
+    expected_sample_rate: int = None,
+    is_mu_law: bool = False,
+) -> Tuple[np.ndarray, int]:
   """
   Load an audio file and convert it to the target bit depth.
   
@@ -54,6 +59,7 @@ def load_audio(path: str, bit_depth: int, expected_sample_rate: int = None) -> T
     path: The path to the audio file.
     bit_depth: The target bit depth. See constants_audio.VALID_BIT_DEPTHS for valid bit depths.
     expected_sample_rate: The expected sample rate. If None, the sample rate will not be checked.
+    is_mu_law: Whether to use mu-law encoding.
   
   Returns:
     The waveform and sample rate. Note that waveform will always be signed integer data type.
@@ -72,6 +78,16 @@ def load_audio(path: str, bit_depth: int, expected_sample_rate: int = None) -> T
     waveform.export(stream, format = "FLAC") # export as corrected FLAC file
     waveform, sample_rate = sf.read(file = stream, dtype = np.float32) # get the audio as a numpy array
     del stream
+
+  # convert waveform to mu-law encoding if necessary, assumes waveform is in the range [-1, 1] and linear-quantized
+  if is_mu_law: # perform mu-law companding transformation
+    mu = (2 ** bit_depth) - 1
+    numerator = np.log1p(mu * np.abs(waveform + 1e-8))
+    denominator = np.log1p(mu)
+    waveform = np.sign(waveform) * (numerator / denominator)
+    del mu, numerator, denominator
+
+  # convert waveform to correct bit depth
   waveform_dtype = np.int8 if bit_depth == 8 else np.int16 if bit_depth == 16 else np.int32
   waveform = (waveform * ((2 ** (bit_depth - 1)) - 1)).astype(waveform_dtype)
 

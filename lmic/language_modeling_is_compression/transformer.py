@@ -23,8 +23,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
 
-from language_modeling_is_compression import constants
-
 
 @dataclasses.dataclass(kw_only=True)
 class TransformerConfig:
@@ -208,36 +206,3 @@ def transformer_decoder(
 
   logits = hk.Linear(config.vocab_size)(h)
   return jnn.log_softmax(logits, axis=-1)
-
-
-def create_audio_transformer_config(
-    use_16bit: bool = False,
-    embedding_dim: int = 64,
-    num_layers: int = 4,
-    num_heads: int = 8,
-    emb_init_scale: float = 0.02,
-    widening_factor: int = 4,
-) -> TransformerConfig:
-    """Create transformer configuration for audio data.
-    
-    Args:
-        use_16bit: If True, use 16-bit audio (vocab size 65536), else 8-bit (vocab size 256)
-        embedding_dim: The dimension of the first embedding
-        num_layers: The number of multi-head attention layers
-        num_heads: The number of heads per layer
-        emb_init_scale: The parameter initialization scale for the embeddings
-        widening_factor: How much larger the hidden layer of the feedforward network should be
-            compared to the `embedding_dim`
-    
-    Returns:
-        TransformerConfig configured for audio data
-    """
-    vocab_size = constants.ALPHABET_SIZE_16BIT if use_16bit else constants.ALPHABET_SIZE
-    return TransformerConfig(
-        vocab_size=vocab_size,
-        embedding_dim=embedding_dim,
-        num_layers=num_layers,
-        num_heads=num_heads,
-        emb_init_scale=emb_init_scale,
-        widening_factor=widening_factor,
-    )

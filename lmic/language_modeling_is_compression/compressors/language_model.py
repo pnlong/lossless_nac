@@ -47,10 +47,9 @@ def _retrieve_model_params() -> hk.Params:
 
 def _retrieve_predict_fn(
     params: hk.Params,
-    use_16bit: bool = False,
 ) -> Callable[[np.ndarray], np.ndarray]:
   """Returns the prediction function for the trained model."""
-  config = transformer.create_audio_transformer_config(use_16bit=use_16bit)
+  config = transformer.TransformerConfig(vocab_size=constants.ALPHABET_SIZE)
   model = hk.transform(
       functools.partial(transformer.transformer_decoder, config=config)
   )
@@ -61,7 +60,6 @@ def compress(
     data: bytes,
     return_num_padded_bits: bool = False,
     use_slow_lossless_compression: bool = False,
-    use_16bit: bool = False,
 ) -> bytes | tuple[bytes, int]:
   """Compresses the `data` using arithmetic coding and a pretrained model.
 
@@ -77,19 +75,15 @@ def compress(
       the latter is O(n^2). However, the goal is to losslessly decompress the
       compressed output, use the second option (i.e., `True`) since this is what
       happens in the decoder (which iteratively reconstructs the sequence).
-    use_16bit: Whether to use 16-bit audio (affects vocabulary size).
 
   Returns:
     The compressed data.
   """
   params = _retrieve_model_params()
-  predict_fn = _retrieve_predict_fn(params, use_16bit=use_16bit)
+  predict_fn = _retrieve_predict_fn(params)
 
   # Convert the `data` into an array of integers (representing the bytes).
-  if use_16bit:
-    sequence_array = np.frombuffer(data, dtype=np.int16)
-  else:
-    sequence_array = np.frombuffer(data, dtype=np.uint8)
+  sequence_array = np.frombuffer(data, dtype=np.uint8)
 
   if use_slow_lossless_compression:
     log_probs = list()
@@ -126,7 +120,6 @@ def decompress(
     data: bytes,
     num_padded_bits: int = 0,
     uncompressed_length: int = constants.CHUNK_SIZE_BYTES,
-    use_16bit: bool = False,
 ) -> bytes:
   """Decompresses the `data` using arithmetic coding and a pretrained model.
 
@@ -137,13 +130,12 @@ def decompress(
     num_padded_bits: The number of zeros added to the encoded bitstream in order
       to make it byte-decodeable (i.e., divisble by 8).
     uncompressed_length: The length of the original data stream (in bytes).
-    use_16bit: Whether to use 16-bit audio (affects vocabulary size).
 
   Returns:
     The decompressed data.
   """
   params = _retrieve_model_params()
-  predict_fn = _retrieve_predict_fn(params, use_16bit=use_16bit)
+  predict_fn = _retrieve_predict_fn(params)
 
   data_iter = iter(utils.bytes_to_bits(data, num_padded_bits=num_padded_bits))
 
@@ -165,10 +157,7 @@ def decompress(
   # step, we need the `pdf` of the next token given all currently decompressed
   # tokens, but without a dummy token, the last `pdf` would be that of the last
   # already decompressed token. The value of the dummy token is irrelevant.
-  if use_16bit:
-    sequence_array = np.empty((1,), dtype=np.int16)
-  else:
-    sequence_array = np.empty((1,), dtype=np.uint8)
+  sequence_array = np.empty((1,), dtype=np.uint8)
   probs = np.exp(predict_fn(sequence_array[None])[0, ...])
 
   for idx in range(uncompressed_length):
@@ -180,27 +169,3 @@ def decompress(
 
   # Remove the dummy token and convert to bytes.
   return sequence_array[:-1].tobytes()
-
-
-def compress_audio(
-    data: bytes,
-    use_16bit: bool = False,
-    return_num_padded_bits: bool = False,
-) -> bytes | tuple[bytes, int]:
-    """Compress audio data using arithmetic coding and a pretrained model.
-    
-    Args:
-        data: The audio data to be compressed.
-        use_16bit: Whether to use 16-bit audio (affects vocabulary size).
-        return_num_padded_bits: Whether to return the number of zeros added to the
-            encoded bitstream in order to make it byte-decodeable.
-    
-    Returns:
-        The compressed data, optionally with the number of padded bits.
-    """
-    return compress(
-        data=data,
-        return_num_padded_bits=return_num_padded_bits,
-        use_slow_lossless_compression=False,
-        use_16bit=use_16bit,
-    )
