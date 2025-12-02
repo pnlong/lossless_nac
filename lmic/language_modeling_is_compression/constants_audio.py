@@ -14,7 +14,7 @@ CHUNKS_PER_SAMPLE = 10
 # default llama model
 DEFAULT_LLAMA_MODEL = 'llama-2-7b'
 VALID_LLAMA_MODELS = ['llama-2-7b', 'llama-2-13b', 'llama-2-70b']
-LLAMA_USE_TOP_K = True
+LLAMA_USE_TOP_K = False
 TOP_K = 100 # top-k next token log-probabilities
 QUANTIZE_LLAMA_MODEL = False
 POST_TOKENIZATION_LENGTH_BYTES = 4 # number of bytes to store the post tokenization length
@@ -34,22 +34,23 @@ USE_TQDM = True # enabled because we are writing to log files
 
 # output filepath for evaluation results
 EVAL_OUTPUT_FILEPATH = "/home/pnlong/lnac/lmic/lmic_eval_results.csv"
+LOSS_BPB_OUTPUT_FILEPATH = "/home/pnlong/lnac/lmic/lmic_eval_loss_bpb_results.csv"
 
 # filepaths (general)
 AUDIO_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data"
 
 # MUSDB18 Mono
-MUSDB18MONO_DATA_DIR = f"{AUDIO_DATA_DIR}/musdb18mono"
+MUSDB18MONO_DATA_DIR = f"{AUDIO_DATA_DIR}/musdb18mono" # yggdrasil
 
 # MUSDB18 Stereo
-MUSDB18STEREO_DATA_DIR = f"{AUDIO_DATA_DIR}/musdb18stereo"
+MUSDB18STEREO_DATA_DIR = f"{AUDIO_DATA_DIR}/musdb18stereo" # yggdrasil
 
 # LibriSpeech
 LIBRISPEECH_SPLIT = "dev-clean" # "dev-clean" or "train-clean-100"
-LIBRISPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/librispeech/LibriSpeech/{LIBRISPEECH_SPLIT}"
+LIBRISPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/librispeech/LibriSpeech/{LIBRISPEECH_SPLIT}" # yggdrasil
 
 # LJSpeech
-LJSPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/ljspeech"
+LJSPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/ljspeech" # yggdrasil
 
 # Epidemic Sound
 EPIDEMIC_SOUND_DATA_DIR = "/graft1/datasets/kechen/epidemic/epidemic_sound" # pando

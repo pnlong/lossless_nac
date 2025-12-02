@@ -1,6 +1,8 @@
 #!/bin/bash
 # for compression_level in $(seq 0 8); do bash flac_eval.sh --compression-level ${compression_level} ; done
 
+set -e
+
 # Default values
 SOFTWARE="/home/pnlong/lnac/flac_eval.py" # software path
 OUTPUT="/home/pnlong/lnac/flac_eval_results.csv" # output filepath
@@ -8,6 +10,7 @@ COMPRESSION_LEVEL=5 # flac compression level
 DISABLE_CONSTANT_SUBFRAMES=""
 DISABLE_FIXED_SUBFRAMES=""
 DISABLE_VERBATIM_SUBFRAMES=""
+MACHINE="yggdrasil" # machine to use (yggdrasil or pando)
 
 # Usage function
 usage() {
@@ -19,6 +22,7 @@ Options:
     --disable-constant-subframes Disable constant subframes for FLAC
     --disable-fixed-subframes    Disable fixed subframes for FLAC
     --disable-verbatim-subframes Disable verbatim subframes for FLAC
+    --machine MACHINE            Machine to use (yggdrasil or pando, default: ${MACHINE})
     -h, --help                   Show this help message
 
 Examples:
@@ -29,7 +33,7 @@ EOF
 }
 
 # Parse command line arguments using getopt
-OPTS=$(getopt -o "h" --long compression-level:,disable-constant-subframes,disable-fixed-subframes,disable-verbatim-subframes,help -- "$@")
+OPTS=$(getopt -o "h" --long compression-level:,disable-constant-subframes,disable-fixed-subframes,disable-verbatim-subframes,machine:,help -- "$@")
 if [ $? -ne 0 ]; then
     echo "Error: Failed to parse options"
     usage
@@ -56,6 +60,10 @@ while true; do
             DISABLE_VERBATIM_SUBFRAMES="--disable_verbatim_subframes"
             shift
             ;;
+        --machine)
+            MACHINE="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -78,6 +86,12 @@ if ! [[ "$COMPRESSION_LEVEL" =~ ^[0-8]$ ]]; then
     exit 1
 fi
 
+# Validate machine
+if ! [[ "$MACHINE" =~ ^(yggdrasil|pando)$ ]]; then
+    echo "Error: Unknown machine: ${MACHINE}. Must be 'yggdrasil' or 'pando'"
+    exit 1
+fi
+
 # Build common arguments
 common_args=(
     "--output_filepath" "${OUTPUT}"
@@ -87,38 +101,52 @@ common_args=(
 [[ -n "$DISABLE_FIXED_SUBFRAMES" ]] && common_args+=("$DISABLE_FIXED_SUBFRAMES")
 [[ -n "$DISABLE_VERBATIM_SUBFRAMES" ]] && common_args+=("$DISABLE_VERBATIM_SUBFRAMES")
 
-# musdb18mono and musdb18stereo
-for subset in "_mixes" "_stems" ""; do
-    python "${SOFTWARE}" --dataset "musdb18mono${subset}" "${common_args[@]}"
-    python "${SOFTWARE}" --dataset "musdb18stereo${subset}" "${common_args[@]}"
-done
+# Run datasets based on machine
 
-# librispeech
-python "${SOFTWARE}" --dataset "librispeech" "${common_args[@]}"
+# pando datasets
+if [ "$MACHINE" == "pando" ]; then
 
-# ljspeech
-python "${SOFTWARE}" --dataset "ljspeech" "${common_args[@]}"
+    # epidemic sound
+    python "${SOFTWARE}" --dataset "epidemic" "${common_args[@]}"
 
-# epidemic
-python "${SOFTWARE}" --dataset "epidemic" "${common_args[@]}"
+    # vctk
+    python "${SOFTWARE}" --dataset "vctk" "${common_args[@]}"
 
-# vctk
-python "${SOFTWARE}" --dataset "vctk" "${common_args[@]}"
+# yggdrasil datasets
+elif [ "$MACHINE" == "yggdrasil" ]; then
 
-# torrent 16-bit and 24-bit
-for torrent_subset in "_pro" "_amateur" "_freeload" ""; do
-    python "${SOFTWARE}" --dataset "torrent16b${torrent_subset}" "${common_args[@]}"
-    python "${SOFTWARE}" --dataset "torrent24b${torrent_subset}" "${common_args[@]}"
-done
+    # musdb18mono and musdb18stereo
+    for subset in "_mixes" "_stems" ""; do
+        python "${SOFTWARE}" --dataset "musdb18mono${subset}" "${common_args[@]}"
+        python "${SOFTWARE}" --dataset "musdb18stereo${subset}" "${common_args[@]}"
+    done
 
-# birdvox
-python "${SOFTWARE}" --dataset "birdvox" "${common_args[@]}"
+    # librispeech
+    python "${SOFTWARE}" --dataset "librispeech" "${common_args[@]}"
 
-# beethoven piano sonatas
-python "${SOFTWARE}" --dataset "beethoven" "${common_args[@]}"
+    # ljspeech
+    python "${SOFTWARE}" --dataset "ljspeech" "${common_args[@]}"
 
-# youtube mix
-python "${SOFTWARE}" --dataset "youtube_mix" "${common_args[@]}"
+    # torrent 16-bit and 24-bit
+    for torrent_subset in "_pro" "_amateur" "_freeload" ""; do
+        python "${SOFTWARE}" --dataset "torrent16b${torrent_subset}" "${common_args[@]}"
+        python "${SOFTWARE}" --dataset "torrent24b${torrent_subset}" "${common_args[@]}"
+    done
 
-# sc09 speech
-python "${SOFTWARE}" --dataset "sc09" "${common_args[@]}"
+    # birdvox
+    python "${SOFTWARE}" --dataset "birdvox" "${common_args[@]}"
+
+    # beethoven piano sonatas
+    python "${SOFTWARE}" --dataset "beethoven" "${common_args[@]}"
+
+    # youtube mix
+    python "${SOFTWARE}" --dataset "youtube_mix" "${common_args[@]}"
+
+    # sc09 speech
+    python "${SOFTWARE}" --dataset "sc09" "${common_args[@]}"
+
+# unknown machine
+else
+    echo "Error: Unknown machine: ${MACHINE}. Must be 'yggdrasil' or 'pando'"
+    exit 1
+fi

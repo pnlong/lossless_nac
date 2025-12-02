@@ -48,6 +48,7 @@ def _retrieve_predict_fn(
 def compress(
     data: bytes,
     return_num_padded_bits: bool = False,
+    return_loss_and_bpb: bool = False,
     use_slow_lossless_compression: bool = False,
 ) -> bytes | tuple[bytes, int]:
   """Compresses the `data` using arithmetic coding and a pretrained model.
@@ -57,6 +58,8 @@ def compress(
     return_num_padded_bits: Whether to return the number of zeros added to the
       encoded bitstream in order to make it byte-decodeable (i.e., divisible by
       8). Usually, this is used when the encoded data has to be decoded again.
+    return_loss_and_bpb: Whether to return the loss and bits per byte for the
+      compressed data.
     use_slow_lossless_compression: Whether to compute the `pdf`s for all tokens
       in the data stream in one go or separately for every proper subsequence.
       When only compressing data (i.e., without decompression) use the first
@@ -87,11 +90,9 @@ def compress(
     log_probs = np.vstack(log_probs)
   else:
     log_probs = predict_fn(sequence_array[None])[0, ...]
-  if constants_audio.OUTPUT_LOSS_AND_BPB_TO_VERIFY_COMPRESSION: # output loss and bits per byte for each chunk
-    loss = F.nll_loss(input=log_probs, target=sequence_array).item() # loss is the negative log-likelihood of the predicted tokens
-    bpb = loss / np.log(2).item()
-    print(f"Loss: {loss:8.4f}, BPB: {bpb:8.4f}")
-    del loss, bpb # free memory
+  if return_loss_and_bpb: # output loss and bits per byte for each chunk
+    compressed_loss = F.nll_loss(input=log_probs, target=sequence_array).item() # loss is the negative log-likelihood of the predicted tokens
+    compressed_bpb = compressed_loss / np.log(2).item()
   probs = np.exp(log_probs)
 
   output = list()
@@ -110,10 +111,17 @@ def compress(
   # Add the discarded LSBs to the compressed data
   compressed_bytes = compressed_bytes + discarded_lsbs
 
-  if return_num_padded_bits:
-    return compressed_bytes, num_padded_bits
-
-  return compressed_bytes
+  # Return requested output
+  if return_loss_and_bpb: # return loss and bits per byte for the compressed data
+    if return_num_padded_bits: # return number of padded bits if requested
+      return compressed_bytes, num_padded_bits, compressed_loss, compressed_bpb
+    else: # don't return number of padded bits
+      return compressed_bytes, compressed_loss, compressed_bpb
+  else:
+    if return_num_padded_bits: # return number of padded bits if requested
+      return compressed_bytes, num_padded_bits
+    else: # don't return number of padded bits or compression loss and bits per byte
+      return compressed_bytes
 
 
 def decompress(

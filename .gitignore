@@ -23,3 +23,5 @@ flac_eval_results.csv
 flac_eval_plot*.pdf
 lmic/lmic_eval_results.csv
 lmic/lmic_eval_plot*.pdf
+lmic/lmic_eval_loss_bpb_results.csv
+lmic/lmic_eval_loss_bpb_plot*.pdf
