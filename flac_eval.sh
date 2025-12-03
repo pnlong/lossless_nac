@@ -1,5 +1,6 @@
 #!/bin/bash
-# for compression_level in $(seq 0 8); do bash flac_eval.sh --compression-level ${compression_level} ; done
+# for compression_level in $(seq 0 8); do bash flac_eval.sh --compression-level ${compression_level}; done
+# for compression_level in $(seq 0 8); do bash flac_eval.sh --compression-level ${compression_level} --disable-constant-subframes --disable-fixed-subframes --disable-verbatim-subframes; done
 
 set -e
 
