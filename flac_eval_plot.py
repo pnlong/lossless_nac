@@ -24,8 +24,8 @@ Y_AXIS_LABEL = "Compression Rate (x)"
 # Load the CSV file
 df = pd.read_csv(args.input_filepath)
 
-# Filter for is_native_bit_depth == True
-df_filtered = df[df["is_native_bit_depth"] == True]
+# Filter
+df_filtered = df[(df["is_native_bit_depth"] == True) & (df["matches_native_quantization"] == True)]
 df_filtered = df_filtered[df_filtered["disable_constant_subframes"] == args.disable_constant_subframes]
 df_filtered = df_filtered[df_filtered["disable_fixed_subframes"] == args.disable_fixed_subframes]
 df_filtered = df_filtered[df_filtered["disable_verbatim_subframes"] == args.disable_verbatim_subframes]
