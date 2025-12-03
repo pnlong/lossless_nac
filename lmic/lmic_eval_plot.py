@@ -95,3 +95,4 @@ plt.tight_layout()
 
 # Save the plot
 plt.savefig(args.output_filepath, dpi=300, bbox_inches="tight")
+print(f"Saved plot to {args.output_filepath}.")

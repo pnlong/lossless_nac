@@ -57,6 +57,7 @@ def _load_llama_model(
       hf_model_name,
       dtype=torch.bfloat16,
       device_map='auto',
+      cache_dir=constants_audio.HUGGINGFACE_MODEL_CACHE_DIR,
   )
   if constants_audio.QUANTIZE_LLAMA_MODEL:
     try:

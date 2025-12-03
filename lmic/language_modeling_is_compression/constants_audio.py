@@ -11,6 +11,9 @@ SAMPLE_RATE = 44100
 RANDOMIZE_CHUNKS = True
 CHUNKS_PER_SAMPLE = 10
 
+# huggingface model cache directory
+HUGGINGFACE_MODEL_CACHE_DIR = '/trunk/model-hub'
+
 # default llama model
 DEFAULT_LLAMA_MODEL = 'llama-2-7b'
 VALID_LLAMA_MODELS = ['llama-2-7b', 'llama-2-13b', 'llama-2-70b']
