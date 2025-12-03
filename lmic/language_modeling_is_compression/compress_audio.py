@@ -363,5 +363,9 @@ def main(args) -> None:
     raise ValueError(f"Unknown compressor: {args.compressor}. For classical compressors, use one of {compressor.COMPRESSOR_TYPES['classical']}. For arithmetic coding compressors, use one of {compressor.COMPRESSOR_TYPES['arithmetic_coding']}.")
 
 if __name__ == '__main__':
+  # Initialize absl logging to ensure INFO messages are displayed
+  logging.use_absl_handler()
+  logging.set_verbosity(logging.INFO)
+  
   args = parse_args()
   main(args)
