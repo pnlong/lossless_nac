@@ -148,6 +148,8 @@ class Dataset:
         sample_rate: int,
         bit_depth: int,
         native_bit_depth: int,
+        is_mu_law: bool,
+        native_is_mu_law: bool,
         is_mono: bool,
         paths: List[str],
     ):
@@ -156,6 +158,8 @@ class Dataset:
         self.sample_rate: int = sample_rate
         self.bit_depth: int = bit_depth
         self.native_bit_depth: int = native_bit_depth
+        self.is_mu_law: bool = is_mu_law
+        self.native_is_mu_law: bool = native_is_mu_law
         self.is_mono: bool = is_mono
         self.paths: List[str] = paths
         if len(self.paths) == 0:
@@ -167,7 +171,16 @@ class Dataset:
 
     def get_description(self) -> str:
         """Return a description of the dataset."""
-        return f"{self.name} dataset ({len(self)} files, " + (f"{self.sample_rate} Hz" if self.sample_rate is not None else "variable sample rate") + f", {self.bit_depth}-bit, {'mono' if self.is_mono else 'stereo'})"
+        return (
+            f"{self.name} dataset " + 
+            "(" +
+            f"{len(self)} files, " + 
+            (f"{self.sample_rate} Hz" if self.sample_rate is not None else "variable sample rate") + 
+            f", {self.bit_depth}-bit, " + 
+            f"{'mu-law' if self.is_mu_law else 'linear'}, " + 
+            f"{'mono' if self.is_mono else 'stereo'}" + 
+            ")"
+        )
 
     def __len__(self):
         """Return the number of items in the dataset."""
@@ -195,17 +208,22 @@ class MUSDB18Dataset(Dataset):
         self,
         is_mono: bool,
         bit_depth: int = None,
+        is_mu_law: bool = None,
         subset: str = None,
         partition: str = None,
     ):
         native_bit_depth: int = 16
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        native_is_mu_law: bool = False
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths(is_mono = is_mono, subset = subset, partition = partition)
         super().__init__(
             name = "musdb18" + ("mono" if is_mono else "stereo") + (f"_{subset}" if subset is not None else "") + (f"_{partition}" if partition is not None else ""),
             sample_rate = 44100,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = is_mono,
             paths = paths,
         )
@@ -238,12 +256,14 @@ class MUSDB18MonoDataset(MUSDB18Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
         subset: str = None,
         partition: str = None,
     ):
         super().__init__(
             is_mono = True,
             bit_depth = bit_depth,
+            is_mu_law = is_mu_law,
             subset = subset,
             partition = partition,
         )
@@ -256,12 +276,14 @@ class MUSDB18StereoDataset(MUSDB18Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
         subset: str = None,
         partition: str = None,
     ):
         super().__init__(
             is_mono = False,
             bit_depth = bit_depth,
+            is_mu_law = is_mu_law,
             subset = subset,
             partition = partition,
         )
@@ -274,15 +296,20 @@ class LibriSpeechDataset(Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
     ):
         native_bit_depth: int = 16
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        native_is_mu_law: bool = False
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths()
         super().__init__(
             name = "librispeech",
             sample_rate = 16000,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = True,
             paths = paths,
         )
@@ -300,15 +327,20 @@ class LJSpeechDataset(Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
     ):
         native_bit_depth: int = 16
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        native_is_mu_law: bool = False
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths()
         super().__init__(
             name = "ljspeech",
             sample_rate = 22050,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = True,
             paths = paths,
         )
@@ -326,15 +358,20 @@ class EpidemicSoundDataset(Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
     ):
         native_bit_depth: int = 24
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        native_is_mu_law: bool = False
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths()
         super().__init__(
             name = "epidemic",
             sample_rate = 48000,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = True,
             paths = paths,
         )
@@ -352,15 +389,20 @@ class VCTKDataset(Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
     ):
         native_bit_depth: int = 16
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        native_is_mu_law: bool = False
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths()
         super().__init__(
             name = "vctk",
             sample_rate = 48000,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = True,
             paths = paths,
         )
@@ -380,7 +422,10 @@ class TorrentDataset(Dataset):
         bit_depth: int,
         native_bit_depth: int,
         subset: str,
+        is_mu_law: bool = None,
     ):
+        native_is_mu_law: bool = False
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths(
             native_bit_depth = native_bit_depth,
             subset = subset,
@@ -390,6 +435,8 @@ class TorrentDataset(Dataset):
             sample_rate = None,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = False,
             paths = paths,
         )
@@ -418,6 +465,7 @@ class Torrent16BDataset(TorrentDataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
         subset: str = None,
     ):
         native_bit_depth: int = 16
@@ -426,6 +474,7 @@ class Torrent16BDataset(TorrentDataset):
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
             subset = subset,
+            is_mu_law = is_mu_law,
         )
 
 
@@ -436,6 +485,7 @@ class Torrent24BDataset(TorrentDataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
         subset: str = None,
     ):
         native_bit_depth: int = 24
@@ -444,6 +494,7 @@ class Torrent24BDataset(TorrentDataset):
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
             subset = subset,
+            is_mu_law = is_mu_law,
         )
 
 
@@ -454,15 +505,20 @@ class BirdvoxDataset(Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
     ):
         native_bit_depth: int = 16
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        native_is_mu_law: bool = False
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths()
         super().__init__(
             name = "birdvox",
             sample_rate = 24000,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = True,
             paths = paths,
         )
@@ -481,15 +537,20 @@ class BeethovenDataset(Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
     ):
         native_bit_depth: int = 8
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        native_is_mu_law: bool = True
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths()
         super().__init__(
             name = "beethoven",
             sample_rate = 16000,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = True,
             paths = paths,
         )
@@ -507,15 +568,20 @@ class YouTubeMixDataset(Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
     ):
         native_bit_depth: int = 8
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        native_is_mu_law: bool = True
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths()
         super().__init__(
             name = "youtube_mix",
             sample_rate = 16000,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = True,
             paths = paths,
         )
@@ -533,15 +599,20 @@ class SC09SpeechDataset(Dataset):
     def __init__(
         self,
         bit_depth: int = None,
+        is_mu_law: bool = None,
     ):
         native_bit_depth: int = 8
         bit_depth = native_bit_depth if bit_depth is None else bit_depth
+        native_is_mu_law: bool = True
+        is_mu_law = native_is_mu_law if is_mu_law is None else is_mu_law
         paths = self._get_paths()
         super().__init__(
             name = "sc09",
             sample_rate = 16000,
             bit_depth = bit_depth,
             native_bit_depth = native_bit_depth,
+            is_mu_law = is_mu_law,
+            native_is_mu_law = native_is_mu_law,
             is_mono = True,
             paths = paths,
         )
@@ -582,6 +653,7 @@ def get_dataset_choices() -> List[str]:
 def get_dataset(
     dataset_name: str,
     bit_depth: int = None,
+    is_mu_law: bool = None,
 ) -> Dataset:
     """
     Factory function to get dataset.
@@ -589,6 +661,7 @@ def get_dataset(
     Parameters:
         dataset_name: str - The name of the dataset.
         bit_depth: int - The bit depth of the dataset.
+        is_mu_law: bool - Whether to use mu-law encoding.
 
     Returns:
         Dataset - The dataset.
@@ -611,17 +684,17 @@ def get_dataset(
         elif "valid" in dataset_name:
             partition = "valid"
         if dataset_name.startswith("musdb18mono"):
-            dataset = MUSDB18MonoDataset(bit_depth = bit_depth, subset = subset, partition = partition) if bit_depth is not None else MUSDB18MonoDataset(subset = subset, partition = partition) # use default bit depth if not specified
+            dataset = MUSDB18MonoDataset(bit_depth = bit_depth, is_mu_law = is_mu_law, subset = subset, partition = partition)
         elif dataset_name.startswith("musdb18stereo"):
-            dataset = MUSDB18StereoDataset(bit_depth = bit_depth, subset = subset, partition = partition) if bit_depth is not None else MUSDB18StereoDataset(subset = subset, partition = partition) # use default bit depth if not specified
+            dataset = MUSDB18StereoDataset(bit_depth = bit_depth, is_mu_law = is_mu_law, subset = subset, partition = partition)
     elif dataset_name == "librispeech":
-        dataset = LibriSpeechDataset(bit_depth = bit_depth) if bit_depth is not None else LibriSpeechDataset() # use default bit depth if not specified
+        dataset = LibriSpeechDataset(bit_depth = bit_depth, is_mu_law = is_mu_law)
     elif dataset_name == "ljspeech":
-        dataset = LJSpeechDataset(bit_depth = bit_depth) if bit_depth is not None else LJSpeechDataset() # use default bit depth if not specified
+        dataset = LJSpeechDataset(bit_depth = bit_depth, is_mu_law = is_mu_law)
     elif dataset_name == "epidemic":
-        dataset = EpidemicSoundDataset(bit_depth = bit_depth) if bit_depth is not None else EpidemicSoundDataset() # use default bit depth if not specified
+        dataset = EpidemicSoundDataset(bit_depth = bit_depth, is_mu_law = is_mu_law)
     elif dataset_name == "vctk":
-        dataset = VCTKDataset(bit_depth = bit_depth) if bit_depth is not None else VCTKDataset() # use default bit depth if not specified
+        dataset = VCTKDataset(bit_depth = bit_depth, is_mu_law = is_mu_law)
     elif dataset_name.startswith("torrent"):
         subset = None # default to all
         if "pro" in dataset_name:
@@ -631,17 +704,17 @@ def get_dataset(
         elif "freeload" in dataset_name:
             subset = "freeload"
         if dataset_name.startswith("torrent16b"):
-            dataset = Torrent16BDataset(bit_depth = bit_depth, subset = subset) if bit_depth is not None else Torrent16BDataset(subset = subset) # use default bit depth if not specified
+            dataset = Torrent16BDataset(bit_depth = bit_depth, is_mu_law = is_mu_law, subset = subset)
         elif dataset_name.startswith("torrent24b"):
-            dataset = Torrent24BDataset(bit_depth = bit_depth, subset = subset) if bit_depth is not None else Torrent24BDataset(subset = subset) # use default bit depth if not specified
+            dataset = Torrent24BDataset(bit_depth = bit_depth, is_mu_law = is_mu_law, subset = subset)
     elif dataset_name == "birdvox":
-        dataset = BirdvoxDataset(bit_depth = bit_depth) if bit_depth is not None else BirdvoxDataset() # use default bit depth if not specified
+        dataset = BirdvoxDataset(bit_depth = bit_depth, is_mu_law = is_mu_law)
     elif dataset_name == "beethoven":
-        dataset = BeethovenDataset(bit_depth = bit_depth) if bit_depth is not None else BeethovenDataset() # use default bit depth if not specified
+        dataset = BeethovenDataset(bit_depth = bit_depth, is_mu_law = is_mu_law)
     elif dataset_name == "youtube_mix":
-        dataset = YouTubeMixDataset(bit_depth = bit_depth) if bit_depth is not None else YouTubeMixDataset() # use default bit depth if not specified
+        dataset = YouTubeMixDataset(bit_depth = bit_depth, is_mu_law = is_mu_law)
     elif dataset_name == "sc09":
-        dataset = SC09SpeechDataset(bit_depth = bit_depth) if bit_depth is not None else SC09SpeechDataset() # use default bit depth if not specified
+        dataset = SC09SpeechDataset(bit_depth = bit_depth, is_mu_law = is_mu_law)
     else:
         raise ValueError(error_message)
 
@@ -671,7 +744,8 @@ if __name__ == "__main__":
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(prog = "FLAC Evaluation", description = "Evalute FLAC Compression.") # create argument parser
         parser.add_argument("--dataset", type = str, required = True, choices = get_dataset_choices(), help = "Dataset to evaluate.")
-        parser.add_argument("--bit_depth", type = int, default = None, choices = VALID_BIT_DEPTHS, help = "Bit depth of the audio files.")
+        parser.add_argument("--bit_depth", type = int, default = None, choices = VALID_BIT_DEPTHS, help = "Bit depth of the audio files. If not provided, the bit depth is determined by the dataset.")
+        parser.add_argument("--is_mu_law", type = bool, default = None, help = "Whether to use mu-law encoding. If not provided, the is_mu_law is determined by the dataset.")
         parser.add_argument("--flac_compression_level", type = int, default = DEFAULT_FLAC_COMPRESSION_LEVEL, choices = list(range(0, 9)), help = "Compression level for FLAC.")
         parser.add_argument("--output_filepath", type = str, default = DEFAULT_OUTPUT_FILEPATH, help = "Absolute filepath to output CSV file.")
         parser.add_argument("--jobs", type = int, default = int(multiprocessing.cpu_count() / 4), help = "Number of workers for multiprocessing.")
@@ -699,6 +773,8 @@ if __name__ == "__main__":
             "dataset",
             "bit_depth",
             "is_native_bit_depth",
+            "is_mu_law",
+            "matches_native_quantization",
             "total_size",
             "compressed_size",
             "overall_compression_rate",
@@ -715,11 +791,12 @@ if __name__ == "__main__":
         ]).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = "NA", header = True, index = False, mode = "w")
 
     # get dataset
-    dataset = get_dataset(dataset_name = args.dataset, bit_depth = args.bit_depth)
+    dataset = get_dataset(dataset_name = args.dataset, bit_depth = args.bit_depth, is_mu_law = args.is_mu_law)
     assert dataset.bit_depth in VALID_BIT_DEPTHS, f"Dataset bit depth {dataset.bit_depth} is not a valid bit depth. Valid bit depths are {VALID_BIT_DEPTHS}."
+    assert dataset.is_mu_law is not None, f"Dataset is_mu_law is not set. Provided is_mu_law: {dataset.is_mu_law}."
     
     # log some information about the dataset
-    dataset_name = f" {dataset.name.upper()}, {'pseudo-' if dataset.native_bit_depth != dataset.bit_depth else ''}{dataset.bit_depth}-bit " # add spaces on side so it looks nicer
+    dataset_name = f" {dataset.name.upper()}, {'pseudo-' if dataset.native_bit_depth != dataset.bit_depth else ''}{dataset.bit_depth}-bit, {'mu-law' if dataset.is_mu_law else 'linear'} " # add spaces on side so it looks nicer
     line_character, line_width = "=", 100
     logger.info(f"{dataset_name:{line_character}^{line_width}}") # print dataset name with equal signs
     logger.info(f"Running Command: python {' '.join(sys.argv)}")
@@ -758,6 +835,14 @@ if __name__ == "__main__":
                 subtype = "PCM_24"
             else:
                 raise ValueError(f"Invalid bit depth: {dataset.bit_depth}. Valid bit depths are {VALID_BIT_DEPTHS}.")
+
+            # convert waveform to mu-law encoding if necessary, assumes waveform is in the range [-1, 1] and linear-quantized
+            if dataset.is_mu_law: # perform mu-law companding transformation
+                mu = (2 ** dataset.bit_depth) - 1
+                numerator = np.log1p(mu * np.abs(waveform + 1e-8))
+                denominator = np.log1p(mu)
+                waveform = np.sign(waveform) * (numerator / denominator)
+                del mu, numerator, denominator
 
             # write original waveform to temporary file
             wav_filepath = f"{tmp_dir}/original.wav"
@@ -842,6 +927,8 @@ if __name__ == "__main__":
         "dataset": dataset.name,
         "bit_depth": dataset.bit_depth,
         "is_native_bit_depth": dataset.native_bit_depth == dataset.bit_depth,
+        "is_mu_law": dataset.is_mu_law,
+        "matches_native_quantization": dataset.native_is_mu_law == dataset.is_mu_law,
         "total_size": total_size,
         "compressed_size": compressed_size,
         "overall_compression_rate": overall_compression_rate,

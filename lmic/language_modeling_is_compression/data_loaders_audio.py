@@ -588,13 +588,17 @@ def get_is_mu_law(
 ) -> bool:
   """Returns whether the dataset is mu-law encoded."""
   assert dataset in GET_AUDIO_DATA_GENERATOR_FN_DICT.keys(), f"Invalid dataset: {dataset}. Valid datasets are {GET_AUDIO_DATA_GENERATOR_FN_DICT.keys()}."
-  if (
+  
+  # mu-law quantization
+  if ( 
     dataset == "beethoven" or
     dataset == "youtube_mix" or
     dataset == "sc09"
   ):
-    return False
-  elif (
+    return True
+
+  # linear quantization
+  elif ( 
     dataset.startswith("musdb18mono") or 
     dataset.startswith("musdb18stereo") or
     dataset == "librispeech" or
@@ -604,6 +608,8 @@ def get_is_mu_law(
     dataset.startswith("torrent") or
     dataset == "birdvox"
   ):
-    return True
+    return False
+
+  # some invalid dataset
   else:
     raise ValueError(f"Invalid dataset: {dataset}.")
