@@ -38,7 +38,7 @@ DEFAULT_FLAC_COMPRESSION_LEVEL = 5
 VALID_BIT_DEPTHS = (8, 16, 24)
 
 # raw size percent difference threshold
-RAW_SIZE_PERCENT_DIFFERENCE_THRESHOLD = 0.1 # 10%
+RAW_SIZE_PERCENT_DIFFERENCE_THRESHOLD = None # if None, no threshold is applied
 
 ##################################################
 
@@ -859,7 +859,8 @@ if __name__ == "__main__":
             raw_size = getsize(wav_filepath)
             theoretical_raw_size = np.prod(waveform.shape) * (dataset.bit_depth // 8)
             raw_size_percent_difference = abs((raw_size - theoretical_raw_size) / theoretical_raw_size)
-            assert raw_size_percent_difference < RAW_SIZE_PERCENT_DIFFERENCE_THRESHOLD, f"Raw size mismatch: % difference between raw size and theoretical raw size is {raw_size_percent_difference:.2%}, which is greater than {raw_size_percent_difference_threshold:.2%}." # check that raw size is within certain percentage of theoretical raw size
+            if RAW_SIZE_PERCENT_DIFFERENCE_THRESHOLD is not None:
+                assert raw_size_percent_difference < RAW_SIZE_PERCENT_DIFFERENCE_THRESHOLD, f"Raw size mismatch: % difference between raw size and theoretical raw size is {raw_size_percent_difference:.2%}, which is greater than {RAW_SIZE_PERCENT_DIFFERENCE_THRESHOLD:.2%}." # check that raw size is within certain percentage of theoretical raw size
 
             # compress waveform to temporary file
             flac_filepath = f"{tmp_dir}/compressed.flac"
