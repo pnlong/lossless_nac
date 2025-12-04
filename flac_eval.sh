@@ -11,6 +11,8 @@ COMPRESSION_LEVEL=5 # flac compression level
 DISABLE_CONSTANT_SUBFRAMES=""
 DISABLE_FIXED_SUBFRAMES=""
 DISABLE_VERBATIM_SUBFRAMES=""
+BIT_DEPTH="" # bit depth to use, if not provided, the bit depth is determined by the dataset
+IS_MU_LAW="" # whether to use mu-law encoding, if not provided, the is_mu_law is determined by the dataset
 MACHINE="yggdrasil" # machine to use (yggdrasil or pando)
 
 # Usage function
@@ -19,12 +21,14 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Options:
-    -c, --compression-level LEVEL    FLAC compression level (0-8, default: ${COMPRESSION_LEVEL})
-    --disable-constant-subframes Disable constant subframes for FLAC
-    --disable-fixed-subframes    Disable fixed subframes for FLAC
-    --disable-verbatim-subframes Disable verbatim subframes for FLAC
-    --machine MACHINE            Machine to use (yggdrasil or pando, default: ${MACHINE})
-    -h, --help                   Show this help message
+    -c, --compression-level LEVEL       FLAC compression level (0-8, default: ${COMPRESSION_LEVEL})
+    --disable-constant-subframes        Disable constant subframes for FLAC
+    --disable-fixed-subframes           Disable fixed subframes for FLAC
+    --disable-verbatim-subframes        Disable verbatim subframes for FLAC
+    --bit_depth BIT_DEPTH               Bit depth (8, 16, or 24), if not provided, the bit depth is determined by the dataset
+    --is_mu_law IS_MU_LAW               Whether to use mu-law encoding, if not provided, the is_mu_law is determined by the dataset
+    --machine MACHINE                   Machine to use (yggdrasil or pando, default: ${MACHINE})
+    -h, --help                          Show this help message
 
 Examples:
     $0                                    # Use default compression level ${COMPRESSION_LEVEL}
@@ -34,7 +38,7 @@ EOF
 }
 
 # Parse command line arguments using getopt
-OPTS=$(getopt -o "h" --long compression-level:,disable-constant-subframes,disable-fixed-subframes,disable-verbatim-subframes,machine:,help -- "$@")
+OPTS=$(getopt -o "h" --long compression-level:,disable-constant-subframes,disable-fixed-subframes,disable-verbatim-subframes,bit_depth:,is_mu_law:,machine:,help -- "$@")
 if [ $? -ne 0 ]; then
     echo "Error: Failed to parse options"
     usage
@@ -60,6 +64,14 @@ while true; do
         --disable-verbatim-subframes)
             DISABLE_VERBATIM_SUBFRAMES="--disable_verbatim_subframes"
             shift
+            ;;
+        --bit_depth)
+            BIT_DEPTH="$2"
+            shift 2
+            ;;
+        --is_mu_law)
+            IS_MU_LAW="$2"
+            shift 2
             ;;
         --machine)
             MACHINE="$2"
@@ -87,6 +99,12 @@ if ! [[ "$COMPRESSION_LEVEL" =~ ^[0-8]$ ]]; then
     exit 1
 fi
 
+# Validate bit depth
+if [[ -n "$BIT_DEPTH" ]] && ! [[ "$BIT_DEPTH" =~ ^(8|16|24)$ ]]; then
+    echo "Error: --bit_depth must be 8, 16, or 24"
+    exit 1
+fi
+
 # Validate machine
 if ! [[ "$MACHINE" =~ ^(yggdrasil|pando)$ ]]; then
     echo "Error: Unknown machine: ${MACHINE}. Must be 'yggdrasil' or 'pando'"
@@ -101,6 +119,8 @@ common_args=(
 [[ -n "$DISABLE_CONSTANT_SUBFRAMES" ]] && common_args+=("$DISABLE_CONSTANT_SUBFRAMES")
 [[ -n "$DISABLE_FIXED_SUBFRAMES" ]] && common_args+=("$DISABLE_FIXED_SUBFRAMES")
 [[ -n "$DISABLE_VERBATIM_SUBFRAMES" ]] && common_args+=("$DISABLE_VERBATIM_SUBFRAMES")
+[[ -n "$BIT_DEPTH" ]] && common_args+=("--bit_depth" "${BIT_DEPTH}")
+[[ -n "$IS_MU_LAW" ]] && common_args+=("--is_mu_law" "${IS_MU_LAW}")
 
 # Run datasets based on machine
 

@@ -24,6 +24,10 @@ df = pd.read_csv(args.input_filepath)
 # filter df
 df = df[df["is_native_bit_depth"]] # native bit depth must match the bit depth used for the dataset
 df = df[df["matches_native_quantization"]] # native quantization must match the quantization used for the dataset
+
+# Define the desired order for compressors (llama-2-13b before llama-2-7b, so llama-2-7b is to the right)
+compressor_order = sorted(df["compressor"].unique(), key = lambda x: 0 if x == "llama-2-7b" else 1)  # Alphabetically: llama-2-13b, llama-2-7b
+df["compressor"] = pd.Categorical(df["compressor"], categories=compressor_order, ordered=True)
 df = df.sort_values(by = "compressor") # sort by compressor so Llama-models appear in order
 df = df.reset_index(drop = True)
 
