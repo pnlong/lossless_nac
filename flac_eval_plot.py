@@ -25,70 +25,55 @@ Y_AXIS_LABEL = "Compression Rate (x)"
 df = pd.read_csv(args.input_filepath)
 
 # Filter
-df_filtered = df[(df["is_native_bit_depth"] == True) & (df["matches_native_quantization"] == True)]
+df_filtered = df[df["matches_native_quantization"] == True]
 df_filtered = df_filtered[df_filtered["disable_constant_subframes"] == args.disable_constant_subframes]
 df_filtered = df_filtered[df_filtered["disable_fixed_subframes"] == args.disable_fixed_subframes]
 df_filtered = df_filtered[df_filtered["disable_verbatim_subframes"] == args.disable_verbatim_subframes]
 
-# Split data into three groups
-musdb18_mask = df_filtered["dataset"].str.startswith("musdb18")
-torrent_mask = df_filtered["dataset"].str.startswith("torrent")
-df_musdb18 = df_filtered[musdb18_mask]
-df_torrent = df_filtered[torrent_mask]
-df_other = df_filtered[~musdb18_mask & ~torrent_mask]
+# Define dataset groups configuration
+dataset_groups = [
+    {
+        "mask_func": lambda df: df["dataset"].str.startswith("musdb18"),
+        "title": "FLAC on MUSDB18",
+        "legend_loc": "upper right"
+    },
+    {
+        "mask_func": lambda df: df["dataset"].str.startswith("torrent"),
+        "title": "FLAC on Torrented Data",
+        "legend_loc": "upper left"
+    },
+    {
+        "mask_func": lambda df: ~df["dataset"].str.startswith("musdb18") & ~df["dataset"].str.startswith("torrent"),
+        "title": "FLAC on More",
+        "legend_loc": "upper left"
+    }
+]
 
-# Create figure with three subplots (horizontal)
-fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=PLOTS_SHARE_Y_AXIS)
+# Create figure with six subplots (2 rows, 3 columns)
+fig, axes = plt.subplots(2, 3, figsize=(18, 12), sharey=PLOTS_SHARE_Y_AXIS)
 
-# First subplot: MUSDB18
-ax1 = axes[0]
-sns.lineplot(
-    data=df_musdb18,
-    x="flac_compression_level",
-    y="overall_compression_rate",
-    hue="dataset",
-    marker="o",
-    ax=ax1
-)
-ax1.set_xlabel(X_AXIS_LABEL)
-ax1.set_ylabel(Y_AXIS_LABEL)
-ax1.set_title("FLAC on MUSDB18")
-ax1.grid(True)
-ax1.legend(title="Dataset", loc="upper right")
-
-# Second subplot: Torrent
-ax2 = axes[1]
-sns.lineplot(
-    data=df_torrent,
-    x="flac_compression_level",
-    y="overall_compression_rate",
-    hue="dataset",
-    marker="o",
-    ax=ax2
-)
-ax2.set_xlabel(X_AXIS_LABEL)
-if not PLOTS_SHARE_Y_AXIS:
-    ax2.set_ylabel(Y_AXIS_LABEL)
-ax2.set_title("FLAC on Torrented Data")
-ax2.grid(True)
-ax2.legend(title="Dataset", loc="upper left")
-
-# Third subplot: Everything else
-ax3 = axes[2]
-sns.lineplot(
-    data=df_other,
-    x="flac_compression_level",
-    y="overall_compression_rate",
-    hue="dataset",
-    marker="o",
-    ax=ax3
-)
-ax3.set_xlabel(X_AXIS_LABEL)
-if not PLOTS_SHARE_Y_AXIS:
-    ax3.set_ylabel(Y_AXIS_LABEL)
-ax3.set_title("FLAC on More")
-ax3.grid(True)
-ax3.legend(title="Dataset", loc="upper left")
+# Loop over bit depths (rows) and dataset groups (columns)
+for row_idx, bit_depth in enumerate([8, 16]):
+    df_bit = df_filtered[df_filtered["bit_depth"] == bit_depth]
+    
+    for col_idx, group_config in enumerate(dataset_groups):
+        ax = axes[row_idx, col_idx]
+        df_group = df_bit[group_config["mask_func"](df_bit)]
+        
+        sns.lineplot(
+            data=df_group,
+            x="flac_compression_level",
+            y="overall_compression_rate",
+            hue="dataset",
+            marker="o",
+            ax=ax
+        )
+        ax.set_xlabel(X_AXIS_LABEL)
+        if col_idx == 0 or not PLOTS_SHARE_Y_AXIS:
+            ax.set_ylabel(Y_AXIS_LABEL)
+        ax.set_title(f"{group_config['title']} ({bit_depth}-bit)")
+        ax.grid(True)
+        ax.legend(title="Dataset", loc=group_config["legend_loc"])
 
 # Overall title
 fig.suptitle("Comparing FLAC Compression Levels", fontsize=16, y=1.02)

@@ -12,7 +12,7 @@ DISABLE_CONSTANT_SUBFRAMES=""
 DISABLE_FIXED_SUBFRAMES=""
 DISABLE_VERBATIM_SUBFRAMES=""
 BIT_DEPTH="" # bit depth to use, if not provided, the bit depth is determined by the dataset
-IS_MU_LAW="" # whether to use mu-law encoding, if not provided, the is_mu_law is determined by the dataset
+IS_MU_LAW="" # whether to use mu-law encoding, if not provided, the quantization is determined by the dataset
 MACHINE="yggdrasil" # machine to use (yggdrasil or pando)
 
 # Usage function
@@ -25,8 +25,8 @@ Options:
     --disable-constant-subframes        Disable constant subframes for FLAC
     --disable-fixed-subframes           Disable fixed subframes for FLAC
     --disable-verbatim-subframes        Disable verbatim subframes for FLAC
-    --bit_depth BIT_DEPTH               Bit depth (8, 16, or 24), if not provided, the bit depth is determined by the dataset
-    --is_mu_law IS_MU_LAW               Whether to use mu-law encoding, if not provided, the is_mu_law is determined by the dataset
+    --bit-depth BIT_DEPTH               Bit depth (8, 16, or 24), if not provided, the bit depth is determined by the dataset
+    --is-mu-law IS_MU_LAW               Whether to use mu-law encoding, if not provided, the quantization is determined by the dataset
     --machine MACHINE                   Machine to use (yggdrasil or pando, default: ${MACHINE})
     -h, --help                          Show this help message
 
@@ -38,7 +38,7 @@ EOF
 }
 
 # Parse command line arguments using getopt
-OPTS=$(getopt -o "h" --long compression-level:,disable-constant-subframes,disable-fixed-subframes,disable-verbatim-subframes,bit_depth:,is_mu_law:,machine:,help -- "$@")
+OPTS=$(getopt -o "h" --long compression-level:,disable-constant-subframes,disable-fixed-subframes,disable-verbatim-subframes,bit-depth:,is-mu-law:,machine:,help -- "$@")
 if [ $? -ne 0 ]; then
     echo "Error: Failed to parse options"
     usage
@@ -65,11 +65,11 @@ while true; do
             DISABLE_VERBATIM_SUBFRAMES="--disable_verbatim_subframes"
             shift
             ;;
-        --bit_depth)
+        --bit-depth)
             BIT_DEPTH="$2"
             shift 2
             ;;
-        --is_mu_law)
+        --is-mu-law)
             IS_MU_LAW="$2"
             shift 2
             ;;
@@ -101,7 +101,7 @@ fi
 
 # Validate bit depth
 if [[ -n "$BIT_DEPTH" ]] && ! [[ "$BIT_DEPTH" =~ ^(8|16|24)$ ]]; then
-    echo "Error: --bit_depth must be 8, 16, or 24"
+    echo "Error: --bit-depth must be 8, 16, or 24"
     exit 1
 fi
 
