@@ -103,20 +103,26 @@ def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, sample_rate
     wav_quantized = quantize_unsigned_pcm_torch(wav, n_bits=max_bit_depth, kind='linear')
     
     # Interleave stereo channels if requested (must match training config)
-    if stereo_interleave and wav_quantized.shape[0] == 2:
-        # Interleave: left channel samples, then right channel samples (LLLRRR format)
-        left_channel = wav_quantized[0]  # (num_samples,)
-        right_channel = wav_quantized[1]  # (num_samples,)
-        interleaved = torch.cat([left_channel, right_channel], dim=0)  # (2 * num_samples,)
-        wav_quantized = interleaved
-    elif wav_quantized.shape[0] == 2 and not stereo_interleave:
-        # If stereo but not interleaving, take only one channel (matching training behavior)
-        # Randomly pick left or right (for consistency with training, we'll use left)
-        wav_quantized = wav_quantized[0]
+    if len(wav_quantized.shape) == 2:
+        if wav_quantized.shape[0] == 2:
+            if stereo_interleave:
+                # Interleave: left channel samples, then right channel samples (LLLRRR format)
+                left_channel = wav_quantized[0]  # (num_samples,)
+                right_channel = wav_quantized[1]  # (num_samples,)
+                interleaved = torch.cat([left_channel, right_channel], dim=0)  # (2 * num_samples,)
+                wav_quantized = interleaved
+            else:
+                # If stereo but not interleaving, take only one channel (matching training behavior)
+                # Randomly pick left or right (for consistency with training, we'll use left)
+                wav_quantized = wav_quantized[0]
+        elif wav_quantized.shape[0] == 1:
+            wav_quantized = wav_quantized.squeeze(dim=0)
+        else:
+            raise ValueError(f"Invalid number of channels: {wav_quantized.shape[0]}")
     
     # Extract MSB and LSB tokens
-    msb_tokens = msb_torch(wav_quantized, orig_n_bits=max_bit_depth, n_bits=msb_n_bits).squeeze(dim=0)
-    lsb_tokens_ground_truth = lsb_torch(wav_quantized, n_bits=max_bit_depth - msb_n_bits).squeeze(dim=0)
+    msb_tokens = msb_torch(wav_quantized, orig_n_bits=max_bit_depth, n_bits=msb_n_bits)
+    lsb_tokens_ground_truth = lsb_torch(wav_quantized, n_bits=max_bit_depth - msb_n_bits)
     assert len(msb_tokens) == len(lsb_tokens_ground_truth)
     assert len(msb_tokens) == len(wav_quantized) and len(lsb_tokens_ground_truth) == len(wav_quantized)
     
@@ -292,8 +298,8 @@ def main():
         stereo_interleave=args.stereo_interleave,
     )
     msb_tokens = msb_tokens.to(device)
-    print(f"Audio loaded: {original_audio.shape[1]} samples at {actual_sr} Hz")
-    print(f"MSB tokens: {msb_tokens.shape[-1]}")
+    print(f"Audio loaded: {original_audio.shape[0]} channels, {original_audio.shape[-1]} samples at {actual_sr} Hz")
+    print(f"MSB tokens: {len(msb_tokens)}")
     print(f"MSB token range: [{msb_tokens.min().item()}, {msb_tokens.max().item()}]")
     print(f"LSB token range (GT): [{lsb_tokens_gt.min().item()}, {lsb_tokens_gt.max().item()}]")
     
