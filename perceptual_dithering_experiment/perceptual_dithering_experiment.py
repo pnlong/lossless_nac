@@ -91,10 +91,12 @@ def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, sample_rate
     
     # Resample if needed
     if sr != sample_rate:
+        print(f"Resampling audio from {sr} Hz to {sample_rate} Hz...")
         wav = torchaudio.functional.resample(wav, sr, sample_rate).clamp(-1.0, 1.0)
         sr = sample_rate
     
     # Handle mono/stereo
+    assert len(wav.shape) == 2, f"Invalid number of dimensions for input audio: {len(wav.shape)}"
     if wav.shape[0] > 2:
         # Multi-channel: take first two
         wav = wav[:2, :]
@@ -117,8 +119,6 @@ def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, sample_rate
                 wav_quantized = wav_quantized[0]
         elif wav_quantized.shape[0] == 1:
             wav_quantized = wav_quantized.squeeze(dim=0)
-        else:
-            raise ValueError(f"Invalid number of channels: {wav_quantized.shape[0]}")
     
     # Extract MSB and LSB tokens
     msb_tokens = msb_torch(wav_quantized, orig_n_bits=max_bit_depth, n_bits=msb_n_bits)
