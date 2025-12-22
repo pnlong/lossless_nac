@@ -26,6 +26,9 @@ import torch
 import torchaudio
 import argparse
 from tqdm import tqdm
+from shutil import rmtree
+from os.path import exists
+from os import makedirs
 from train_gpt2 import (
     GPTAudioLightningModule,
     quantize_unsigned_pcm_torch,
@@ -243,7 +246,7 @@ def main():
     parser.add_argument('--audio', type=str, default=DEFAULT_AUDIO,
                        help='Path to input audio file')
     parser.add_argument('--output', type=str, default=DEFAULT_OUTPUT,
-                       help='Path to save output audio file')
+                       help='Directory to save output audio files (original.wav and predicted.wav)')
     parser.add_argument('--msb_n_bits', type=int, default=8,
                        help='Number of bits for MSB (default: 8)')
     parser.add_argument('--max_bit_depth', type=int, default=16,
@@ -252,8 +255,6 @@ def main():
                        help='Target sample rate (default: 44100)')
     parser.add_argument('--gpu', action='store_true',
                        help='Use GPU if available (default: use CPU)')
-    parser.add_argument('--save_ground_truth', action='store_true',
-                       help='Also save quantized reconstruction (MSB + original LSB) for comparison')
     parser.add_argument('--stereo_interleave', action='store_true',
                        help='Use stereo interleaving (LLLRRR format). Must match training config. Default: False')
     parser.add_argument('--use_lora', action='store_true', # Model kwargs for .pt files
@@ -327,37 +328,46 @@ def main():
         # Mono
         predicted_audio = predicted_audio.unsqueeze(0)  # Add channel dimension
     
-    # Save predicted audio
-    print(f"\nSaving predicted audio to {args.output}...")
-    torchaudio.save(args.output, predicted_audio, args.sample_rate)
-    print("Done!")
+    # Create or reset output directory
+    output_dir = args.output_dir
+    if exists(output_dir):
+        rmtree(output_dir)
+    makedirs(output_dir, exist_ok=True)
+    print(f"\nOutput directory: {output_dir}")
     
-    # Optionally save quantized reconstruction for comparison
+    # Reconstruct quantized audio (original: MSB + ground truth LSB)
     # This is the audio reconstructed from MSB + original LSB (i.e., the quantized version of the original)
     # Note: Even if the original audio is already 16-bit PCM, this will differ slightly due to:
     # - Normalization (int16 → float32) when loading
     # - Floor() truncation during quantization
     # - Round-trip quantization error
-    if args.save_ground_truth:
-        quantized_tokens = reconstruct_audio_from_tokens(
-            msb_tokens.cpu(),
-            lsb_tokens_gt.cpu(),
-            max_bit_depth=args.max_bit_depth,
-            msb_n_bits=args.msb_n_bits
-        )
-        quantized_audio = tokens_to_audio(quantized_tokens, max_bit_depth=args.max_bit_depth)
-        
-        if args.stereo_interleave and original_audio.shape[0] == 2:
-            left_quant, right_quant = deinterleave_stereo(quantized_audio, num_samples_per_channel)
-            quantized_audio = torch.stack([left_quant, right_quant], dim=0)
-        elif original_audio.shape[0] == 2 and not args.stereo_interleave:
-            quantized_audio = quantized_audio.unsqueeze(0).repeat(2, 1)
-        else:
-            quantized_audio = quantized_audio.unsqueeze(0)
-        
-        quantized_output = f"{args.output.replace('.wav', '.quantized.wav')}"
-        print(f"Saving quantized reconstruction (baseline) to {quantized_output}...")
-        torchaudio.save(quantized_output, quantized_audio, args.sample_rate)
+    print("Reconstructing quantized audio (baseline)...")
+    quantized_tokens = reconstruct_audio_from_tokens(
+        msb_tokens.cpu(),
+        lsb_tokens_gt.cpu(),
+        max_bit_depth=args.max_bit_depth,
+        msb_n_bits=args.msb_n_bits
+    )
+    quantized_audio = tokens_to_audio(quantized_tokens, max_bit_depth=args.max_bit_depth)
+    
+    if args.stereo_interleave and original_audio.shape[0] == 2:
+        left_quant, right_quant = deinterleave_stereo(quantized_audio, num_samples_per_channel)
+        quantized_audio = torch.stack([left_quant, right_quant], dim=0)
+    elif original_audio.shape[0] == 2 and not args.stereo_interleave:
+        quantized_audio = quantized_audio.unsqueeze(0).repeat(2, 1)
+    else:
+        quantized_audio = quantized_audio.unsqueeze(0)
+    
+    # Save both files
+    original_path = f"{output_dir}/original.wav"
+    predicted_path = f"{output_dir}/predicted.wav"
+    
+    print(f"Saving quantized reconstruction (baseline) to {original_path}...")
+    torchaudio.save(original_path, quantized_audio, args.sample_rate)
+    
+    print(f"Saving predicted audio to {predicted_path}...")
+    torchaudio.save(predicted_path, predicted_audio, args.sample_rate)
+    print("Done!")
     
     # Print statistics
     print("\n" + "=" * 60)
@@ -366,10 +376,10 @@ def main():
     mse = torch.mean((predicted_audio - original_audio) ** 2).item()
     print(f"Mean Squared Error (predicted vs original): {mse:.6f}")
     
-    if args.save_ground_truth:
-        mse_quantized = torch.mean((quantized_audio - original_audio) ** 2).item()
-        print(f"Mean Squared Error (quantized reconstruction vs original): {mse_quantized:.6f}")
-        print(f"  (This shows quantization error - predicted should be compared to this baseline)")
+    # Always save quantized reconstruction
+    mse_quantized = torch.mean((quantized_audio - original_audio) ** 2).item()
+    print(f"Mean Squared Error (quantized reconstruction vs original): {mse_quantized:.6f}")
+    print(f"  (This shows quantization error - predicted should be compared to this baseline)")
     
     print("\nExperiment complete!")
 
