@@ -42,6 +42,7 @@ CHUNK_OVERLAP = 64 # number of samples to overlap between chunks
 MSB_N_BITS = 8 # number of bits for MSB
 BIT_DEPTH = 16 # we assume inputs are 16-bit PCM
 LSB_N_BITS = BIT_DEPTH - MSB_N_BITS
+BATCH_SIZE = 32 # number of chunks to process in parallel
 
 ##################################################
 
@@ -135,6 +136,7 @@ def parse_args():
     parser.add_argument("--gpu", action = "store_true", help = "Use GPU if available (default: use CPU)")
     parser.add_argument("--chunk_size", type = int, default = CHUNK_SIZE, help = "Number of samples to process at a time")
     parser.add_argument("--chunk_overlap", type = int, default = CHUNK_OVERLAP, help = "Number of samples to overlap between chunks")
+    parser.add_argument("--batch_size", type = int, default = BATCH_SIZE, help = "Number of chunks to process in parallel")
     args = parser.parse_args()
     return args
 
@@ -144,47 +146,45 @@ def parse_args():
 # MAIN FUNCTION
 ##################################################
 
-def predict_chunk(
+def predict_batch(
     model: GPTAudioLightningModule,
-    chunk: torch.Tensor,
+    batch: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Predict a chunk of audio using perceptual dithering experiment framework.
+    Predict a batch of chunks of audio using perceptual dithering experiment framework.
 
     Args:
         model: Trained GPTAudioLightningModule
-        chunk: Chunk of audio tensor (n_channels, chunk_size)
+        batch: Batch of audio tensors (batch_size, n_channels, chunk_size)
 
     Returns:
-        Predicted chunk of audio tensor (n_channels, chunk_size)
+        Predicted batch of audio tensors (batch_size, n_channels, chunk_size)
     """
 
     # initialize
     model.eval()
-    n_channels, n_samples = chunk.shape
+    batch_size, n_channels, n_samples = batch.shape
     vocab_size = model.model.config.vocab_size
 
-    # interleave stereo if necessary, ultimately yields a 1D tensor
-    # if n_channels == 2: # stereo
-    #     flattened_chunk = torch.cat((chunk[0, :], chunk[1, :]), dim = 0) # interleave channels, convert to 1D tensor
-    # else: # mono
-    #     flattened_chunk = chunk.squeeze(dim = 0) # convert to 1D tensor
-    flattened_chunk = chunk.reshape(n_channels * n_samples)
+    # interleave stereo if necessary, ultimately yields a 1D tensor per chunk
+    flattened_batch = batch.reshape(batch_size, n_channels * n_samples)
 
     # get MSB tokens from chunk
     msb_tokens = msb_torch(
-        x = flattened_chunk,
+        x = flattened_batch,
         orig_n_bits = BIT_DEPTH,
         n_bits = MSB_N_BITS,
     )
     lsb_tokens = lsb_torch(
-        x = flattened_chunk,
+        x = flattened_batch,
         n_bits = LSB_N_BITS,
     )
-    assert msb_tokens.dim() == 1, "MSB tokens must be a 1D tensor"
-    assert lsb_tokens.dim() == 1, "LSB tokens must be a 1D tensor"
-    assert msb_tokens.shape[0] == lsb_tokens.shape[0], "MSB and LSB tokens must have the same number of samples"
-    assert msb_tokens.shape[0] == n_channels * n_samples, "MSB and LSB tokens must have the same number of samples as the chunk"
+    assert msb_tokens.dim() == 2, "MSB tokens must be a 1D tensor"
+    assert lsb_tokens.dim() == 2, "LSB tokens must be a 1D tensor"
+    assert msb_tokens.shape[0] == batch_size, "MSB tokens must have the same number of chunks as the batch"
+    assert lsb_tokens.shape[0] == batch_size, "LSB tokens must have the same number of chunks as the batch"
+    assert msb_tokens.shape[1] == lsb_tokens.shape[1], "MSB and LSB tokens must have the same number of samples per chunk"
+    assert msb_tokens.shape[1] == n_channels * n_samples, "MSB and LSB tokens must have the same number of samples as the chunk"
     assert msb_tokens.max() < vocab_size, f"MSB tokens must be within the vocabulary range, but got {msb_tokens.max()}"
     assert msb_tokens.min() >= 0, f"MSB tokens must be within the vocabulary range, but got {msb_tokens.min()}"
     assert lsb_tokens.max() < vocab_size, f"LSB tokens must be within the vocabulary range, but got {lsb_tokens.max()}"
@@ -195,32 +195,32 @@ def predict_chunk(
         input = msb_tokens,
         repeats = 2,
         dim = -1,
-    ).unsqueeze(dim = 0) # will fill in with LSB tokens as we predict them, currently has shape (1, len(msb_tokens) * 2)
+    ) # will fill in with LSB tokens as we predict them, currently has shape (batch_size, len(msb_tokens) * 2)
     with torch.no_grad():
         for i in range(len(msb_tokens)):
             current_lsb_index = (i * 2) + 1 # index in sequence for the current LSB token
             outputs = model(sequence[:, :current_lsb_index]) # get model prediction for next token (should be LSB)
-            logits = outputs.logits[:, -1, :] # (1, vocab_size) - last position logits
-            predicted_lsb_token = torch.argmax(
+            logits = outputs.logits[:, -1, :] # (batch_size, vocab_size) - last position logits
+            predicted_lsb_tokens = torch.argmax(
                 input = logits,
                 dim = -1,
                 keepdim = False,
-            ) # greedy decoding: pick the token with highest probability, shape (1, 1)
-            predicted_lsb_token = predicted_lsb_token.item() # get the token as a scalar
-            assert predicted_lsb_token >= 0 and predicted_lsb_token < vocab_size, f"Predicted LSB token {predicted_lsb_token} is out of range [0, {vocab_size - 1}]"
-            sequence[:, current_lsb_index] = predicted_lsb_token # set LSB token in sequence
-    predicted_lsb_tokens = sequence.squeeze(dim = 0)[1::2] # get odd indices (LSB tokens), convert back to 1D tensor
+            ) # greedy decoding: pick the token with highest probability, shape (batch_size, 1)
+            predicted_lsb_tokens = predicted_lsb_tokens.squeeze(dim = -1) # get the tokens as a 1D tensor
+            assert torch.all(predicted_lsb_tokens >= 0) and torch.all(predicted_lsb_tokens < vocab_size), f"Some predicted LSB tokens are out of range [0, {vocab_size - 1}]"
+            sequence[:, current_lsb_index] = predicted_lsb_tokens # set LSB token in sequence
+    predicted_lsb_tokens = sequence[:, 1::2] # get odd indices (LSB tokens)
 
     # convert MSB tokens and predicted LSB tokens back into waveform
-    predicted_chunk = (msb_tokens << LSB_N_BITS) | predicted_lsb_tokens
-    predicted_chunk = predicted_chunk.reshape(n_channels, n_samples)
+    predicted_batch = (msb_tokens << LSB_N_BITS) | predicted_lsb_tokens
+    predicted_batch = predicted_batch.reshape(batch_size, n_channels, n_samples)
 
     # final assertions
-    assert predicted_chunk.shape[0] == chunk.shape[0], f"Predicted chunk (n_channels={predicted_chunk.shape[0]}) must have the same number of channels as the original chunk (n_channels={chunk.shape[0]})"
-    assert predicted_chunk.shape[1] == chunk.shape[1], f"Predicted chunk (chunk_size={predicted_chunk.shape[1]}) must have the same number of samples as the actual chunk size (chunk_size={chunk.shape[1]})"
+    assert predicted_batch.shape[0] == predicted_batch.shape[0], f"Predicted batch (n_channels={predicted_batch.shape[0]}) must have the same number of channels as the original batch (n_channels={batch.shape[0]})"
+    assert predicted_batch.shape[1] == predicted_batch.shape[1], f"Predicted batch (chunk_size={predicted_batch.shape[1]}) must have the same number of samples as the actual batch size (chunk_size={batch.shape[1]})"
 
-    # return predicted chunk
-    return predicted_chunk
+    # return predicted batch
+    return predicted_batch
 
 def perceptual_dithering_experiment(
     model: GPTAudioLightningModule, # device is inferred from the model (whatever device the model is on)
@@ -229,6 +229,7 @@ def perceptual_dithering_experiment(
     output_dir: str, # output directory
     chunk_size: int = CHUNK_SIZE,
     chunk_overlap: int = CHUNK_OVERLAP,
+    batch_size: int = BATCH_SIZE,
 ) -> None:
     """
     Perform perceptual dithering experiment.
@@ -240,6 +241,7 @@ def perceptual_dithering_experiment(
         output_dir: Output directory, for saving original and predicted audio files
         chunk_size: Number of samples to process at a time
         chunk_overlap: Number of samples to overlap between chunks
+        batch_size: Number of chunks to process in parallel
     """
 
     # assertions
@@ -258,6 +260,8 @@ def perceptual_dithering_experiment(
     assert isinstance(chunk_overlap, int), "Chunk overlap must be an integer"
     assert chunk_overlap >= 0, "Chunk overlap must be greater than or equal to 0"
     assert chunk_overlap < chunk_size, "Chunk overlap must be less than chunk size"
+    assert isinstance(batch_size, int), "Batch size must be an integer"
+    assert batch_size > 0, "Batch size must be greater than 0"
 
     # get information about waveform
     n_channels, n_samples = waveform.shape
@@ -300,28 +304,37 @@ def perceptual_dithering_experiment(
     )
 
     # process waveform in chunks
-    for i in tqdm(
-        iterable = range(0, n_samples_with_initial_overlap, effective_chunk_size),
+    for batch_start_index in tqdm(
+        iterable = range(0, n_samples_with_initial_overlap, effective_chunk_size * batch_size),
         desc = "Processing Waveform (in chunks)",
     ):
 
-        # get start and end indices for current chunk
-        start_index = i
-        end_index = min(start_index + chunk_size, n_samples_with_initial_overlap)
+        # initialize batch of chunks
+        batch = torch.zeros(
+            (batch_size, n_channels, chunk_size),
+            dtype = waveform.dtype,
+            device = waveform.device,
+        )
+        chunk_lengths = [chunk_size] * batch_size
 
-        # get current chunk of waveform
-        chunk = waveform[:, start_index:end_index]
+        # fill batch with chunks
+        for i in range(batch_size):
+            chunk_start_index = batch_start_index + (i * effective_chunk_size)
+            chunk_end_index = min(chunk_start_index + chunk_size, n_samples_with_initial_overlap)
+            batch[i, :, :] = waveform[:, chunk_start_index:chunk_end_index]
+            chunk_lengths[i] = chunk_end_index - chunk_start_index
 
         # get predicted chunk
-        predicted_chunk = predict_chunk(
+        predicted_batch = predict_batch(
             model = model,
-            chunk = chunk,
+            batch = batch,
         )
 
-        # update predicted waveform
-        predicted_waveform_start_index = i
-        predicted_waveform_end_index = min(predicted_waveform_start_index + effective_chunk_size, n_samples)
-        predicted_waveform[:, predicted_waveform_start_index:predicted_waveform_end_index] = predicted_chunk[:, chunk_overlap:] # only keep the non-overlapping portion of the predicted chunk    
+        # update predicted waveform with chunks from predicted batch
+        for i, chunk_length in enumerate(chunk_lengths):
+            predicted_waveform_start_index = batch_start_index + (i * effective_chunk_size)
+            predicted_waveform_end_index = predicted_waveform_start_index + chunk_length - chunk_overlap # chunk_length - chunk_overlap is the length of the non-overlapping portion of the predicted chunk
+            predicted_waveform[:, predicted_waveform_start_index:predicted_waveform_end_index] = predicted_batch[i, :, chunk_overlap:chunk_length] # only keep the non-overlapping portion of the predicted chunk    
 
     # write predicted waveform to output directory
     write_audio(
@@ -372,6 +385,7 @@ if __name__ == "__main__":
         output_dir = output_dir,
         chunk_size = args.chunk_size,
         chunk_overlap = args.chunk_overlap,
+        batch_size = args.batch_size,
     )
 
 ##################################################
