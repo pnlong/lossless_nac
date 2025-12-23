@@ -10,6 +10,8 @@ flac/
 residuals.bin
 residuals_truncated.bin
 
+*.wav
+
 # FLAC repositories
 flac_entropy_coding/
 flac_lossy_estimating/
