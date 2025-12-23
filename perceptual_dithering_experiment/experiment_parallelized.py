@@ -351,10 +351,10 @@ def perceptual_dithering_experiment(
     )
 
     # compare original and predicted waveforms
-    original_waveform = waveform.detach().cpu()
+    waveform = waveform.detach().cpu()
     predicted_waveform = predicted_waveform.detach().cpu()
-    print(f"MSE: {torch.mean((original_waveform - predicted_waveform) ** 2)}")
-    print(f"MAE: {torch.mean(torch.abs(original_waveform - predicted_waveform))}")
+    print(f"MSE: {torch.mean((waveform - predicted_waveform) ** 2)}")
+    print(f"MAE: {torch.mean(torch.abs(waveform - predicted_waveform))}")
 
     # return nothing
     return
