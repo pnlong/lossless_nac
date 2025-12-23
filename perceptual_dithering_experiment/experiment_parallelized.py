@@ -315,7 +315,7 @@ def perceptual_dithering_experiment(
             dtype = waveform.dtype,
             device = waveform.device,
         )
-        chunk_lengths = [chunk_size] * batch_size
+        chunk_lengths = [0] * batch_size
 
         # fill batch with chunks
         for i in range(batch_size):
@@ -325,6 +325,10 @@ def perceptual_dithering_experiment(
             batch[i, :, :chunk_length] = waveform[:, chunk_start_index:chunk_end_index]
             chunk_lengths[i] = chunk_length
             if chunk_length < chunk_size: # if the chunk is less than the chunk size, we've reached the end of the waveform
+                effective_batch_size = i + 1 # effective batch size is the number of chunks that we were able to process
+                batch = batch[:effective_batch_size] # truncate batch to the effective batch size
+                chunk_lengths = chunk_lengths[:effective_batch_size] # truncate chunk lengths to the effective batch size
+                del effective_batch_size # delete variable to free memory
                 break # break out of the loop
 
         # get predicted chunk
@@ -337,7 +341,7 @@ def perceptual_dithering_experiment(
         for i, chunk_length in enumerate(chunk_lengths):
             predicted_waveform_start_index = batch_start_index + (i * effective_chunk_size)
             predicted_waveform_end_index = predicted_waveform_start_index + chunk_length - chunk_overlap # chunk_length - chunk_overlap is the length of the non-overlapping portion of the predicted chunk
-            predicted_waveform[:, predicted_waveform_start_index:predicted_waveform_end_index] = predicted_batch[i, :, chunk_overlap:chunk_length] # only keep the non-overlapping portion of the predicted chunk    
+            predicted_waveform[:, predicted_waveform_start_index:predicted_waveform_end_index] = predicted_batch[i, :, chunk_overlap:chunk_length] # only keep the non-overlapping portion of the predicted chunk  
 
     # write predicted waveform to output directory
     write_audio(
