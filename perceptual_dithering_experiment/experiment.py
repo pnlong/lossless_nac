@@ -273,6 +273,7 @@ def perceptual_dithering_experiment(
         n_bits = BIT_DEPTH,
         kind = "linear",
     )
+    original_waveform = waveform.clone().detach().cpu()
 
     # write original waveform to output directory
     write_audio(
@@ -331,10 +332,9 @@ def perceptual_dithering_experiment(
     )
 
     # compare original and predicted waveforms
-    waveform = waveform.detach().cpu()
     predicted_waveform = predicted_waveform.detach().cpu()
-    print(f"MSE: {torch.mean((waveform - predicted_waveform) ** 2)}")
-    print(f"MAE: {torch.mean(torch.abs(waveform - predicted_waveform))}")
+    print(f"MSE: {torch.mean((original_waveform - predicted_waveform) ** 2)}")
+    print(f"MAE: {torch.mean(torch.abs(original_waveform - predicted_waveform))}")
 
     # return nothing
     return
