@@ -68,7 +68,7 @@ def load_model(checkpoint_path, **model_kwargs):
     return model
 
 
-def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, sample_rate=44100, stereo_interleave=False):
+def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, stereo_interleave=False):
     """
     Load audio file and prepare MSB/LSB tokens.
     
@@ -76,7 +76,6 @@ def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, sample_rate
         audio_path: Path to audio file
         max_bit_depth: Bit depth (16 for this experiment)
         msb_n_bits: Number of bits for MSB (typically 8)
-        sample_rate: Target sample rate
         stereo_interleave: If True, interleave stereo channels (LLLRRR format).
                           Must match the training configuration.
     
@@ -88,12 +87,6 @@ def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, sample_rate
     """
     # Load audio
     wav, sr = torchaudio.load(audio_path, normalize=True, backend="soundfile")
-    
-    # Resample if needed
-    if sr != sample_rate:
-        print(f"Resampling audio from {sr} Hz to {sample_rate} Hz...")
-        wav = torchaudio.functional.resample(wav, sr, sample_rate).clamp(-1.0, 1.0)
-        sr = sample_rate
     
     # Handle mono/stereo
     assert len(wav.shape) == 2, f"Invalid number of dimensions for input audio: {len(wav.shape)}"
@@ -257,8 +250,6 @@ def main():
                        help='Number of bits for MSB (default: 8)')
     parser.add_argument('--max_bit_depth', type=int, default=16,
                        help='Total bit depth (default: 16)')
-    parser.add_argument('--sample_rate', type=int, default=44100,
-                       help='Target sample rate (default: 44100)')
     parser.add_argument('--gpu', action='store_true',
                        help='Use GPU if available (default: use CPU)')
     parser.add_argument('--stereo_interleave', action='store_true',
@@ -294,7 +285,6 @@ def main():
         args.audio,
         max_bit_depth=args.max_bit_depth,
         msb_n_bits=args.msb_n_bits,
-        sample_rate=args.sample_rate,
         stereo_interleave=args.stereo_interleave,
     )
     msb_tokens = msb_tokens.to(device)
@@ -369,10 +359,10 @@ def main():
     predicted_path = f"{output_dir}/predicted.wav"
     
     print(f"Saving quantized reconstruction (baseline) to {original_path}...")
-    torchaudio.save(original_path, quantized_audio, args.sample_rate)
+    torchaudio.save(original_path, quantized_audio, actual_sr)
     
     print(f"Saving predicted audio to {predicted_path}...")
-    torchaudio.save(predicted_path, predicted_audio, args.sample_rate)
+    torchaudio.save(predicted_path, predicted_audio, actual_sr)
     print("Done!")
     
     # Print statistics
