@@ -324,6 +324,8 @@ def perceptual_dithering_experiment(
             chunk_length = chunk_end_index - chunk_start_index
             batch[i, :, :chunk_length] = waveform[:, chunk_start_index:chunk_end_index]
             chunk_lengths[i] = chunk_length
+            if chunk_length < chunk_size: # if the chunk is less than the chunk size, we've reached the end of the waveform
+                break # break out of the loop
 
         # get predicted chunk
         predicted_batch = predict_batch(
