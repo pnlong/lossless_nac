@@ -161,14 +161,15 @@ def predict_lsb_tokens(model, msb_tokens):
     predicted_lsb_tokens = torch.zeros((num_samples,), dtype=torch.long, device=msb_tokens.device)
     
     # Use KV cache to avoid recomputing attention for previous tokens
-    # This speeds up autoregressive generation significantly
+    # Access model.model directly (the underlying GPT2LMHeadModel) to use past_key_values
+    gpt2_model = model.model
     past_key_values = None
     
     with torch.no_grad():
         for i in tqdm(range(num_samples), desc="Predicting LSB tokens"):
             # Process MSB token: only pass the new token, use cache for previous context
             msb_token = msb_tokens[i].unsqueeze(0).unsqueeze(0)  # (1, 1)
-            outputs = model(msb_token, past_key_values=past_key_values, use_cache=True)
+            outputs = gpt2_model(msb_token, past_key_values=past_key_values, use_cache=True)
             past_key_values = outputs.past_key_values
             
             # Predict LSB token from the MSB context
@@ -177,7 +178,7 @@ def predict_lsb_tokens(model, msb_tokens):
             predicted_lsb_tokens[i] = lsb_token.item()
             
             # Process predicted LSB token to update cache for next iteration
-            outputs = model(lsb_token, past_key_values=past_key_values, use_cache=True)
+            outputs = gpt2_model(lsb_token, past_key_values=past_key_values, use_cache=True)
             past_key_values = outputs.past_key_values
     
     return predicted_lsb_tokens
