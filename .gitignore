@@ -11,6 +11,7 @@ residuals.bin
 residuals_truncated.bin
 
 *.wav
+perceptual_dithering_experiment/results/
 
 # FLAC repositories
 flac_entropy_coding/
