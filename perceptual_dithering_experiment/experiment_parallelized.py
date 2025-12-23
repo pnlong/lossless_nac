@@ -121,6 +121,41 @@ def write_audio(
     # return nothing
     return
 
+def reconstruct_waveform_from_msb_and_lsb_tokens(
+    msb_tokens: torch.Tensor,
+    lsb_tokens: torch.Tensor,
+    n_samples: int,
+) -> torch.Tensor:
+    """
+    Reconstruct a waveform from MSB and LSB tokens.
+
+    Args:
+        msb_tokens: MSB tokens
+        lsb_tokens: LSB tokens
+        n_samples: Number of samples
+
+    Returns:
+        Reconstructed waveform
+    """
+
+    # assertions
+    assert msb_tokens.dim() == 2, "MSB tokens must be a 1D tensor"
+    assert lsb_tokens.dim() == 2, "LSB tokens must be a 1D tensor"
+    assert msb_tokens.shape[0] == lsb_tokens.shape[0], "MSB and LSB tokens must have the same number of chunks"
+    assert msb_tokens.shape[1] == lsb_tokens.shape[1], "MSB and LSB tokens must have the same number of samples per chunk"
+    assert msb_tokens.shape[1] % n_samples == 0, "Number of samples per chunk must be divisible by the number of samples"
+
+    # get information from msb tokens
+    batch_size, n_samples_per_chunk = msb_tokens.shape
+    n_channels = n_samples_per_chunk // n_samples
+
+    # reconstruct waveform
+    waveform = (msb_tokens << LSB_N_BITS) | lsb_tokens
+    waveform = waveform.reshape(batch_size, n_channels, n_samples)
+
+    # return waveform
+    return waveform
+
 ##################################################
 
 
@@ -212,15 +247,25 @@ def predict_batch(
     predicted_lsb_tokens = sequence[:, 1::2] # get odd indices (LSB tokens)
 
     # convert MSB tokens and predicted LSB tokens back into waveform
-    difference = predicted_lsb_tokens - lsb_tokens
-    print(f"LSB Token Difference Range: {difference.min()} to {difference.max()}")
-    print(f"LSB Token Difference Mean: {difference.mean()}")
+    predicted_batch = reconstruct_waveform_from_msb_and_lsb_tokens(
+        msb_tokens = msb_tokens,
+        lsb_tokens = predicted_lsb_tokens,
+        n_samples = n_samples,
+    )
     predicted_batch = (msb_tokens << LSB_N_BITS) | predicted_lsb_tokens
     predicted_batch = predicted_batch.reshape(batch_size, n_channels, n_samples)
 
+    # reconstruct batch from MSB and LSB tokens as a sanity check
+    reconstructed_batch = reconstruct_waveform_from_msb_and_lsb_tokens(
+        msb_tokens = msb_tokens,
+        lsb_tokens = lsb_tokens,
+        n_samples = n_samples,
+    )
+
     # final assertions
-    assert predicted_batch.shape[0] == predicted_batch.shape[0], f"Predicted batch (n_channels={predicted_batch.shape[0]}) must have the same number of channels as the original batch (n_channels={batch.shape[0]})"
-    assert predicted_batch.shape[1] == predicted_batch.shape[1], f"Predicted batch (chunk_size={predicted_batch.shape[1]}) must have the same number of samples as the actual batch size (chunk_size={batch.shape[1]})"
+    assert predicted_batch.shape[0] == batch.shape[0], f"Predicted batch (n_channels={predicted_batch.shape[0]}) must have the same number of channels as the original batch (n_channels={batch.shape[0]})"
+    assert predicted_batch.shape[1] == batch.shape[1], f"Predicted batch (chunk_size={predicted_batch.shape[1]}) must have the same number of samples as the actual batch size (chunk_size={batch.shape[1]})"
+    assert torch.equal(batch, reconstructed_batch), "Input batch and reconstructed batch must be the same (lossless reconstruction)"
 
     # return predicted batch
     return predicted_batch
