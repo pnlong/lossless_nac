@@ -149,27 +149,22 @@ def predict_lsb_tokens(model, msb_tokens):
     predicted_lsb_tokens = torch.zeros((num_samples,), dtype=torch.long, device=msb_tokens.device)
     
     # Build sequence incrementally: MSB₁ -> predict LSB₁ -> MSB₂ -> predict LSB₂ -> ...
-    input_tokens = torch.zeros((1, 0), dtype=torch.long, device=msb_tokens.device)
+    input_tokens = torch.repeat_interleave(msb_tokens, repeats=2, dim=0).unsqueeze(dim=0) # (1, num_samples * 2)
     
     with torch.no_grad():
-        for i in tqdm(range(num_samples), desc="Predicting LSB tokens"):
-            # Append the current MSB token (ground truth)
-            msb_token = msb_tokens[i].unsqueeze(0).unsqueeze(0)  # (1, 1)
-            input_tokens = torch.cat([input_tokens, msb_token], dim=1)  # (1, seq_len)
-            
+        for i in tqdm(range(num_samples), desc="Predicting LSB tokens"):            
             # Get model prediction for next token (should be LSB)
-            outputs = model(input_tokens)
-            logits = outputs.logits[:, -1, :].detach()  # (1, vocab_size) - last position logits
+            current_lsb_index = (i * 2) + 1
+            outputs = model(input_tokens[:, :current_lsb_index])
+            logits = outputs.logits[:, -1, :]  # (1, vocab_size) - last position logits
             
             # Greedy decoding: pick the token with highest probability
             next_token = torch.argmax(logits, dim=-1, keepdim=True)  # (1, 1)
-            predicted_lsb_tokens[i] = next_token.item()
-            
-            # Append predicted LSB to sequence for next iteration
-            input_tokens = torch.cat([input_tokens, next_token], dim=1)
-    
-    return predicted_lsb_tokens
+            next_token = next_token.item()  
+            predicted_lsb_tokens[i] = next_token # set the predicted LSB token for the current index
+            input_tokens[current_lsb_index] = next_token # set LSB token in input tokens
 
+    return predicted_lsb_tokens
 
 def reconstruct_audio_from_tokens(msb_tokens, lsb_tokens, max_bit_depth=16, msb_n_bits=8):
     """
