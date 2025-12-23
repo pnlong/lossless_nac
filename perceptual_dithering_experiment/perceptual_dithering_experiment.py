@@ -39,6 +39,19 @@ from train_gpt2 import (
 ##################################################
 
 
+# CONSTANTS
+##################################################
+
+DEFAULT_CHECKPOINT = '/graft2/code/znovack/lnac/t5_lnac/qny3i4y9/checkpoints/gpt2audio-epoch=1379.ckpt'
+DEFAULT_AUDIO = '/mnt/arrakis_data/pnlong/lnac/youtube_mix/out000.wav'
+DEFAULT_OUTPUT = '/home/pnlong/zach_lnac/perceptual_dithering_experiment.wav'
+MSB_N_BITS = 8
+MAX_BIT_DEPTH = 16
+STEREO_INTERLEAVE = True # interleave stereo channels (LLLRRR format)
+
+##################################################
+
+
 # FUNCTIONS
 ##################################################
 
@@ -68,7 +81,7 @@ def load_model(checkpoint_path, **model_kwargs):
     return model
 
 
-def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, stereo_interleave=False):
+def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, stereo_interleave=True):
     """
     Load audio file and prepare MSB/LSB tokens.
     
@@ -122,7 +135,7 @@ def prepare_audio_tokens(audio_path, max_bit_depth=16, msb_n_bits=8, stereo_inte
     return msb_tokens, lsb_tokens_ground_truth, wav, sr
 
 
-def predict_lsb_tokens(model, msb_tokens, use_kv_cache=True):
+def predict_lsb_tokens(model, msb_tokens):
     """
     Predict LSB tokens from MSB tokens using the trained model.
     
@@ -140,7 +153,8 @@ def predict_lsb_tokens(model, msb_tokens, use_kv_cache=True):
     Args:
         model: Trained GPTAudioLightningModule
         msb_tokens: MSB tokens as torch.Tensor of shape (num_samples,). Assumed to be on the same device as the model.
-        use_kv_cache: Whether to use key-value cache to avoid recomputing attention for previous tokens
+        chunk_size: Number of samples to process at a time.
+        chunk_overlap: Number of samples to overlap between chunks.
 
     Returns:
         predicted_lsb_tokens: Predicted LSB tokens (greedy decoding)
@@ -153,56 +167,24 @@ def predict_lsb_tokens(model, msb_tokens, use_kv_cache=True):
     if msb_tokens.max() >= vocab_size or msb_tokens.min() < 0:
         raise ValueError(f"MSB tokens are out of range [0, {vocab_size - 1}]")
 
-    # use KV cache to avoid recomputing attention for previous tokens
-    if use_kv_cache:
-
-        # Access model.model directly (the underlying GPT2LMHeadModel) to use past_key_values
-        gpt2_model = model.model
-        predicted_lsb_tokens = torch.zeros((num_samples,), dtype=torch.long, device=msb_tokens.device)
-        past_key_values = None
-        
-        with torch.no_grad():
-            for i in tqdm(range(num_samples), desc="Predicting LSB tokens"):
-                # Process MSB token: only pass the new token, use cache for previous context
-                msb_token = msb_tokens[i].unsqueeze(0).unsqueeze(0)  # (1, 1)
-                outputs = gpt2_model(msb_token, past_key_values=past_key_values, use_cache=True)
-                past_key_values = outputs.past_key_values
-                
-                # Predict LSB token from the MSB context
-                logits = outputs.logits[:, -1, :]  # (1, vocab_size)
-                lsb_token = torch.argmax(logits, dim=-1, keepdim=True)  # (1, 1) - greedy decoding
-                lsb_token_val = lsb_token.item()
-                
-                if lsb_token_val >= vocab_size:
-                    raise ValueError(f"Predicted token {lsb_token_val} is out of range [0, {vocab_size - 1}]")
-                
-                predicted_lsb_tokens[i] = lsb_token_val
-                
-                # Process predicted LSB token to update cache for next iteration
-                outputs = gpt2_model(lsb_token, past_key_values=past_key_values, use_cache=True)
-                past_key_values = outputs.past_key_values
-
-    # use normal greedy decoding
-    else:
-
-        # Build sequence incrementally: MSB₁ -> predict LSB₁ -> MSB₂ -> predict LSB₂ -> ...
-        input_tokens = torch.repeat_interleave(msb_tokens, repeats=2, dim=0).unsqueeze(dim=0) # (1, num_samples * 2)
-        with torch.no_grad():
-            for i in tqdm(range(num_samples), desc="Predicting LSB tokens"):            
-                current_lsb_index = (i * 2) + 1 # index in input tokens for the current LSB token
-                outputs = model(input_tokens[:, :current_lsb_index]) # Get model prediction for next token (should be LSB)
-                logits = outputs.logits[:, -1, :]  # (1, vocab_size) - last position logits
-                next_token = torch.argmax(logits, dim=-1, keepdim=True)  # Greedy decoding: pick the token with highest probability; (1, 1)
-                next_token = next_token.item()
-                if next_token >= vocab_size:
-                    raise ValueError(f"Predicted token {next_token} is out of range [0, {vocab_size - 1}]")
-                input_tokens[:, current_lsb_index] = next_token # set LSB token in input tokens
-        predicted_lsb_tokens = input_tokens.squeeze(dim=0)[1::2] # get odd indices (LSB tokens)
+    # Build sequence incrementally: MSB₁ -> predict LSB₁ -> MSB₂ -> predict LSB₂ -> ...
+    input_tokens = torch.repeat_interleave(msb_tokens, repeats=2, dim=0).unsqueeze(dim=0) # (1, num_samples * 2)
+    with torch.no_grad():
+        for i in tqdm(range(num_samples), desc="Predicting LSB tokens"):            
+            current_lsb_index = (i * 2) + 1 # index in input tokens for the current LSB token
+            outputs = model(input_tokens[:, :current_lsb_index]) # Get model prediction for next token (should be LSB)
+            logits = outputs.logits[:, -1, :]  # (1, vocab_size) - last position logits
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)  # Greedy decoding: pick the token with highest probability; (1, 1)
+            next_token = next_token.item()
+            if next_token >= vocab_size:
+                raise ValueError(f"Predicted token {next_token} is out of range [0, {vocab_size - 1}]")
+            input_tokens[:, current_lsb_index] = next_token # set LSB token in input tokens
+    predicted_lsb_tokens = input_tokens.squeeze(dim=0)[1::2] # get odd indices (LSB tokens)
 
     # return predicted LSB tokens
     return predicted_lsb_tokens
 
-def reconstruct_audio_from_tokens(msb_tokens, lsb_tokens, max_bit_depth=16, msb_n_bits=8):
+def reconstruct_audio_from_tokens(msb_tokens, lsb_tokens, max_bit_depth=MAX_BIT_DEPTH, msb_n_bits=MSB_N_BITS):
     """
     Reconstruct 16-bit audio tokens from MSB and LSB tokens.
     
@@ -221,7 +203,7 @@ def reconstruct_audio_from_tokens(msb_tokens, lsb_tokens, max_bit_depth=16, msb_
     return reconstructed
 
 
-def tokens_to_audio(tokens, max_bit_depth=16):
+def tokens_to_audio(tokens, max_bit_depth=MAX_BIT_DEPTH):
     """
     Convert quantized tokens back to audio samples in range [-1, 1].
     
@@ -264,11 +246,6 @@ def deinterleave_stereo(tokens, num_samples_per_channel):
 
 def main():
 
-    # defaults
-    DEFAULT_CHECKPOINT = '/graft2/code/znovack/lnac/t5_lnac/qny3i4y9/checkpoints/gpt2audio-epoch=1379.ckpt'
-    DEFAULT_AUDIO = '/mnt/arrakis_data/pnlong/lnac/youtube_mix/out000.wav'
-    DEFAULT_OUTPUT = '/home/pnlong/zach_lnac/perceptual_dithering_experiment.wav'
-
     # parse arguments
     parser = argparse.ArgumentParser(description='Perceptual dithering experiment')
     parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT,
@@ -277,16 +254,8 @@ def main():
                        help='Path to input audio file')
     parser.add_argument('--output', type=str, default=DEFAULT_OUTPUT,
                        help='Directory to save output audio files (original.wav and predicted.wav)')
-    parser.add_argument('--msb_n_bits', type=int, default=8,
-                       help='Number of bits for MSB (default: 8)')
-    parser.add_argument('--max_bit_depth', type=int, default=16,
-                       help='Total bit depth (default: 16)')
     parser.add_argument('--gpu', action='store_true',
                        help='Use GPU if available (default: use CPU)')
-    parser.add_argument('--stereo_interleave', action='store_true',
-                       help='Use stereo interleaving (LLLRRR format). Must match training config. Default: False')
-    parser.add_argument('--use_lora', action='store_true', # Model kwargs for .pt files
-                       help='Whether model uses LoRA (only needed for .pt files)')
     args = parser.parse_args()
     
     # Determine device
@@ -298,25 +267,18 @@ def main():
     
     # Load model
     print(f"\nLoading model from {args.checkpoint}...")
-    model_kwargs = {}
-    if args.checkpoint.endswith('.pt'):
-        model_kwargs = {
-            'model_name': 'gpt2',
-            'use_lora': args.use_lora,
-            'max_bit_depth': args.max_bit_depth,
-        }
-    model = load_model(args.checkpoint, **model_kwargs).to(device) # load model and move to device
+    model = load_model(args.checkpoint).to(device) # load model and move to device
     print(f"Model loaded on {device}")
     print(f"Model vocab size: {model.model.config.vocab_size}")
     
     # Prepare audio tokens
     print(f"\nLoading audio from {args.audio}...")
-    print(f"Using stereo_interleave={args.stereo_interleave} (must match training config)")
+    print(f"Using stereo_interleave={STEREO_INTERLEAVE} (must match training config)")
     msb_tokens, lsb_tokens_gt, original_audio, actual_sr = prepare_audio_tokens(
         args.audio,
-        max_bit_depth=args.max_bit_depth,
-        msb_n_bits=args.msb_n_bits,
-        stereo_interleave=args.stereo_interleave,
+        max_bit_depth=MAX_BIT_DEPTH,
+        msb_n_bits=MSB_N_BITS,
+        stereo_interleave=STEREO_INTERLEAVE,
     )
     msb_tokens = msb_tokens.to(device)
     print(f"Audio loaded: {original_audio.shape[0]} channels, {original_audio.shape[-1]} samples at {actual_sr} Hz")
@@ -337,18 +299,18 @@ def main():
     reconstructed_tokens = reconstruct_audio_from_tokens(
         msb_tokens.cpu(),
         predicted_lsb_tokens.cpu(),
-        max_bit_depth=args.max_bit_depth,
-        msb_n_bits=args.msb_n_bits
+        max_bit_depth=MAX_BIT_DEPTH,
+        msb_n_bits=MSB_N_BITS
     )
-    predicted_audio = tokens_to_audio(reconstructed_tokens, max_bit_depth=args.max_bit_depth)
+    predicted_audio = tokens_to_audio(reconstructed_tokens, max_bit_depth=MAX_BIT_DEPTH)
     
     # Handle stereo deinterleaving (only if we interleaved during preparation)
-    if args.stereo_interleave and original_audio.shape[0] == 2:
+    if STEREO_INTERLEAVE and original_audio.shape[0] == 2:
         num_samples_per_channel = original_audio.shape[1]
         left_pred, right_pred = deinterleave_stereo(predicted_audio, num_samples_per_channel)
         predicted_audio = torch.stack([left_pred, right_pred], dim=0)
         print(f"Deinterleaved stereo: {predicted_audio.shape}")
-    elif original_audio.shape[0] == 2 and not args.stereo_interleave:
+    elif original_audio.shape[0] == 2 and not STEREO_INTERLEAVE:
         # Stero but not interleaved - we took one channel, so duplicate it back
         predicted_audio = predicted_audio.unsqueeze(0).repeat(2, 1)
     else:
@@ -372,15 +334,15 @@ def main():
     quantized_tokens = reconstruct_audio_from_tokens(
         msb_tokens.cpu(),
         lsb_tokens_gt.cpu(),
-        max_bit_depth=args.max_bit_depth,
-        msb_n_bits=args.msb_n_bits
+        max_bit_depth=MAX_BIT_DEPTH,
+        msb_n_bits=MSB_N_BITS
     )
-    quantized_audio = tokens_to_audio(quantized_tokens, max_bit_depth=args.max_bit_depth)
+    quantized_audio = tokens_to_audio(quantized_tokens, max_bit_depth=MAX_BIT_DEPTH)
     
-    if args.stereo_interleave and original_audio.shape[0] == 2:
+    if STEREO_INTERLEAVE and original_audio.shape[0] == 2:
         left_quant, right_quant = deinterleave_stereo(quantized_audio, num_samples_per_channel)
         quantized_audio = torch.stack([left_quant, right_quant], dim=0)
-    elif original_audio.shape[0] == 2 and not args.stereo_interleave:
+    elif original_audio.shape[0] == 2 and not STEREO_INTERLEAVE:
         quantized_audio = quantized_audio.unsqueeze(0).repeat(2, 1)
     else:
         quantized_audio = quantized_audio.unsqueeze(0)
