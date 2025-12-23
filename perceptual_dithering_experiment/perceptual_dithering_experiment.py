@@ -145,25 +145,41 @@ def predict_lsb_tokens(model, msb_tokens):
         predicted_lsb_tokens: Predicted LSB tokens (greedy decoding)
     """
     model.eval()
+
+    # # Build sequence incrementally: MSB₁ -> predict LSB₁ -> MSB₂ -> predict LSB₂ -> ...
+    # input_tokens = torch.repeat_interleave(msb_tokens, repeats=2, dim=0).unsqueeze(dim=0) # (1, num_samples * 2)
+    # with torch.no_grad():
+    #     for i in tqdm(range(len(msb_tokens)), desc="Predicting LSB tokens"):            
+    #         current_lsb_index = (i * 2) + 1 # index in input tokens for the current LSB token
+    #         outputs = model(input_tokens[:, :current_lsb_index]) # Get model prediction for next token (should be LSB)
+    #         logits = outputs.logits[:, -1, :]  # (1, vocab_size) - last position logits
+    #         next_token = torch.argmax(logits, dim=-1, keepdim=True)  # Greedy decoding: pick the token with highest probability; (1, 1)
+    #         input_tokens[:, current_lsb_index] = next_token.item() # set LSB token in input tokens
+    # predicted_lsb_tokens = input_tokens.squeeze(dim=0)[1::2] # get odd indices (LSB tokens)
+    
     num_samples = len(msb_tokens)
     predicted_lsb_tokens = torch.zeros((num_samples,), dtype=torch.long, device=msb_tokens.device)
     
-    # Build sequence incrementally: MSB₁ -> predict LSB₁ -> MSB₂ -> predict LSB₂ -> ...
-    input_tokens = torch.repeat_interleave(msb_tokens, repeats=2, dim=0).unsqueeze(dim=0) # (1, num_samples * 2)
+    # Use KV cache to avoid recomputing attention for previous tokens
+    # This speeds up autoregressive generation significantly
+    past_key_values = None
     
     with torch.no_grad():
-        for i in tqdm(range(num_samples), desc="Predicting LSB tokens"):            
-            # Get model prediction for next token (should be LSB)
-            current_lsb_index = (i * 2) + 1
-            outputs = model(input_tokens[:, :current_lsb_index])
-            logits = outputs.logits[:, -1, :]  # (1, vocab_size) - last position logits
+        for i in tqdm(range(num_samples), desc="Predicting LSB tokens"):
+            # Process MSB token: only pass the new token, use cache for previous context
+            msb_token = msb_tokens[i].unsqueeze(0).unsqueeze(0)  # (1, 1)
+            outputs = model(msb_token, past_key_values=past_key_values, use_cache=True)
+            past_key_values = outputs.past_key_values
             
-            # Greedy decoding: pick the token with highest probability
-            next_token = torch.argmax(logits, dim=-1, keepdim=True)  # (1, 1)
-            next_token = next_token.item()  
-            predicted_lsb_tokens[i] = next_token # set the predicted LSB token for the current index
-            input_tokens[current_lsb_index] = next_token # set LSB token in input tokens
-
+            # Predict LSB token from the MSB context
+            logits = outputs.logits[:, -1, :]  # (1, vocab_size)
+            lsb_token = torch.argmax(logits, dim=-1, keepdim=True)  # (1, 1) - greedy decoding
+            predicted_lsb_tokens[i] = lsb_token.item()
+            
+            # Process predicted LSB token to update cache for next iteration
+            outputs = model(lsb_token, past_key_values=past_key_values, use_cache=True)
+            past_key_values = outputs.past_key_values
+    
     return predicted_lsb_tokens
 
 def reconstruct_audio_from_tokens(msb_tokens, lsb_tokens, max_bit_depth=16, msb_n_bits=8):
