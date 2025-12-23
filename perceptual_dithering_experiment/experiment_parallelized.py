@@ -212,6 +212,9 @@ def predict_batch(
     predicted_lsb_tokens = sequence[:, 1::2] # get odd indices (LSB tokens)
 
     # convert MSB tokens and predicted LSB tokens back into waveform
+    difference = predicted_lsb_tokens - lsb_tokens
+    print(f"LSB Token Difference Range: {difference.min()} to {difference.max()}")
+    print(f"LSB Token Difference Mean: {difference.mean()}")
     predicted_batch = (msb_tokens << LSB_N_BITS) | predicted_lsb_tokens
     predicted_batch = predicted_batch.reshape(batch_size, n_channels, n_samples)
 
