@@ -321,8 +321,9 @@ def perceptual_dithering_experiment(
         for i in range(batch_size):
             chunk_start_index = batch_start_index + (i * effective_chunk_size)
             chunk_end_index = min(chunk_start_index + chunk_size, n_samples_with_initial_overlap)
-            batch[i, :, :] = waveform[:, chunk_start_index:chunk_end_index]
-            chunk_lengths[i] = chunk_end_index - chunk_start_index
+            chunk_length = chunk_end_index - chunk_start_index
+            batch[i, :, :chunk_length] = waveform[:, chunk_start_index:chunk_end_index]
+            chunk_lengths[i] = chunk_length
 
         # get predicted chunk
         predicted_batch = predict_batch(
