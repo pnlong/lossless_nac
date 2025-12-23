@@ -145,6 +145,7 @@ def predict_lsb_tokens(model, msb_tokens):
         predicted_lsb_tokens: Predicted LSB tokens (greedy decoding)
     """
     model.eval()
+    vocab_size = model.model.config.vocab_size
 
     # Build sequence incrementally: MSB₁ -> predict LSB₁ -> MSB₂ -> predict LSB₂ -> ...
     input_tokens = torch.repeat_interleave(msb_tokens, repeats=2, dim=0).unsqueeze(dim=0) # (1, num_samples * 2)
@@ -155,8 +156,8 @@ def predict_lsb_tokens(model, msb_tokens):
             logits = outputs.logits[:, -1, :]  # (1, vocab_size) - last position logits
             next_token = torch.argmax(logits, dim=-1, keepdim=True)  # Greedy decoding: pick the token with highest probability; (1, 1)
             next_token = next_token.item()
-            if next_token >= model.model.config.vocab_size:
-                raise ValueError(f"Predicted token {next_token} is out of range [0, {model.model.config.vocab_size - 1}]")
+            if next_token >= vocab_size:
+                raise ValueError(f"Predicted token {next_token} is out of range [0, {vocab_size - 1}]")
             input_tokens[:, current_lsb_index] = next_token # set LSB token in input tokens
     predicted_lsb_tokens = input_tokens.squeeze(dim=0)[1::2] # get odd indices (LSB tokens)
     return predicted_lsb_tokens
