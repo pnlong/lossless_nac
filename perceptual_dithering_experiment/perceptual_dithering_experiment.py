@@ -149,9 +149,13 @@ def predict_lsb_tokens(model, msb_tokens, use_kv_cache=True):
     num_samples = len(msb_tokens)
     vocab_size = model.model.config.vocab_size
 
+    # validate MSB tokens are within vocab range
+    if msb_tokens.max() >= vocab_size or msb_tokens.min() < 0:
+        raise ValueError(f"MSB tokens are out of range [0, {vocab_size - 1}]")
+
     # use KV cache to avoid recomputing attention for previous tokens
     if use_kv_cache:
-        
+
         # Access model.model directly (the underlying GPT2LMHeadModel) to use past_key_values
         gpt2_model = model.model
         predicted_lsb_tokens = torch.zeros((num_samples,), dtype=torch.long, device=msb_tokens.device)
