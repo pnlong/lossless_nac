@@ -73,7 +73,7 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         raise ValueError("Cannot use log scale without converting to absolute magnitudes.")
     
     # setup plot
-    plt.figure(figsize = (12, 8))
+    plt.figure(figsize = (6, 4))
     sns.set_style(style = "whitegrid")
 
     # for each estimator
@@ -81,9 +81,13 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
     for i, (estimator, residuals_dir) in enumerate(residuals_dir_by_estimator.items()):
         
         # get all residual files
-        residual_filepaths = [f"{residuals_dir}/{filename}" for filename in listdir(residuals_dir) if filename.endswith(".npy")]
-        if mixes_only:
-            residual_filepaths = [residual_filepath for residual_filepath, is_mix in zip(residual_filepaths, get_mixes_only_mask(paths = pd.Series(residual_filepaths))) if is_mix]
+        try:
+            residual_filepaths = [f"{residuals_dir}/{filename}" for filename in listdir(residuals_dir) if filename.endswith(".npy")]
+            if mixes_only:
+                residual_filepaths = [residual_filepath for residual_filepath, is_mix in zip(residual_filepaths, get_mixes_only_mask(paths = pd.Series(residual_filepaths))) if is_mix]
+        except FileNotFoundError:
+            print(f"Warning: {residuals_dir} not found, using existing pickle files if possible.")
+            residual_filepaths = []
         
         # count frequencies across all files
         data_filepath = f"{data_dir}/{estimator}{'.mixes_only' if mixes_only else ''}.pkl"
@@ -121,10 +125,10 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
     # customize plot
     x_label = "Absolute Magnitude" if convert_to_absolute_magnitudes else "Residual Value"
     if use_log_scale:
-        x_label = f"Log ({x_label})"
+        x_label = f"log({x_label})"
     plt.xlabel(x_label)
-    plt.ylabel("Probability")
-    plt.title("Distribution of Residuals by Estimator")
+    plt.ylabel("Density")
+    # plt.title("Distribution of Residuals by Estimator")
     plt.legend(title = "Estimator")
     
     # save plot
@@ -156,16 +160,20 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         raise ValueError("Cannot use log scale without converting to absolute magnitudes.")
 
     # setup plot
-    plt.figure(figsize = (12, 8))
+    plt.figure(figsize = (6, 4))
     sns.set_style(style = "whitegrid")
 
     # for each estimator
     for i, (estimator, residuals_dir) in enumerate(residuals_dir_by_estimator.items()):
         
         # get all residual files
-        residual_filepaths = [f"{residuals_dir}/{filename}" for filename in listdir(residuals_dir) if filename.endswith(".npy")]
-        if mixes_only:
-            residual_filepaths = [residual_filepath for residual_filepath, is_mix in zip(residual_filepaths, get_mixes_only_mask(paths = pd.Series(residual_filepaths))) if is_mix]      
+        try:
+            residual_filepaths = [f"{residuals_dir}/{filename}" for filename in listdir(residuals_dir) if filename.endswith(".npy")]
+            if mixes_only:
+                residual_filepaths = [residual_filepath for residual_filepath, is_mix in zip(residual_filepaths, get_mixes_only_mask(paths = pd.Series(residual_filepaths))) if is_mix]      
+        except FileNotFoundError:
+            print(f"Warning: {residuals_dir} not found, using existing pickle files if possible.")
+            residual_filepaths = []
 
         # get range of residual values efficiently
         range_filepath = f"{data_dir}/{estimator}_range{'.mixes_only' if mixes_only else ''}.pkl"
@@ -228,10 +236,10 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
     # customize plot
     x_label = "Absolute Magnitude" if convert_to_absolute_magnitudes else "Residual Value"
     if use_log_scale:
-        x_label = f"Log ({x_label})"
+        x_label = f"log({x_label})"
     plt.xlabel(x_label)
-    plt.ylabel("Probability")
-    plt.title("Distribution of Residuals by Estimator")
+    plt.ylabel("Density")
+    # plt.title("Distribution of Residuals by Estimator")
     
     # create legend with unique labels only
     handles, labels = plt.gca().get_legend_handles_labels()
@@ -298,8 +306,7 @@ if __name__ == "__main__":
     lpc_residuals_dir = f"{utils.LOGGING_FOR_ZACH_DIR}/flac/data"
     if not exists(lpc_residuals_dir):
         print(f"Warning: LPC residuals directory not found: {lpc_residuals_dir}")
-    else:
-        residuals_dir_by_estimator["lpc"] = lpc_residuals_dir
+    residuals_dir_by_estimator["lpc"] = lpc_residuals_dir
     
     # get paths to DAC residuals
     if not exists(utils.LOGGING_FOR_ZACH_DIR):

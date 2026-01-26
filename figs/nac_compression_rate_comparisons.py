@@ -113,7 +113,7 @@ def create_boxplot(df: pd.DataFrame, output_filepath: str):
     compressor_colors = dict(zip(unique_compressors, color_palette))
     
     # Set up the matplotlib figure
-    fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(6, 4), constrained_layout=True)
     
     # Enable seaborn style
     sns.set_theme(style="whitegrid")
@@ -128,7 +128,7 @@ def create_boxplot(df: pd.DataFrame, output_filepath: str):
     ax.grid(True, alpha=GRID_ALPHA)
     
     # Rotate x-axis labels if needed
-    ax.tick_params(axis="x", rotation=45 if len(df_plot["compressor"].unique()) > 3 else 0)
+    ax.tick_params(axis="x", rotation=45 if len(df_plot["compressor"].unique()) > 5 else 0)
     
     # Save the figure
     fig.savefig(output_filepath, dpi=FIGURE_DPI, format="pdf")
