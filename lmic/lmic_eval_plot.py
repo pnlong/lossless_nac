@@ -47,7 +47,7 @@ dataset_groups = [
 ]
 
 # Create figure with six subplots (2 rows, 3 columns)
-fig, axes = plt.subplots(2, 3, figsize=(18, 12), sharey=PLOTS_SHARE_Y_AXIS)
+fig, axes = plt.subplots(2, 3, figsize=(12, 6), sharey=PLOTS_SHARE_Y_AXIS)
 
 # Loop over bit depths (rows) and dataset groups (columns)
 for row_idx, bit_depth in enumerate([8, 16]):
@@ -75,7 +75,7 @@ for row_idx, bit_depth in enumerate([8, 16]):
         ax.legend(title="Dataset", loc=group_config["legend_loc"])
 
 # Overall title
-fig.suptitle("Comparing LMIC Compressors", fontsize=16, y=1.02)
+# fig.suptitle("Comparing LMIC Compressors", fontsize=16, y=1.02)
 
 # Adjust layout to prevent label cutoff
 plt.tight_layout()
