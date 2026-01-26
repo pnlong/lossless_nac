@@ -73,7 +73,7 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         raise ValueError("Cannot use log scale without converting to absolute magnitudes.")
     
     # setup plot
-    plt.figure(figsize = (6, 4))
+    plt.figure(figsize = (6, 3))
     sns.set_style(style = "whitegrid")
 
     # for each estimator
@@ -123,7 +123,7 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         sns.lineplot(x = residual_values, y = probabilities, label = estimator.upper(), color = COLORS[i])
 
     # customize plot
-    x_label = "Absolute Magnitude" if convert_to_absolute_magnitudes else "Residual Value"
+    x_label = "|Residual|" if convert_to_absolute_magnitudes else "Residual"
     if use_log_scale:
         x_label = f"log({x_label})"
     plt.xlabel(x_label)
@@ -160,7 +160,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         raise ValueError("Cannot use log scale without converting to absolute magnitudes.")
 
     # setup plot
-    plt.figure(figsize = (6, 4))
+    plt.figure(figsize = (6, 3))
     sns.set_style(style = "whitegrid")
 
     # for each estimator
@@ -234,7 +234,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         sns.lineplot(x = x_values, y = mean_distribution, label = estimator.upper(), alpha = 1.0, color = COLORS[i])
 
     # customize plot
-    x_label = "Absolute Magnitude" if convert_to_absolute_magnitudes else "Residual Value"
+    x_label = "|Residual|" if convert_to_absolute_magnitudes else "Residual"
     if use_log_scale:
         x_label = f"log({x_label})"
     plt.xlabel(x_label)

@@ -8,9 +8,10 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import argparse
 from os.path import exists
 from os import makedirs
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 ##################################################
 
@@ -24,7 +25,7 @@ COMPRESSORS = [
     # "iflac",
     "ldac",
     "lec",
-    "lnac",
+    # "lnac",
 ]
 OUTPUT_DIR = f"{BASE_DIR}/plots"
 
@@ -98,37 +99,75 @@ def print_compression_speed_stats(compressor_stats: Dict[str, float], file_count
     print("=" * 60 + "\n")
 
 
-def create_boxplot(df: pd.DataFrame, output_filepath: str):
-    """Create a boxplot comparing compression rates across compressors."""
-    # Capitalize compressor names for display
-    df_plot = df.copy()
-    df_plot["compressor"] = df_plot["compressor"].str.upper()
+def create_boxplot(df: pd.DataFrame, df_lnac: Optional[pd.DataFrame], output_filepath: str, include_custom: bool = True):
+    """Create a boxplot comparing compression rates across compressors.
     
-    # Get unique compressors in order
-    unique_compressors = sorted(df_plot["compressor"].unique())
+    If include_custom is True, creates two subplots: first with COMPRESSORS, second with lnac (labeled as "Custom").
+    Widths are proportional: first subplot width = len(COMPRESSORS), second = 1.
+    If include_custom is False, creates a single subplot with only COMPRESSORS.
+    """
+    # Prepare data for first subplot (COMPRESSORS)
+    df_compressors = df.copy()
+    df_compressors["compressor"] = df_compressors["compressor"].str.upper()
+    
+    # Get unique compressors in order for first subplot
+    unique_compressors = sorted(df_compressors["compressor"].unique())
     
     # Define color palette for compressors
     # Using a distinct color palette - one color per compressor
-    color_palette = sns.color_palette("Set2", n_colors=len(unique_compressors))
-    compressor_colors = dict(zip(unique_compressors, color_palette))
+    if include_custom and df_lnac is not None:
+        n_colors = len(unique_compressors) + 1  # +1 for Custom
+        color_palette = sns.color_palette("Set2", n_colors=n_colors)
+        compressor_colors = dict(zip(unique_compressors, color_palette[:len(unique_compressors)]))
+        compressor_colors["Custom"] = color_palette[len(unique_compressors)]
+    else:
+        n_colors = len(unique_compressors)
+        color_palette = sns.color_palette("Set2", n_colors=n_colors)
+        compressor_colors = dict(zip(unique_compressors, color_palette))
     
     # Set up the matplotlib figure
-    fig, ax = plt.subplots(figsize=(6, 4), constrained_layout=True)
+    if include_custom and df_lnac is not None:
+        # Two subplots: first with COMPRESSORS, second with Custom
+        n_compressors = len(unique_compressors)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(5 + 2, 3), 
+                                        width_ratios=[n_compressors, 1],
+                                        sharey=True,
+                                        constrained_layout=True)
+        
+        # Prepare data for second subplot (lnac -> Custom)
+        df_custom = df_lnac.copy()
+        df_custom["compressor"] = "Custom"
+    else:
+        # Single subplot with only COMPRESSORS
+        fig, ax1 = plt.subplots(figsize=(5, 3), constrained_layout=True)
+        ax2 = None
     
     # Enable seaborn style
     sns.set_theme(style="whitegrid")
     
-    # Create boxplot with custom colors using dictionary palette
-    sns.boxplot(ax=ax, data=df_plot, x="compressor", y="compression_rate", 
+    # Create boxplot for first subplot (COMPRESSORS)
+    sns.boxplot(ax=ax1, data=df_compressors, x="compressor", y="compression_rate", 
                 palette=compressor_colors)
     
-    # Styling
-    ax.set_xlabel("Compressor", fontsize=12)
-    ax.set_ylabel("Compression Rate (x)", fontsize=12)
-    ax.grid(True, alpha=GRID_ALPHA)
+    # Create boxplot for second subplot (Custom/lnac) if enabled
+    if include_custom and df_lnac is not None and ax2 is not None:
+        sns.boxplot(ax=ax2, data=df_custom, x="compressor", y="compression_rate", 
+                    palette={"Custom": compressor_colors["Custom"]})
     
-    # Rotate x-axis labels if needed
-    ax.tick_params(axis="x", rotation=45 if len(df_plot["compressor"].unique()) > 5 else 0)
+    # Styling for first subplot
+    ax1.set_xlabel("Compressor", fontsize=12)
+    ax1.set_ylabel("Compression Rate (x)", fontsize=12)
+    ax1.grid(True, alpha=GRID_ALPHA)
+    ax1.tick_params(axis="x", rotation=45 if len(unique_compressors) > 5 else 0)
+    
+    # Styling for second subplot (if it exists)
+    if ax2 is not None:
+        ax2.set_xlabel("", fontsize=12)
+        ax2.set_ylabel("", fontsize=12)
+        ax2.grid(True, alpha=GRID_ALPHA)
+        ax2.tick_params(axis="x", rotation=0)
+        # Remove y-axis ticks and labels from second subplot since it shares y-axis
+        ax2.tick_params(axis="y", left=False, labelleft=False)
     
     # Save the figure
     fig.savefig(output_filepath, dpi=FIGURE_DPI, format="pdf")
@@ -143,6 +182,14 @@ def create_boxplot(df: pd.DataFrame, output_filepath: str):
 ##################################################
 
 if __name__ == "__main__":
+    
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Compare compression rates across different compressors")
+    parser.add_argument("--no-custom", action="store_true", 
+                        help="Disable the custom (lnac) subplot")
+    args = parser.parse_args()
+    
+    include_custom = not args.no_custom
     
     # Create output directory if it doesn't exist
     if not exists(OUTPUT_DIR):
@@ -189,6 +236,25 @@ if __name__ == "__main__":
     # Combine all dataframes
     combined_df = pd.concat(filtered_dfs.values(), ignore_index=True)
     
+    # Load lnac data separately (only if include_custom is True)
+    lnac_df = None
+    if include_custom:
+        lnac_csv_path = f"{BASE_DIR}/lnac/test.csv"
+        if exists(lnac_csv_path):
+            print("Loading lnac data...")
+            lnac_df_raw = pd.read_csv(lnac_csv_path, sep=",", header=0, index_col=False)
+            ablation_columns = get_ablation_columns(lnac_df_raw)
+            lnac_df, best_ablation = find_best_ablation(lnac_df_raw, ablation_columns)
+            lnac_df["compressor"] = "lnac"
+            if ablation_columns:
+                n_files_lnac = lnac_df["path"].nunique()
+                print(f"LNAC: Best ablation = {best_ablation} (n = {n_files_lnac} files)")
+            else:
+                n_files_lnac = lnac_df["path"].nunique()
+                print(f"LNAC: No ablation columns (using all data) (n = {n_files_lnac} files)")
+        else:
+            print(f"Warning: {lnac_csv_path} not found, lnac will not be included in plots")
+    
     # Calculate compression speed stats for all files
     compressor_stats_all = {}
     file_counts_all = {}
@@ -198,6 +264,11 @@ if __name__ == "__main__":
             compressor_stats_all[compressor] = compressor_df["compression_speed"].mean()
             file_counts_all[compressor] = compressor_df["path"].nunique()
     
+    # Add lnac compression speed stats if available
+    if lnac_df is not None:
+        compressor_stats_all["custom"] = lnac_df["compression_speed"].mean()
+        file_counts_all["custom"] = lnac_df["path"].nunique()
+    
     # Create boxplot for all files
     print("Creating boxplot for all files...")
     # Print file counts for all files plot
@@ -206,12 +277,20 @@ if __name__ == "__main__":
         if compressor in filtered_dfs:
             n_files = combined_df[combined_df["compressor"] == compressor]["path"].nunique()
             print(f"  {compressor.upper()}: n = {n_files}")
+    if lnac_df is not None:
+        n_files_lnac = lnac_df["path"].nunique()
+        print(f"  CUSTOM (lnac): n = {n_files_lnac}")
     all_files_output = f"{OUTPUT_DIR}/compression_rate_comparison_all_files.pdf"
-    create_boxplot(combined_df, all_files_output)
+    create_boxplot(combined_df, lnac_df, all_files_output, include_custom=include_custom)
     print(f"Saved: {all_files_output}\n")
     
     # Filter for mixes only (path ends with ".0.npy")
     mixes_df = combined_df[combined_df["path"].str.endswith(".0.npy")].copy()
+    
+    # Filter lnac data for mixes only
+    mixes_lnac_df = None
+    if include_custom and lnac_df is not None:
+        mixes_lnac_df = lnac_df[lnac_df["path"].str.endswith(".0.npy")].copy()
     
     # Calculate compression speed stats for mixes only
     compressor_stats_mixes = {}
@@ -223,6 +302,11 @@ if __name__ == "__main__":
                 compressor_stats_mixes[compressor] = compressor_df["compression_speed"].mean()
                 file_counts_mixes[compressor] = compressor_df["path"].nunique()
     
+    # Add lnac compression speed stats for mixes if available
+    if mixes_lnac_df is not None and len(mixes_lnac_df) > 0:
+        compressor_stats_mixes["custom"] = mixes_lnac_df["compression_speed"].mean()
+        file_counts_mixes["custom"] = mixes_lnac_df["path"].nunique()
+    
     # Create boxplot for mixes only
     print("Creating boxplot for mixes only...")
     # Print file counts for mixes only plot
@@ -231,8 +315,11 @@ if __name__ == "__main__":
         if compressor in filtered_dfs:
             n_files = mixes_df[mixes_df["compressor"] == compressor]["path"].nunique()
             print(f"  {compressor.upper()}: n = {n_files}")
+    if mixes_lnac_df is not None:
+        n_files_lnac = mixes_lnac_df["path"].nunique()
+        print(f"  CUSTOM (lnac): n = {n_files_lnac}")
     mixes_output = f"{OUTPUT_DIR}/compression_rate_comparison_mixes_only.pdf"
-    create_boxplot(mixes_df, mixes_output)
+    create_boxplot(mixes_df, mixes_lnac_df, mixes_output, include_custom=include_custom)
     print(f"Saved: {mixes_output}")
     
     # Print compression speed statistics at the end

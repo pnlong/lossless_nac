@@ -135,7 +135,16 @@ if __name__ == "__main__":
 
         # encode WAV file as FLAC
         start_time = time.perf_counter()
-        subprocess.run(args = [args.flac_path, "--force", "-o", flac_filepath, wav_filepath], check = True, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL) # encode WAV file as FLAC
+        subprocess.run(args = [
+            args.flac_path,
+            "--force",
+            "--disable-constant-subframes",
+            "--disable-fixed-subframes",
+            "--disable-verbatim-subframes",
+            "--compression-level-5",
+            "-o", flac_filepath,
+            wav_filepath
+        ], check = True, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL) # encode WAV file as FLAC
         duration_encoding = time.perf_counter() - start_time # measure speed of compression
         del start_time # free up memory
 
