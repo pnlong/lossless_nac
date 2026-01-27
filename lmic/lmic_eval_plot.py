@@ -3,6 +3,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 import argparse
+import sys
+from os.path import dirname, realpath
+
+# Import dataset name mapping from flac_eval_plot.py
+sys.path.insert(0, dirname(dirname(realpath(__file__))))
+from flac_eval_plot import DATASET_NAME_TO_FANCIER_NAME
 
 # read in arguments
 def parse_args(args = None, namespace = None):
@@ -93,13 +99,21 @@ for col_idx, group_config in enumerate(dataset_groups):
         handles, labels = temp_ax.get_legend_handles_labels()
     plt.close(temp_fig)
     
+    # Map dataset names to fancier names
+    labels = [DATASET_NAME_TO_FANCIER_NAME.get(label, label) for label in labels]
+    
     # Hide the axes and show only the legend, centered
     ax_legend.axis('off')
     ax_legend.set_title(group_config['title'])
     # Calculate number of columns for wrapping (aim for 2-3 items per column)
     n_items = len(handles)
     ncol = 2 # max(2, (n_items + 2) // 3)  # Aim for roughly 3 items per column, minimum 2 columns
-    ax_legend.legend(handles, labels, title="Dataset", loc="center", ncol=ncol, fontsize=8, title_fontsize=9)
+    ax_legend.legend(
+        handles,
+        labels,
+        # title="Dataset",
+        loc="center",
+        ncol=ncol, fontsize=8, title_fontsize=9)
 
 # Loop over bit depths (rows 1 and 2) and dataset groups (columns)
 for row_idx, bit_depth in enumerate([8, 16]):

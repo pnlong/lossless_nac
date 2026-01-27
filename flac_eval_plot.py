@@ -22,6 +22,31 @@ PLOTS_SHARE_Y_AXIS = True
 X_AXIS_LABEL = "FLAC Compression Level"
 Y_AXIS_LABEL = "Compression Rate (x)"
 
+# map dataset name to fancier names
+DATASET_NAME_TO_FANCIER_NAME = {
+    "musdb18mono": "MusDB18 Mono (All)",
+    "musdb18mono_mixes": "MusDB18 Mono (Mixes)",
+    "musdb18mono_stems": "MusDB18 Mono (Stems)",
+    "musdb18stereo": "MusDB18 Stereo (All)",
+    "musdb18stereo_mixes": "MusDB18 Stereo (Mixes)",
+    "musdb18stereo_stems": "MusDB18 Stereo (Stems)",
+    "librispeech": "LibriSpeech",
+    "birdvox": "Birdvox",
+    "beethoven": "Beethoven",
+    "youtube_mix": "YouTube Mix",
+    "sc09": "SC09",
+    "vctk": "VCTK",
+    "epidemic": "Epidemic Sound",
+    "torrent16b_pro": "Torrent 16-bit (Pro)",
+    "torrent16b_amateur": "Torrent 16-bit (Amateur)",
+    "torrent16b_freeload": "Torrent 16-bit (Freeload)",
+    "torrent24b_pro": "Torrent 24-bit (Pro)",
+    "torrent24b_amateur": "Torrent 24-bit (Amateur)",
+    "torrent24b_freeload": "Torrent 24-bit (Freeload)",
+    "torrent16b": "Torrent 16-bit (All)",
+    "torrent24b": "Torrent 24-bit (All)",
+}
+
 # Load the CSV file
 df = pd.read_csv(args.input_filepath)
 
@@ -94,13 +119,23 @@ for col_idx, group_config in enumerate(dataset_groups):
         handles, labels = temp_ax.get_legend_handles_labels()
     plt.close(temp_fig)
     
+    # Map dataset names to fancier names
+    labels = [DATASET_NAME_TO_FANCIER_NAME.get(label, label) for label in labels]
+    
     # Hide the axes and show only the legend, centered
     ax_legend.axis('off')
     ax_legend.set_title(group_config['title'])
     # Calculate number of columns for wrapping (aim for 2-3 items per column)
     n_items = len(handles)
     ncol = 2 # max(2, (n_items + 2) // 3)  # Aim for roughly 3 items per column, minimum 2 columns
-    ax_legend.legend(handles, labels, title="Dataset", loc="center", ncol=ncol, fontsize=8, title_fontsize=9)
+    ax_legend.legend(
+        handles,
+        labels,
+        # title="Dataset",
+        loc="center",
+        ncol=ncol,
+        fontsize=8,
+        title_fontsize=9)
 
 # Loop over bit depths (rows 1 and 2) and dataset groups (columns)
 for row_idx, bit_depth in enumerate([8, 16]):
