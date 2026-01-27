@@ -73,7 +73,7 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         raise ValueError("Cannot use log scale without converting to absolute magnitudes.")
     
     # setup plot
-    plt.figure(figsize = (6, 3))
+    plt.figure(figsize = (7, 3))
     sns.set_style(style = "whitegrid")
 
     # for each estimator
@@ -160,7 +160,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         raise ValueError("Cannot use log scale without converting to absolute magnitudes.")
 
     # setup plot
-    plt.figure(figsize = (6, 3))
+    plt.figure(figsize = (7, 3))
     sns.set_style(style = "whitegrid")
 
     # for each estimator
