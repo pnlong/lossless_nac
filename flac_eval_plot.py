@@ -131,7 +131,7 @@ for col_idx, group_config in enumerate(dataset_groups):
     ax_legend.legend(
         handles,
         labels,
-        # title="Dataset",
+        title="Dataset",
         loc="center",
         ncol=ncol,
         fontsize=8,
