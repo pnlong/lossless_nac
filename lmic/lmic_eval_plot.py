@@ -8,7 +8,7 @@ from os.path import dirname, realpath
 
 # Import dataset name mapping from flac_eval_plot.py
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
-from flac_eval_plot import DATASET_NAME_TO_FANCIER_NAME
+from flac_eval_plot import DATASET_NAME_TO_FANCIER_NAME, DATASET_LEGEND_ORDER
 
 # read in arguments
 def parse_args(args = None, namespace = None):
@@ -76,6 +76,7 @@ for col_idx, group_config in enumerate(dataset_groups):
     df_bit["compressor"] = pd.Categorical(df_bit["compressor"], categories=compressor_order, ordered=True)
     df_bit = df_bit.sort_values(by="compressor").reset_index(drop=True)
     df_group = df_bit[group_config["mask_func"](df_bit)]
+    hue_order = [d for d in DATASET_LEGEND_ORDER if d in df_group["dataset"].unique()]
     
     # Create a temporary plot just to extract the legend handles and labels
     temp_fig, temp_ax = plt.subplots(figsize=(1, 1))
@@ -84,6 +85,7 @@ for col_idx, group_config in enumerate(dataset_groups):
         x="compressor",
         y="compression_rate",
         hue="dataset",
+        hue_order=hue_order,
         marker="o",
         ax=temp_ax
     )
@@ -124,12 +126,13 @@ for row_idx, bit_depth in enumerate([8, 16]):
     for col_idx, group_config in enumerate(dataset_groups):
         ax = axes[row_idx + 1][col_idx]  # +1 because row 0 is for legends
         df_group = df_bit[group_config["mask_func"](df_bit)]
-        
+        hue_order = [d for d in DATASET_LEGEND_ORDER if d in df_group["dataset"].unique()]
         sns.lineplot(
             data=df_group,
             x="compressor",
             y="compression_rate",
             hue="dataset",
+            hue_order=hue_order,
             marker="o",
             ax=ax,
             legend=False

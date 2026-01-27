@@ -35,6 +35,9 @@ DATASET_NAME_TO_FANCIER_NAME = {
     "torrent24b": "Torrent 24-bit (All)",
 }
 
+# Canonical order for dataset legend (shared with lmic_eval_plot for consistent line colors)
+DATASET_LEGEND_ORDER = sorted(DATASET_NAME_TO_FANCIER_NAME.keys())
+
 if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
@@ -98,6 +101,7 @@ if __name__ == "__main__":
         # Get data from one of the bit depths to create the legend
         df_bit = df_filtered[df_filtered["bit_depth"] == 8]
         df_group = df_bit[group_config["mask_func"](df_bit)]
+        hue_order = [d for d in DATASET_LEGEND_ORDER if d in df_group["dataset"].unique()]
         
         # Create a temporary plot just to extract the legend handles and labels
         temp_fig, temp_ax = plt.subplots(figsize=(1, 1))
@@ -106,6 +110,7 @@ if __name__ == "__main__":
             x="flac_compression_level",
             y="overall_compression_rate",
             hue="dataset",
+            hue_order=hue_order,
             marker="o",
             ax=temp_ax
         )
@@ -146,12 +151,13 @@ if __name__ == "__main__":
         for col_idx, group_config in enumerate(dataset_groups):
             ax = axes[row_idx + 1][col_idx]  # +1 because row 0 is for legends
             df_group = df_bit[group_config["mask_func"](df_bit)]
-            
+            hue_order = [d for d in DATASET_LEGEND_ORDER if d in df_group["dataset"].unique()]
             sns.lineplot(
                 data=df_group,
                 x="flac_compression_level",
                 y="overall_compression_rate",
                 hue="dataset",
+                hue_order=hue_order,
                 marker="o",
                 ax=ax,
                 legend=False
