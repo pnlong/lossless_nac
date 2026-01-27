@@ -31,6 +31,7 @@ DATASET_NAME_TO_FANCIER_NAME = {
     "musdb18stereo_mixes": "MusDB18 Stereo (Mixes)",
     "musdb18stereo_stems": "MusDB18 Stereo (Stems)",
     "librispeech": "LibriSpeech",
+    "ljspeech": "LJSpeech",
     "birdvox": "Birdvox",
     "beethoven": "Beethoven",
     "youtube_mix": "YouTube Mix",
