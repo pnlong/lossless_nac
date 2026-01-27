@@ -106,6 +106,9 @@ if __name__ == "__main__":
     sample_rate_by_path = pd.read_csv(filepath_or_buffer = args.input_filepath, sep = ",", header = 0, index_col = False, usecols = utils.INPUT_COLUMN_NAMES)
     sample_rate_by_path = sample_rate_by_path.set_index(keys = "path", drop = True)["sample_rate"].to_dict() # dictionary where keys are paths and values are sample rates of those paths
     paths = list(sample_rate_by_path.keys()) # get paths to NPY audio files
+    if args.mixes_only:
+        mixes_only_mask = get_mixes_only_mask(paths = paths)
+        paths = [path for path, is_mix in zip(paths, mixes_only_mask) if is_mix]
 
     # helper function for determining compression rate
     def evaluate(path: str):

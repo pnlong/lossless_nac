@@ -142,7 +142,7 @@ def encode(
     if log_for_zach_kwargs is not None:
         residuals = np.stack([np.concatenate([rice.decode(stream = block[-1], n = block[0], k = k) for block in channel], axis = 0) for channel in blocks], axis = -1)
         if is_mono:
-            residuals = residuals.squeeze(dim = -1)
+            residuals = residuals.squeeze(axis = -1)
         residuals_rice = rice.encode(nums = residuals.flatten(), k = k)
         logging_for_zach.log_for_zach(
             residuals = residuals,

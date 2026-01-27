@@ -325,6 +325,33 @@ if __name__ == "__main__":
             residuals_dir_by_estimator[f"dac{n_codebooks_for_ldac_dir}"] = f"{ldac_parent_dir}{'/old_ldac' if args.use_old_ldac else ''}/{ldac_dir}" # add to dictionary
         # residuals_dir_by_estimator = {"dac3": "/deepfreeze/user_shares/pnlong/lnac/logging_for_zach/old_ldac/ldac_596c2b31112908f4fba2c31153fc15421c58738badb4a0350833d497e7abaa4e", "dac6": "/deepfreeze/user_shares/pnlong/lnac/logging_for_zach/old_ldac/ldac_c897ac32fbb1926fe922bc427e8e35f70b4fd705325d8201944780e2f943f843", "dac9": "/deepfreeze/user_shares/pnlong/lnac/logging_for_zach/old_ldac/ldac_fe275ec542f94cf437b01be9e4a801303b9f663864a2f855453c2f7a775aa339"}
 
+        # get paths to CDAC residuals (LNAC with n_codebooks 3, 6, 9)
+        lnac_dirs = list(filter(lambda x: x.startswith("lnac"), listdir(ldac_parent_dir)))
+        for lnac_dir in sorted(lnac_dirs):
+            lnac_dir_parameters_hash = lnac_dir.split("_")[-1]
+            matching = residuals_log_table[residuals_log_table["parameters_hash"] == lnac_dir_parameters_hash]
+            if len(matching) == 0:
+                continue
+            parameters = matching.reset_index(drop = True).at[0, "parameters"]
+            parameters = dict([parameter.split(":") for parameter in parameters.split("-")])
+            n_codebooks = int(parameters["n_codebooks"])
+            if n_codebooks in (3, 6, 9):
+                residuals_dir_by_estimator[f"cdac{n_codebooks}"] = f"{ldac_parent_dir}/{lnac_dir}"
+
+        # get paths to EC4 residuals (LEC with n_codebooks 4)
+        lec_dirs = list(filter(lambda x: x.startswith("lec"), listdir(ldac_parent_dir)))
+        for lec_dir in sorted(lec_dirs):
+            lec_dir_parameters_hash = lec_dir.split("_")[-1]
+            matching = residuals_log_table[residuals_log_table["parameters_hash"] == lec_dir_parameters_hash]
+            if len(matching) == 0:
+                continue
+            parameters = matching.reset_index(drop = True).at[0, "parameters"]
+            parameters = dict([parameter.split(":") for parameter in parameters.split("-")])
+            n_codebooks = int(parameters["n_codebooks"])
+            if n_codebooks == 4:
+                residuals_dir_by_estimator["ec4"] = f"{ldac_parent_dir}/{lec_dir}"
+                break
+
     ##################################################
 
 
