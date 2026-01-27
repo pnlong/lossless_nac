@@ -37,6 +37,38 @@ USE_LOG_SCALE_DEFAULT = True
 MIXES_ONLY_DEFAULT = False
 COLORS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan"]
 
+CODEBOOK_LEVELS_BY_COMPRESSOR = {
+    "flac": None,
+    "ldac": 3,
+    "lec": 4,
+    "lnac": 3,
+}
+
+##################################################
+
+
+# HELPER FUNCTIONS
+##################################################
+
+def get_compressor_name_from_estimator(estimator: str) -> str:
+    """Map estimator key to compressor name for display."""
+    if estimator == "lpc":
+        return "flac"
+    elif estimator.startswith("dac"):
+        # Extract codebook level from estimator (e.g., "dac3" -> 3)
+        n_codebooks = int(estimator[3:])
+        if n_codebooks == CODEBOOK_LEVELS_BY_COMPRESSOR["ldac"]:
+            return "ldac"
+    elif estimator.startswith("cdac"):
+        # Extract codebook level from estimator (e.g., "cdac3" -> 3)
+        n_codebooks = int(estimator[4:])
+        if n_codebooks == CODEBOOK_LEVELS_BY_COMPRESSOR["lnac"]:
+            return "lnac"
+    elif estimator == "ec4":
+        return "lec"
+    # If no match, return estimator as-is (shouldn't happen with proper filtering)
+    return estimator
+
 ##################################################
 
 
@@ -80,6 +112,9 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
     mean_absolute_magnitudes = dict()
     for i, (estimator, residuals_dir) in enumerate(residuals_dir_by_estimator.items()):
         
+        # get compressor name for display
+        compressor_name = get_compressor_name_from_estimator(estimator)
+        
         # get all residual files
         try:
             residual_filepaths = [f"{residuals_dir}/{filename}" for filename in listdir(residuals_dir) if filename.endswith(".npy")]
@@ -93,16 +128,16 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         data_filepath = f"{data_dir}/{estimator}{'.mixes_only' if mixes_only else ''}.pkl"
         if not exists(data_filepath) or reset:
             counter = Counter()
-            for residual_file in tqdm(iterable = residual_filepaths, desc = f"Processing {estimator.upper()} Residuals", total = len(residual_filepaths), leave = False):
+            for residual_file in tqdm(iterable = residual_filepaths, desc = f"Processing {compressor_name.upper()} Residuals", total = len(residual_filepaths), leave = False):
                 residuals = np.load(residual_file)
                 counter.update(residuals.flatten())
             with open(data_filepath, "wb") as f: # save counter to file
                 pickle.dump(obj = counter, file = f)
-            print(f"Saved {estimator.upper()} residuals counter to {data_filepath}.")
+            print(f"Saved {compressor_name.upper()} residuals counter to {data_filepath}.")
         else:
             with open(data_filepath, "rb") as f: # load counter from file
                 counter = pickle.load(file = f)
-            print(f"Loaded {estimator.upper()} residuals counter from {data_filepath}.")
+            print(f"Loaded {compressor_name.upper()} residuals counter from {data_filepath}.")
             
         # convert to absolute magnitudes
         absolute_magnitudes = convert_counter_to_absolute_magnitudes(counter = counter, use_log_scale = False)
@@ -116,11 +151,11 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         residual_values = sorted(counter.keys())
         probabilities = [counter.get(residual_value, 0) / total_count for residual_value in residual_values]
         print(f"Sum of Probabilities (Sanity Check): {sum(probabilities)}")
-        mean_absolute_magnitudes[estimator] = sum(map(lambda x: x * absolute_magnitudes[x], absolute_magnitudes.keys())) / sum(absolute_magnitudes.values())
+        mean_absolute_magnitudes[compressor_name] = sum(map(lambda x: x * absolute_magnitudes[x], absolute_magnitudes.keys())) / sum(absolute_magnitudes.values())
         del counter # free up memory
         
         # plot
-        sns.lineplot(x = residual_values, y = probabilities, label = estimator.upper(), color = COLORS[i])
+        sns.lineplot(x = residual_values, y = probabilities, label = compressor_name.upper(), color = COLORS[i])
 
     # customize plot
     x_label = "|Residual|" if convert_to_absolute_magnitudes else "Residual"
@@ -129,7 +164,7 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
     plt.xlabel(x_label)
     plt.ylabel("Density")
     # plt.title("Distribution of Residuals by Estimator")
-    plt.legend(title = "Estimator")
+    plt.legend(title = "Compressor")
     
     # save plot
     plt.tight_layout()
@@ -139,9 +174,9 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
 
     # print mean absolute magnitudes
     print(utils.MINOR_SEPARATOR_LINE)
-    for estimator, mean_absolute_magnitude in mean_absolute_magnitudes.items():
-        print(f"{estimator.upper()} Mean Absolute Magnitude: {mean_absolute_magnitude:.2f}")
-    print(f"Therefore, if we want to find the best estimator, we should choose the one with the lowest mean absolute magnitude: {min(mean_absolute_magnitudes, key = mean_absolute_magnitudes.get).upper()}.")
+    for compressor_name, mean_absolute_magnitude in mean_absolute_magnitudes.items():
+        print(f"{compressor_name.upper()} Mean Absolute Magnitude: {mean_absolute_magnitude:.2f}")
+    print(f"Therefore, if we want to find the best compressor, we should choose the one with the lowest mean absolute magnitude: {min(mean_absolute_magnitudes, key = mean_absolute_magnitudes.get).upper()}.")
 
     # return nothing
     return
@@ -166,6 +201,9 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
     # for each estimator
     for i, (estimator, residuals_dir) in enumerate(residuals_dir_by_estimator.items()):
         
+        # get compressor name for display
+        compressor_name = get_compressor_name_from_estimator(estimator)
+        
         # get all residual files
         try:
             residual_filepaths = [f"{residuals_dir}/{filename}" for filename in listdir(residuals_dir) if filename.endswith(".npy")]
@@ -180,18 +218,18 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         if not exists(range_filepath) or reset:
             min_val = float('inf')
             max_val = float('-inf')
-            for residual_file in tqdm(iterable = residual_filepaths, desc = f"Finding range for {estimator.upper()}", total = len(residual_filepaths), leave = False):
+            for residual_file in tqdm(iterable = residual_filepaths, desc = f"Finding range for {compressor_name.upper()}", total = len(residual_filepaths), leave = False):
                 residuals = np.load(residual_file)
                 min_val = min(min_val, residuals.min())
                 max_val = max(max_val, residuals.max())
                 del residuals
             with open(range_filepath, "wb") as f:
                 pickle.dump(obj = (min_val, max_val), file = f)
-            print(f"Saved {estimator.upper()} range to {range_filepath}.")
+            print(f"Saved {compressor_name.upper()} range to {range_filepath}.")
         else:
             with open(range_filepath, "rb") as f:
                 min_val, max_val = pickle.load(file = f)
-            print(f"Loaded {estimator.upper()} range from {range_filepath}.")
+            print(f"Loaded {compressor_name.upper()} range from {range_filepath}.")
         
         # create residual values list - limit range to prevent memory issues
         min_val, max_val = int(min_val), int(max_val)
@@ -201,17 +239,17 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         all_distributions_filepath = f"{data_dir}/{estimator}_distributions{'.mixes_only' if mixes_only else ''}.npy"
         if not exists(all_distributions_filepath) or reset:
             all_distributions = np.zeros(shape = (len(residual_filepaths), len(all_residual_values)), dtype = np.float32) # store probability distributions for each file
-            for j, residual_file in tqdm(iterable = enumerate(residual_filepaths), desc = f"Processing {estimator.upper()} Residuals", total = len(residual_filepaths), leave = False):
+            for j, residual_file in tqdm(iterable = enumerate(residual_filepaths), desc = f"Processing {compressor_name.upper()} Residuals", total = len(residual_filepaths), leave = False):
                 residuals = np.load(residual_file)
                 counter = Counter(residuals.flatten()) # get residuals and count frequencies
                 total_count = sum(counter.values())
                 probabilities = [counter[residual_value] / total_count for residual_value in all_residual_values] # convert to probability distribution
                 all_distributions[j, :] = probabilities
             np.save(file = all_distributions_filepath, arr = all_distributions)
-            print(f"Saved {estimator.upper()} distributions to {all_distributions_filepath}.")
+            print(f"Saved {compressor_name.upper()} distributions to {all_distributions_filepath}.")
         else:
             all_distributions = np.load(all_distributions_filepath)
-            print(f"Loaded {estimator.upper()} distributions from {all_distributions_filepath}.")
+            print(f"Loaded {compressor_name.upper()} distributions from {all_distributions_filepath}.")
 
         # set x values to absolute magnitudes if converting to absolute magnitudes
         if convert_to_absolute_magnitudes:
@@ -222,7 +260,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
             x_values = all_residual_values
 
         # plot individual distribution with low alpha (no legend to avoid clutter)
-        for probabilities in tqdm(iterable = all_distributions, desc = f"Plotting {estimator.upper()} distributions", total = len(all_distributions), leave = False):
+        for probabilities in tqdm(iterable = all_distributions, desc = f"Plotting {compressor_name.upper()} distributions", total = len(all_distributions), leave = False):
             if convert_to_absolute_magnitudes:
                 probabilities = convert_probabilities_to_absolute_magnitudes(probabilities = probabilities, residual_values = all_residual_values, x_values = x_values, use_log_scale = use_log_scale)
             sns.lineplot(x = x_values, y = probabilities, alpha = 0.01, color = COLORS[i])
@@ -231,7 +269,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         mean_distribution = np.mean(a = all_distributions, axis = 0)
         if convert_to_absolute_magnitudes:
             mean_distribution = convert_probabilities_to_absolute_magnitudes(probabilities = mean_distribution, residual_values = all_residual_values, x_values = x_values, use_log_scale = use_log_scale)
-        sns.lineplot(x = x_values, y = mean_distribution, label = estimator.upper(), alpha = 1.0, color = COLORS[i])
+        sns.lineplot(x = x_values, y = mean_distribution, label = compressor_name.upper(), alpha = 1.0, color = COLORS[i])
 
     # customize plot
     x_label = "|Residual|" if convert_to_absolute_magnitudes else "Residual"
@@ -244,7 +282,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
     # create legend with unique labels only
     handles, labels = plt.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
-    plt.legend(by_label.values(), by_label.keys(), title = "Estimator")
+    plt.legend(by_label.values(), by_label.keys(), title = "Compressor")
     
     # save plot
     plt.tight_layout()
@@ -321,22 +359,11 @@ if __name__ == "__main__":
         for ldac_dir, ldac_dir_parameters_hash in zip(ldac_dirs, ldac_dirs_parameters_hashes):
             parameters = residuals_log_table[residuals_log_table["parameters_hash"] == ldac_dir_parameters_hash].reset_index(drop = True).at[0, "parameters"]
             parameters = dict([parameter.split(":") for parameter in parameters.split("-")])
-            n_codebooks_for_ldac_dir = parameters["n_codebooks"]
-            residuals_dir_by_estimator[f"dac{n_codebooks_for_ldac_dir}"] = f"{ldac_parent_dir}{'/old_ldac' if args.use_old_ldac else ''}/{ldac_dir}" # add to dictionary
+            n_codebooks_for_ldac_dir = int(parameters["n_codebooks"])
+            # Only include if it matches the specified codebook level for LDAC
+            if n_codebooks_for_ldac_dir == CODEBOOK_LEVELS_BY_COMPRESSOR["ldac"]:
+                residuals_dir_by_estimator[f"dac{n_codebooks_for_ldac_dir}"] = f"{ldac_parent_dir}{'/old_ldac' if args.use_old_ldac else ''}/{ldac_dir}" # add to dictionary
         # residuals_dir_by_estimator = {"dac3": "/deepfreeze/user_shares/pnlong/lnac/logging_for_zach/old_ldac/ldac_596c2b31112908f4fba2c31153fc15421c58738badb4a0350833d497e7abaa4e", "dac6": "/deepfreeze/user_shares/pnlong/lnac/logging_for_zach/old_ldac/ldac_c897ac32fbb1926fe922bc427e8e35f70b4fd705325d8201944780e2f943f843", "dac9": "/deepfreeze/user_shares/pnlong/lnac/logging_for_zach/old_ldac/ldac_fe275ec542f94cf437b01be9e4a801303b9f663864a2f855453c2f7a775aa339"}
-
-        # get paths to CDAC residuals (LNAC with n_codebooks 3, 6, 9)
-        lnac_dirs = list(filter(lambda x: x.startswith("lnac"), listdir(ldac_parent_dir)))
-        for lnac_dir in sorted(lnac_dirs):
-            lnac_dir_parameters_hash = lnac_dir.split("_")[-1]
-            matching = residuals_log_table[residuals_log_table["parameters_hash"] == lnac_dir_parameters_hash]
-            if len(matching) == 0:
-                continue
-            parameters = matching.reset_index(drop = True).at[0, "parameters"]
-            parameters = dict([parameter.split(":") for parameter in parameters.split("-")])
-            n_codebooks = int(parameters["n_codebooks"])
-            if n_codebooks in (3, 6, 9):
-                residuals_dir_by_estimator[f"cdac{n_codebooks}"] = f"{ldac_parent_dir}/{lnac_dir}"
 
         # get paths to EC4 residuals (LEC with n_codebooks 4)
         lec_dirs = list(filter(lambda x: x.startswith("lec"), listdir(ldac_parent_dir)))
@@ -351,6 +378,21 @@ if __name__ == "__main__":
             if n_codebooks == 4:
                 residuals_dir_by_estimator["ec4"] = f"{ldac_parent_dir}/{lec_dir}"
                 break
+        
+        # get paths to CDAC residuals (LNAC with n_codebooks matching specified level)
+        lnac_dirs = list(filter(lambda x: x.startswith("lnac"), listdir(ldac_parent_dir)))
+        for lnac_dir in sorted(lnac_dirs):
+            lnac_dir_parameters_hash = lnac_dir.split("_")[-1]
+            matching = residuals_log_table[residuals_log_table["parameters_hash"] == lnac_dir_parameters_hash]
+            if len(matching) == 0:
+                continue
+            parameters = matching.reset_index(drop = True).at[0, "parameters"]
+            parameters = dict([parameter.split(":") for parameter in parameters.split("-")])
+            n_codebooks = int(parameters["n_codebooks"])
+            # Only include if it matches the specified codebook level for LNAC
+            if n_codebooks == CODEBOOK_LEVELS_BY_COMPRESSOR["lnac"]:
+                residuals_dir_by_estimator[f"cdac{n_codebooks}"] = f"{ldac_parent_dir}/{lnac_dir}"
+
 
     ##################################################
 
