@@ -54,7 +54,7 @@ dataset_groups = [
 ]
 
 # Create figure with nine subplots (3 rows, 3 columns) with height ratios 1:2:2
-fig = plt.figure(figsize=(14, 7))
+fig = plt.figure(figsize=(14, 6))
 gs = gridspec.GridSpec(3, 3, figure=fig, height_ratios=[1, 2, 2], hspace=0.3, wspace=0.3)
 axes = [[fig.add_subplot(gs[i, j]) for j in range(3)] for i in range(3)]
 
