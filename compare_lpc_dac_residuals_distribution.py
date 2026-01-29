@@ -81,7 +81,7 @@ def convert_counter_to_absolute_magnitudes(counter: dict, use_log_scale: bool = 
     for key, value in counter.items():
         absolute_magnitudes[abs(key)] = absolute_magnitudes.get(abs(key), 0) + value
     if use_log_scale:
-        absolute_magnitudes = {(np.log(key) if key > 0 else -1): value for key, value in absolute_magnitudes.items()} # replace negative values with -1 to avoid log(0)
+        absolute_magnitudes = {(np.log2(key) if key > 0 else -1): value for key, value in absolute_magnitudes.items()} # replace negative values with -1 to avoid log(0)
     return absolute_magnitudes
 
 def convert_probabilities_to_absolute_magnitudes(probabilities: list, residual_values: list, x_values: list, use_log_scale: bool = USE_LOG_SCALE_DEFAULT) -> list:
@@ -160,11 +160,16 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
     # customize plot
     x_label = "|Residual|" if convert_to_absolute_magnitudes else "Residual"
     if use_log_scale:
-        x_label = f"log({x_label})"
+        x_label = f"log2({x_label})"
     plt.xlabel(x_label)
     plt.ylabel("Density")
     # plt.title("Distribution of Residuals by Estimator")
     plt.legend(title = "Compressor")
+
+    # limit x-axis range: max 16 in log2-space, max 2^16 otherwise
+    xmin, xmax = plt.xlim()
+    potential_xmax = 16 if use_log_scale else 2 ** 16
+    plt.xlim(xmin, min(xmax, potential_xmax))
     
     # save plot
     plt.tight_layout()
@@ -255,7 +260,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         if convert_to_absolute_magnitudes:
             x_values = sorted(list(set(map(abs, all_residual_values))))
             if use_log_scale:
-                x_values = [np.log(x_value) if x_value > 0 else -1 for x_value in x_values]
+                x_values = [np.log2(x_value) if x_value > 0 else -1 for x_value in x_values]
         else:
             x_values = all_residual_values
 
@@ -274,7 +279,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
     # customize plot
     x_label = "|Residual|" if convert_to_absolute_magnitudes else "Residual"
     if use_log_scale:
-        x_label = f"log({x_label})"
+        x_label = f"log2({x_label})"
     plt.xlabel(x_label)
     plt.ylabel("Density")
     # plt.title("Distribution of Residuals by Estimator")
@@ -283,6 +288,11 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
     handles, labels = plt.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     plt.legend(by_label.values(), by_label.keys(), title = "Compressor")
+
+    # limit x-axis range: max 16 in log2-space, max 2^16 otherwise
+    xmin, xmax = plt.xlim()
+    potential_xmax = 16 if use_log_scale else 2 ** 16
+    plt.xlim(xmin, min(xmax, potential_xmax))
     
     # save plot
     plt.tight_layout()
