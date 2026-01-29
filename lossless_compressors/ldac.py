@@ -47,13 +47,27 @@ POSSIBLE_DAC_N_CODEBOOKS = tuple(range(1, 10)) # upper-bounded by the number of 
 N_CODEBOOKS = POSSIBLE_DAC_N_CODEBOOKS[-1] # use the upper bound as the default
 
 # scaling factor for DAC processing
-AUDIO_SCALE = 32768.0 # audio-appropriate scaling factor for DAC processing
+AUDIO_SCALE = 32768.0 # default audio-appropriate scaling factor for DAC processing (int16 full-scale)
 
 ##################################################
 
 
 # CONVERSION FUNCTIONS
 ##################################################
+
+def _get_audio_scale(waveform_dtype: type, interchannel_decorrelate: bool, is_stereo: bool) -> float:
+    """
+    Return an audio-appropriate scaling factor for converting fixed-point PCM to/from floats.
+
+    When using mid/side (interchannel decorrelation), the side channel can be ~2x the magnitude of
+    the original PCM range. We store it in a wider integer dtype to avoid overflow, but we should
+    normalize using an audio scale derived from the *original* dtype, not the widened container dtype.
+    """
+    base = float(np.iinfo(waveform_dtype).max + 1)
+    if interchannel_decorrelate and is_stereo:
+        return 2.0 * base
+    return base
+
 
 def convert_audio_fixed_to_floating(waveform: np.array, audio_scale: float = AUDIO_SCALE) -> np.array:
     """
@@ -71,6 +85,7 @@ def convert_audio_floating_to_fixed(waveform: np.array, output_dtype: type = np.
     This replaces utils.convert_waveform_floating_to_fixed which uses full dtype range
     and creates artificially huge residuals from tiny DAC outputs.
     """
+    waveform = np.clip(a = waveform, a_min = -1.0, a_max = 1.0 - np.finfo(waveform.dtype).eps)
     return np.round(waveform * audio_scale).astype(output_dtype)
 
 
@@ -82,6 +97,7 @@ def encode_block(
         model: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         n_codebooks: int = N_CODEBOOKS, # number of codbeooks to use for descript audio codec model
         k: int = rice.K, # rice parameter
+        audio_scale: float = AUDIO_SCALE, # audio scaling factor for fixed<->float conversion
     ) -> Tuple[int, np.array, bytes]: # returns tuple of number of samples in the block, compressed material, and rice encoded residuals
     """LDAC encoder helper function that encodes blocks."""
 
@@ -90,7 +106,7 @@ def encode_block(
     block_array = block_numpy.squeeze(axis = 0).squeeze(axis = 0) # get version of block that is 1d array
     n_samples_in_block = len(block_array)
     x = model.preprocess(
-        audio_data = torch.from_numpy(convert_audio_fixed_to_floating(waveform = block_numpy)).to(model.device), # ensure floating point and on correct device
+        audio_data = torch.from_numpy(convert_audio_fixed_to_floating(waveform = block_numpy, audio_scale = audio_scale)).to(model.device), # ensure floating point and on correct device
         sample_rate = block.sample_rate,
     ).float() # convert to float to avoid RuntimeError: Input type (torch.cuda.DoubleTensor) and weight type (torch.cuda.FloatTensor) should be the same
     _, codes, _, _, _ = model.encode(audio_data = x)
@@ -102,7 +118,7 @@ def encode_block(
     approximate_block = model.decode(z = z)
     approximate_block = approximate_block.squeeze(dim = (0, 1)).detach().cpu().numpy() # get rid of unnecessary dimensions
     approximate_block = approximate_block[:n_samples_in_block] # truncate to correct length
-    approximate_block = convert_audio_floating_to_fixed(waveform = approximate_block, output_dtype = block_array.dtype) # ensure approximate waveform is integer values
+    approximate_block = convert_audio_floating_to_fixed(waveform = approximate_block, output_dtype = block_array.dtype, audio_scale = audio_scale) # ensure approximate waveform is integer values
     del z # free up memory immediately
 
     # remove batch_size dimension from codes
@@ -148,6 +164,13 @@ def encode(
         del left, right, center, side
     encoding_dtype = waveform.dtype
 
+    # determine audio scaling (use original dtype + decorrelation mode, not widened container dtype)
+    audio_scale = _get_audio_scale(
+        waveform_dtype = waveform_dtype,
+        interchannel_decorrelate = interchannel_decorrelate,
+        is_stereo = (not is_mono) and (waveform.ndim == 2) and (waveform.shape[-1] == 2),
+    )
+
     # convert waveform to audio signal for DAC
     waveform = AudioSignal(audio_path_or_array = waveform.T, sample_rate = sample_rate)
 
@@ -159,7 +182,7 @@ def encode(
         i = 0
         while (start_index := (i * (block_size - samples_overlap))) < n_samples:
             end_index = min(start_index + block_size, n_samples)
-            block = encode_block(block = waveform[:, channel_index, start_index:end_index], model = model, n_codebooks = n_codebooks, k = k)
+            block = encode_block(block = waveform[:, channel_index, start_index:end_index], model = model, n_codebooks = n_codebooks, k = k, audio_scale = audio_scale)
             blocks[channel_index].append(block)
             i += 1
 
@@ -192,6 +215,7 @@ def decode_block(
         model: dac.model.dac.DAC = dac.DAC.load(DAC_PATH), # descript audio codec model already on the relevant device
         encoding_dtype: type = utils.DEFAULT_AUDIO_DTYPE, # data type of the resulting reconstructed waveform
         k: int = rice.K, # rice parameter
+        audio_scale: float = AUDIO_SCALE, # audio scaling factor for float->fixed conversion
     ) -> np.array:
     """LDAC decoder helper function that decodes blocks."""
 
@@ -205,7 +229,7 @@ def decode_block(
     approximate_block = model.decode(z = z)
     approximate_block = approximate_block.squeeze(dim = (0, 1)).detach().cpu().numpy() # convert from AudioSignal to numpy array
     approximate_block = approximate_block[:n_samples_in_block] # truncate to correct length
-    approximate_block = convert_audio_floating_to_fixed(waveform = approximate_block, output_dtype = encoding_dtype) # ensure approximate waveform is integer values
+    approximate_block = convert_audio_floating_to_fixed(waveform = approximate_block, output_dtype = encoding_dtype, audio_scale = audio_scale) # ensure approximate waveform is integer values
 
     # free up gpu memory immediately
     del codes, z
@@ -241,6 +265,11 @@ def decode(
     
     # go through blocks
     n_channels, n_blocks = len(blocks), len(blocks[0])
+    audio_scale = _get_audio_scale(
+        waveform_dtype = waveform_dtype,
+        interchannel_decorrelate = interchannel_decorrelate,
+        is_stereo = (not is_mono) and (n_channels == 2),
+    )
     block_size = blocks[0][0][0] # get block size
     samples_overlap = int(block_size * (overlap / 100))
     samples_overlap_first_half = int(samples_overlap / 2)
@@ -248,7 +277,7 @@ def decode(
     waveform = [[None] * n_blocks for _ in range(n_channels)]
     for channel_index in range(n_channels):
         for i in range(n_blocks):
-            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], model = model, encoding_dtype = encoding_dtype, k = k)
+            waveform[channel_index][i] = decode_block(block = blocks[channel_index][i], model = model, encoding_dtype = encoding_dtype, k = k, audio_scale = audio_scale)
             waveform[channel_index][i] = waveform[channel_index][i][(samples_overlap_first_half if i > 0 else 0):(len(waveform[channel_index][i]) - (samples_overlap_second_half if i < (n_blocks - 1) else 0))] # truncate to account for overlap
 
     # reconstruct final waveform
