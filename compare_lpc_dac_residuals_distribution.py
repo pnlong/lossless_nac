@@ -129,8 +129,12 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         if not exists(data_filepath) or reset:
             counter = Counter()
             for residual_file in tqdm(iterable = residual_filepaths, desc = f"Processing {compressor_name.upper()} Residuals", total = len(residual_filepaths), leave = False):
-                residuals = np.load(residual_file)
-                counter.update(residuals.flatten())
+                try:
+                    residuals = np.load(residual_file)
+                    counter.update(residuals.flatten())
+                except Exception as e:
+                    print(f"Error loading residual file {residual_file}: {e}")
+                    continue
             with open(data_filepath, "wb") as f: # save counter to file
                 pickle.dump(obj = counter, file = f)
             print(f"Saved {compressor_name.upper()} residuals counter to {data_filepath}.")
@@ -224,10 +228,14 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
             min_val = float('inf')
             max_val = float('-inf')
             for residual_file in tqdm(iterable = residual_filepaths, desc = f"Finding range for {compressor_name.upper()}", total = len(residual_filepaths), leave = False):
+                try:
                 residuals = np.load(residual_file)
-                min_val = min(min_val, residuals.min())
-                max_val = max(max_val, residuals.max())
-                del residuals
+                    min_val = min(min_val, residuals.min())
+                    max_val = max(max_val, residuals.max())
+                    del residuals
+                except Exception as e:
+                    print(f"Error loading residual file {residual_file}: {e}")
+                    continue
             with open(range_filepath, "wb") as f:
                 pickle.dump(obj = (min_val, max_val), file = f)
             print(f"Saved {compressor_name.upper()} range to {range_filepath}.")
