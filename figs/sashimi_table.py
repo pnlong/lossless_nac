@@ -7,10 +7,11 @@ applies time-weighted EMA smoothing, calculates compression rates, and
 generates a LaTeX table comparing different model configurations.
 """
 
+import argparse
+import json
 import pandas as pd
 import numpy as np
 import wandb
-import argparse
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 from datetime import datetime
@@ -19,6 +20,13 @@ from datetime import datetime
 # Configuration constants
 WANDB_PROJECT = "LNAC"
 DEFAULT_EMA_TAU = 0.99  # Time constant for EMA smoothing (epochs)
+
+
+def _unwrap_config_value(v):
+    """Unwrap WandB config values like {"value": X} -> X."""
+    if isinstance(v, dict) and "value" in v and len(v) == 1:
+        return v["value"]
+    return v
 
 
 def extract_config_params(run) -> Dict:
@@ -31,49 +39,71 @@ def extract_config_params(run) -> Dict:
     Returns:
         Dictionary with config parameters: stereo, interleaving_strategy, dml, bits, timestamp
     """
-    config = run.config
+    config_raw = run.config
+    # WandB can return config as a JSON string; parse to dict
+    if isinstance(config_raw, str):
+        try:
+            config = json.loads(config_raw)
+        except json.JSONDecodeError:
+            config = {}
+    elif config_raw is not None and hasattr(config_raw, "items"):
+        try:
+            config = dict(config_raw)
+        except (TypeError, ValueError):
+            config = {}
+    else:
+        config = {} if config_raw is None else {}
     params = {
         'run_id': run.id,
         'run_name': run.name,
         'timestamp': run.created_at if hasattr(run, 'created_at') else None,
     }
+    # Unwrap WandB {"value": X} so we read actual dataset/model config
+    dataset_cfg = _unwrap_config_value(config.get('dataset'))
+    model_cfg = _unwrap_config_value(config.get('model'))
+    if not isinstance(dataset_cfg, dict):
+        dataset_cfg = {}
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
     
     # Extract stereo/mono
-    # Check dataset.is_stereo or presence of "stereo" in dataset name/config
     is_stereo = False
-    if 'dataset' in config:
-        if isinstance(config['dataset'], dict):
-            is_stereo = config['dataset'].get('is_stereo', False)
-        elif isinstance(config['dataset'], str):
-            is_stereo = 'stereo' in config['dataset'].lower()
-    # Also check run name
+    if dataset_cfg:
+        is_stereo = dataset_cfg.get('is_stereo', False)
+        if isinstance(is_stereo, dict):
+            is_stereo = _unwrap_config_value(is_stereo)
+        if not isinstance(is_stereo, bool) and isinstance(dataset_cfg.get('is_stereo'), str):
+            is_stereo = 'stereo' in str(dataset_cfg.get('is_stereo', '')).lower()
     if not is_stereo and run.name:
         is_stereo = 'stereo' in run.name.lower()
-    params['stereo'] = is_stereo
+    params['stereo'] = bool(is_stereo)
     
-    # Extract interleaving strategy
+    # Extract interleaving strategy (determines Blocking-N: temporal=1, blocking-4=4, etc.)
     interleaving_strategy = ""
-    if is_stereo and 'dataset' in config:
-        if isinstance(config['dataset'], dict):
-            interleaving_strategy = config['dataset'].get('interleaving_strategy', 'temporal')
+    if is_stereo and dataset_cfg:
+        interleaving_strategy = dataset_cfg.get('interleaving_strategy', 'temporal') or 'temporal'
+        if isinstance(interleaving_strategy, dict):
+            interleaving_strategy = _unwrap_config_value(interleaving_strategy) or 'temporal'
+        interleaving_strategy = str(interleaving_strategy).strip()
     params['interleaving_strategy'] = interleaving_strategy if is_stereo else ""
     
     # Extract DML usage
     dml = False
-    if 'model' in config:
-        if isinstance(config['model'], dict):
-            dml = config['model'].get('output_head', '').lower() == 'dml'
-    # Also check run name
+    if model_cfg:
+        out_head = model_cfg.get('output_head', '')
+        if isinstance(out_head, dict):
+            out_head = _unwrap_config_value(out_head) or ''
+        dml = str(out_head).lower() == 'dml'
     if not dml and run.name:
         dml = 'dml' in run.name.lower()
     params['dml'] = dml
     
     # Extract bit depth
     bits = None
-    if 'dataset' in config:
-        if isinstance(config['dataset'], dict):
-            bits = config['dataset'].get('bits', None)
-    # Fallback: try to infer from run name or default to 16
+    if dataset_cfg:
+        bits = dataset_cfg.get('bits', None)
+        if isinstance(bits, dict):
+            bits = _unwrap_config_value(bits)
     if bits is None:
         if run.name and '8bit' in run.name.lower():
             bits = 8
@@ -85,16 +115,18 @@ def extract_config_params(run) -> Dict:
     
     # Extract d_model
     d_model = None
-    if 'model' in config:
-        if isinstance(config['model'], dict):
-            d_model = config['model'].get('d_model', None)
+    if model_cfg:
+        d_model = model_cfg.get('d_model', None)
+        if isinstance(d_model, dict):
+            d_model = _unwrap_config_value(d_model)
     params['d_model'] = d_model
     
     # Extract sample_len
     sample_len = None
-    if 'dataset' in config:
-        if isinstance(config['dataset'], dict):
-            sample_len = config['dataset'].get('sample_len', None)
+    if dataset_cfg:
+        sample_len = dataset_cfg.get('sample_len', None)
+        if isinstance(sample_len, dict):
+            sample_len = _unwrap_config_value(sample_len)
     params['sample_len'] = sample_len
     
     return params
@@ -346,7 +378,7 @@ def format_latex_table(df: pd.DataFrame, use_val: bool = False) -> str:
     
     Args:
         df: DataFrame with columns: Stereo, Blocking-N, DML, Bit Depth,
-            BPB, Compression Rate (x) (either val or test based on use_val)
+            Loss, BPB, Compression Rate (x) (either val or test based on use_val)
         use_val: If True, use validation metrics; if False, use test metrics
         
     Returns:
@@ -367,6 +399,14 @@ def format_latex_table(df: pd.DataFrame, use_val: bool = False) -> str:
     
     # Blocking-N is already formatted in the DataFrame (handled during DataFrame building)
     # No additional formatting needed here
+    
+    # Format Loss column (4 decimals) - only one column based on use_val, before BPB
+    loss_col = 'Val Loss' if use_val else 'Test Loss'
+    if loss_col in df_latex.columns:
+        df_latex[loss_col] = df_latex[loss_col].apply(
+            lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A"
+        )
+        df_latex = df_latex.rename(columns={loss_col: 'Loss'})
     
     # Format BPB column (2-3 decimals) - only one column based on use_val
     bpb_col = 'Val BPB' if use_val else 'Test BPB'
@@ -417,7 +457,7 @@ def format_latex_table(df: pd.DataFrame, use_val: bool = False) -> str:
     for col in df_latex.columns:
         if col in ['Stereo', 'DML']:
             col_align.append('c')  # Center for checkmarks
-        elif col in ['BPB', 'Compression Rate (x)', 'Bit Depth']:
+        elif col in ['Loss', 'BPB', 'Compression Rate (x)', 'Bit Depth']:
             col_align.append('r')  # Right-align for numbers
         else:
             col_align.append('c')  # Center for Blocking-N (numbers)
@@ -536,9 +576,11 @@ def main():
         elif sample_len is None:
             print(f"  Warning: sample_len not found in config, assuming 8192")
         
-        # Extract BPB metrics
+        # Extract BPB and loss metrics
         val_bpb_history = extract_bpb_history(run, 'val/bpb')
         test_bpb_history = extract_bpb_history(run, 'test/bpb')
+        val_loss_history = extract_bpb_history(run, 'val/loss')
+        test_loss_history = extract_bpb_history(run, 'test/loss')
         
         # Check for required metric based on use_val flag
         if use_val:
@@ -553,6 +595,8 @@ def main():
         # Apply time-weighted EMA smoothing
         val_bpb_smoothed = time_weighted_ema(val_bpb_history) if val_bpb_history is not None else np.nan
         test_bpb_smoothed = time_weighted_ema(test_bpb_history) if test_bpb_history is not None else np.nan
+        val_loss_smoothed = time_weighted_ema(val_loss_history) if val_loss_history is not None else np.nan
+        test_loss_smoothed = time_weighted_ema(test_loss_history) if test_loss_history is not None else np.nan
         
         # Calculate compression rates
         bit_depth = config_params['bits']
@@ -562,6 +606,8 @@ def main():
         # Store run data
         run_data = {
             **config_params,
+            'val_loss': val_loss_smoothed,
+            'test_loss': test_loss_smoothed,
             'val_bpb': val_bpb_smoothed,
             'test_bpb': test_bpb_smoothed,
             'val_compression': val_compression,
@@ -572,7 +618,7 @@ def main():
         print(f"  Config: stereo={config_params['stereo']}, "
               f"interleaving={config_params['interleaving_strategy']}, "
               f"dml={config_params['dml']}, bits={config_params['bits']}")
-        print(f"  Val BPB: {val_bpb_smoothed:.3f}, Test BPB: {test_bpb_smoothed:.3f}")
+        print(f"  Val Loss: {val_loss_smoothed:.4f}, Val BPB: {val_bpb_smoothed:.3f}, Test BPB: {test_bpb_smoothed:.3f}")
     
     print(f"\nProcessed {len(runs_data)} runs with valid data")
     
@@ -618,11 +664,13 @@ def main():
             'DML': run_data['dml'],
             'Bit Depth': run_data['bits'],
         }
-        # Add only the selected metric (val or test)
+        # Add only the selected metric (val or test), with loss before BPB
         if use_val:
+            row['Val Loss'] = run_data['val_loss']
             row['Val BPB'] = run_data['val_bpb']
             row['Val Compression Rate (x)'] = run_data['val_compression']
         else:
+            row['Test Loss'] = run_data['test_loss']
             row['Test BPB'] = run_data['test_bpb']
             row['Test Compression Rate (x)'] = run_data['test_compression']
         df_data.append(row)
