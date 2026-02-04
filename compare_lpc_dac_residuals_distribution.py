@@ -229,7 +229,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
             max_val = float('-inf')
             for residual_file in tqdm(iterable = residual_filepaths, desc = f"Finding range for {compressor_name.upper()}", total = len(residual_filepaths), leave = False):
                 try:
-                residuals = np.load(residual_file)
+                    residuals = np.load(residual_file)
                     min_val = min(min_val, residuals.min())
                     max_val = max(max_val, residuals.max())
                     del residuals
