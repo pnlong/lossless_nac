@@ -117,18 +117,21 @@ def create_boxplot(df: pd.DataFrame, output_filepath: str):
     unique_compressors = sorted(df_plot["compressor"].unique())
     
     # Define color palette for compressors
-    # Using a distinct color palette - one color per compressor
     color_palette = sns.color_palette("Set2", n_colors=len(unique_compressors))
     compressor_colors = dict(zip(unique_compressors, color_palette))
     
     # Set up the matplotlib figure
     fig, ax = plt.subplots(figsize=(7, 3), constrained_layout=True)
     
-    # Enable seaborn style
-    sns.set_theme(style="whitegrid")
+    # Seaborn style with matplotlib-default border and grid colors
+    sns.set_theme(style="whitegrid", rc={
+        "axes.edgecolor": "black",
+        "grid.color": "0.8",
+        "grid.alpha": GRID_ALPHA,
+    })
     
     # Create boxplot with custom colors using dictionary palette
-    sns.boxplot(ax=ax, data=df_plot, x="compressor", y="compression_rate", 
+    sns.boxplot(ax=ax, data=df_plot, x="compressor", y="compression_rate",
                 palette=compressor_colors)
     
     # Styling
