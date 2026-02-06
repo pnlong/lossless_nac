@@ -35,6 +35,13 @@ STANDARD_COLUMNS = ["path", "size_original", "size_compressed", "compression_rat
 FIGURE_DPI = 200
 GRID_ALPHA = 0.3
 
+FANCIER_COMPRESSOR_NAMES = {
+    "flac": "FLAC",
+    "ldac": "DAC",
+    "lec": "EnCodec",
+    "lnac": "Custom DAC",
+}
+
 ##################################################
 
 
@@ -100,9 +107,11 @@ def print_compression_speed_stats(compressor_stats: Dict[str, float], file_count
 
 def create_boxplot(df: pd.DataFrame, output_filepath: str):
     """Create a boxplot comparing compression rates across compressors."""
-    # Capitalize compressor names for display
+    # Map compressor names to fancier display names
     df_plot = df.copy()
-    df_plot["compressor"] = df_plot["compressor"].str.upper()
+    df_plot["compressor"] = df_plot["compressor"].map(
+        lambda x: FANCIER_COMPRESSOR_NAMES.get(x, x.upper())
+    )
     
     # Get unique compressors in order
     unique_compressors = sorted(df_plot["compressor"].unique())

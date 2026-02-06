@@ -35,6 +35,7 @@ from preprocess_musdb18 import get_mixes_only_mask
 CONVERT_TO_ABSOLUTE_MAGNITUDES_DEFAULT = True
 USE_LOG_SCALE_DEFAULT = True
 MIXES_ONLY_DEFAULT = False
+USE_LOG_DENSITY_DEFAULT = True
 COLORS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan"]
 
 CODEBOOK_LEVELS_BY_COMPRESSOR = {
@@ -42,6 +43,13 @@ CODEBOOK_LEVELS_BY_COMPRESSOR = {
     "ldac": 3,
     "lec": 4,
     "lnac": 3,
+}
+
+FANCIER_COMPRESSOR_NAMES = {
+    "flac": "FLAC",
+    "ldac": "DAC",
+    "lec": "EnCodec",
+    "lnac": "Custom DAC",
 }
 
 ##################################################
@@ -97,7 +105,7 @@ def convert_probabilities_to_absolute_magnitudes(probabilities: list, residual_v
 # PLOT THE OVERALL RESIDUALS DISTRIBUTION
 ##################################################
 
-def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, str], output_filepath: str, data_dir: str, mixes_only: bool = MIXES_ONLY_DEFAULT, reset: bool = False, convert_to_absolute_magnitudes: bool = CONVERT_TO_ABSOLUTE_MAGNITUDES_DEFAULT, use_log_scale: bool = USE_LOG_SCALE_DEFAULT):
+def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, str], output_filepath: str, data_dir: str, mixes_only: bool = MIXES_ONLY_DEFAULT, reset: bool = False, convert_to_absolute_magnitudes: bool = CONVERT_TO_ABSOLUTE_MAGNITUDES_DEFAULT, use_log_scale: bool = USE_LOG_SCALE_DEFAULT, use_log_density: bool = USE_LOG_DENSITY_DEFAULT):
     """Plot the overall residuals distribution."""
 
     # check for invalid combinations
@@ -105,7 +113,7 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         raise ValueError("Cannot use log scale without converting to absolute magnitudes.")
     
     # setup plot
-    plt.figure(figsize = (7, 3))
+    fig, ax = plt.subplots(figsize = (7, 3))
     sns.set_style(style = "whitegrid")
 
     # for each estimator
@@ -146,7 +154,7 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         # convert to absolute magnitudes
         absolute_magnitudes = convert_counter_to_absolute_magnitudes(counter = counter, use_log_scale = False)
         if convert_to_absolute_magnitudes:
-            counter = convert_counter_to_absolute_magnitudes(counter = counter, use_log_scale = use_log_scale)
+            counter = absolute_magnitudes
         else:
             counter = dict(counter)
         
@@ -159,26 +167,42 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
         del counter # free up memory
         
         # plot
-        sns.lineplot(x = residual_values, y = probabilities, label = compressor_name.upper(), color = COLORS[i])
+        sns.lineplot(x = residual_values, y = probabilities, label = FANCIER_COMPRESSOR_NAMES.get(compressor_name, compressor_name.upper()), color = COLORS[i], ax = ax)
+
+    # make y scale log or linear
+    if use_log_density:
+        ax.set_yscale("log", base = 10)
+        print("Using log10 y scale")
+    else:
+        ax.set_yscale("linear")
+        print("Using linear y scale")
+
+    # use log2 x scale when requested (matplotlib handles the transform)
+    if use_log_scale:
+        ax.set_xscale("log", base = 2)
+        print("Using log2 x scale")
+    else:
+        ax.set_xscale("linear")
+        print("Using linear x scale")
 
     # customize plot
     x_label = "|Residual|" if convert_to_absolute_magnitudes else "Residual"
-    if use_log_scale:
-        x_label = f"log2({x_label})"
-    plt.xlabel(x_label)
-    plt.ylabel("Density")
-    # plt.title("Distribution of Residuals by Estimator")
-    plt.legend(title = "Compressor")
+    # if use_log_scale:
+    #     x_label = f"log2({x_label})"
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Density")
+    ax.legend(title = "Compressor")
+    ax.grid(True)
 
-    # limit x-axis range: max 16 in log2-space, max 2^16 otherwise
-    xmin, xmax = plt.xlim()
-    potential_xmax = 16 if use_log_scale else 2 ** 16
-    plt.xlim(xmin, min(xmax, potential_xmax))
+    # limit x-axis range: max 2^16 in linear space (displays as 16 on log2 scale)
+    xmin, xmax = ax.get_xlim()
+    potential_xmax = 2 ** 16
+    ax.set_xlim(xmin, min(xmax, potential_xmax))
     
     # save plot
-    plt.tight_layout()
-    plt.savefig(output_filepath, dpi = 300, bbox_inches = "tight")
-    plt.close()
+    fig.tight_layout()
+    fig.savefig(output_filepath, dpi = 300, bbox_inches = "tight")
+    plt.close(fig)
     print(f"Saved overall residuals distribution plot to {output_filepath}.")
 
     # print mean absolute magnitudes
@@ -196,7 +220,7 @@ def plot_overall_residuals_distribution(residuals_dir_by_estimator: Dict[str, st
 # PLOT THE MEAN RESIDUALS DISTRIBUTION
 ##################################################
 
-def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str], output_filepath: str, data_dir: str, mixes_only: bool = MIXES_ONLY_DEFAULT, reset: bool = False, convert_to_absolute_magnitudes: bool = CONVERT_TO_ABSOLUTE_MAGNITUDES_DEFAULT, use_log_scale: bool = USE_LOG_SCALE_DEFAULT):
+def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str], output_filepath: str, data_dir: str, mixes_only: bool = MIXES_ONLY_DEFAULT, reset: bool = False, convert_to_absolute_magnitudes: bool = CONVERT_TO_ABSOLUTE_MAGNITUDES_DEFAULT, use_log_scale: bool = USE_LOG_SCALE_DEFAULT, use_log_density: bool = USE_LOG_DENSITY_DEFAULT):
     """Plot the mean residuals distribution."""
 
     # check for invalid combinations
@@ -204,7 +228,7 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         raise ValueError("Cannot use log scale without converting to absolute magnitudes.")
 
     # setup plot
-    plt.figure(figsize = (7, 3))
+    fig, ax = plt.subplots(figsize = (7, 3))
     sns.set_style(style = "whitegrid")
 
     # for each estimator
@@ -276,36 +300,52 @@ def plot_mean_residuals_distribution(residuals_dir_by_estimator: Dict[str, str],
         for probabilities in tqdm(iterable = all_distributions, desc = f"Plotting {compressor_name.upper()} distributions", total = len(all_distributions), leave = False):
             if convert_to_absolute_magnitudes:
                 probabilities = convert_probabilities_to_absolute_magnitudes(probabilities = probabilities, residual_values = all_residual_values, x_values = x_values, use_log_scale = use_log_scale)
-            sns.lineplot(x = x_values, y = probabilities, alpha = 0.01, color = COLORS[i])
+            sns.lineplot(x = x_values, y = probabilities, alpha = 0.01, color = COLORS[i], ax = ax)
                     
         # calculate and plot mean distribution
         mean_distribution = np.mean(a = all_distributions, axis = 0)
         if convert_to_absolute_magnitudes:
             mean_distribution = convert_probabilities_to_absolute_magnitudes(probabilities = mean_distribution, residual_values = all_residual_values, x_values = x_values, use_log_scale = use_log_scale)
-        sns.lineplot(x = x_values, y = mean_distribution, label = compressor_name.upper(), alpha = 1.0, color = COLORS[i])
+        sns.lineplot(x = x_values, y = mean_distribution, label = FANCIER_COMPRESSOR_NAMES.get(compressor_name, compressor_name.upper()), alpha = 1.0, color = COLORS[i], ax = ax)
+
+    # make y scale log or linear
+    if use_log_density:
+        ax.set_yscale("log", base = 10)
+        print("Using log10 y scale")
+    else:
+        ax.set_yscale("linear")
+        print("Using linear y scale")
+
+    # use log2 x scale when requested (matplotlib handles the transform)
+    if use_log_scale:
+        ax.set_xscale("log", base = 2)
+        print("Using log2 x scale")
+    else:
+        ax.set_xscale("linear")
+        print("Using linear x scale")
 
     # customize plot
     x_label = "|Residual|" if convert_to_absolute_magnitudes else "Residual"
-    if use_log_scale:
-        x_label = f"log2({x_label})"
-    plt.xlabel(x_label)
-    plt.ylabel("Density")
-    # plt.title("Distribution of Residuals by Estimator")
+    # if use_log_scale:
+    #     x_label = f"log2({x_label})"
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Density")
     
     # create legend with unique labels only
-    handles, labels = plt.gca().get_legend_handles_labels()
+    handles, labels = ax.get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
-    plt.legend(by_label.values(), by_label.keys(), title = "Compressor")
+    ax.legend(by_label.values(), by_label.keys(), title = "Compressor")
 
-    # limit x-axis range: max 16 in log2-space, max 2^16 otherwise
-    xmin, xmax = plt.xlim()
-    potential_xmax = 16 if use_log_scale else 2 ** 16
-    plt.xlim(xmin, min(xmax, potential_xmax))
+    # limit x-axis range: max 2^16 in linear space (displays as 16 on log2 scale)
+    xmin, xmax = ax.get_xlim()
+    potential_xmax = 2 ** 16
+    ax.set_xlim(xmin, min(xmax, potential_xmax))
+    ax.grid(True)
     
     # save plot
-    plt.tight_layout()
-    plt.savefig(output_filepath, dpi = 300, bbox_inches = "tight")
-    plt.close()
+    fig.tight_layout()
+    fig.savefig(output_filepath, dpi = 300, bbox_inches = "tight")
+    plt.close(fig)
     print(f"Saved mean residuals distribution plot to {output_filepath}.")
 
     # return nothing
@@ -330,6 +370,7 @@ if __name__ == "__main__":
         parser.add_argument("--mixes_only", action = "store_true", help = "Compute statistics for only mixes in MUSDB18, not all stems.")
         parser.add_argument("--use_old_ldac", action = "store_true", help = "Use the old LDAC directory.")
         parser.add_argument("--reset", action = "store_true", help = "Reset the data directory.")
+        parser.add_argument("--use_log_density", action = "store_true", help = "Use log scale for density (y-axis) instead of linear.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         return args # return parsed arguments
     args = parse_args()
@@ -432,6 +473,7 @@ if __name__ == "__main__":
         reset = args.reset,
         convert_to_absolute_magnitudes = CONVERT_TO_ABSOLUTE_MAGNITUDES_DEFAULT,
         use_log_scale = USE_LOG_SCALE_DEFAULT,
+        use_log_density = args.use_log_density,
     )
 
     # plot mean residuals distribution
@@ -448,6 +490,7 @@ if __name__ == "__main__":
         reset = args.reset,
         convert_to_absolute_magnitudes = CONVERT_TO_ABSOLUTE_MAGNITUDES_DEFAULT,
         use_log_scale = USE_LOG_SCALE_DEFAULT,
+        use_log_density = args.use_log_density,
     )
     print(utils.MAJOR_SEPARATOR_LINE)
 
