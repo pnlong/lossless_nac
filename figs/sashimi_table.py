@@ -9,6 +9,7 @@ generates a LaTeX table comparing different model configurations.
 
 import argparse
 import json
+import os
 import pandas as pd
 import numpy as np
 import wandb
@@ -19,6 +20,8 @@ from datetime import datetime
 
 # Configuration constants
 WANDB_PROJECT = "LNAC"
+FLAC_EVAL_RESULTS_PATH = os.path.join(os.path.dirname(__file__), "..", "flac_eval_results.csv")
+FLAC_COMPRESSION_LEVEL = 5
 DEFAULT_EMA_TAU = 0.99  # Time constant for EMA smoothing (epochs)
 
 
@@ -372,67 +375,139 @@ def deduplicate_runs(runs_data: List[Dict]) -> List[Dict]:
     return deduplicated
 
 
-def format_latex_table(df: pd.DataFrame, use_val: bool = False) -> str:
+def _get_max_blocking_n(bits: int, channels: str, dml: bool) -> int:
+    """Max blocking-n for (bits, channels, dml). 16-bit stereo non-DML: 2048; else 8192."""
+    if bits == 16 and channels == "Stereo" and not dml:
+        return 2048
+    return 8192
+
+
+def _filter_blocking_n_values(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Format DataFrame as LaTeX table with booktabs style.
+    Keep only blocking-n in {1, 512, max_n} per (Bit Depth, Channels, DML).
+    max_n = 2048 for 16-bit stereo non-DML, else 8192.
+    """
+    def _blocking_n_to_int(x):
+        if pd.isna(x) or x == '' or x == '--':
+            return None
+        s = str(x).replace(',', '')
+        return int(s) if s.isdigit() else None
+
+    rows_to_keep = []
+    for idx, row in df.iterrows():
+        bits = row['Bit Depth']
+        channels = row['Channels']
+        dml = row['DML']
+        bn = _blocking_n_to_int(row['Blocking-N'])
+
+        if bn is None:  # Mono: keep (-- is the only value)
+            rows_to_keep.append(idx)
+            continue
+
+        max_n = _get_max_blocking_n(bits, channels, dml)
+        if bn in (1, 512, max_n):
+            rows_to_keep.append(idx)
+
+    return df.loc[rows_to_keep].copy()
+
+
+def _load_flac_compression_rates() -> Dict[Tuple[int, str], float]:
+    """
+    Load FLAC level 5 compression rates for musdb18mono and musdb18stereo.
+    Returns dict: (bit_depth, channels) -> mean_compression_rate
+    """
+    if not os.path.exists(FLAC_EVAL_RESULTS_PATH):
+        print(f"Warning: FLAC results not found at {FLAC_EVAL_RESULTS_PATH}")
+        return {}
+
+    flac_df = pd.read_csv(FLAC_EVAL_RESULTS_PATH)
+    flac_df = flac_df[
+        (flac_df["flac_compression_level"] == FLAC_COMPRESSION_LEVEL)
+        & (flac_df["dataset"].isin(["musdb18mono", "musdb18stereo"]))
+        & (flac_df["disable_constant_subframes"] == True)
+        & (flac_df["disable_fixed_subframes"] == True)
+        & (flac_df["disable_verbatim_subframes"] == True)
+    ]
+    if flac_df.empty:
+        return {}
+
+    result = {}
+    for (dataset, bit_depth), group in flac_df.groupby(["dataset", "bit_depth"]):
+        # Take most recent if multiple rows
+        group = group.sort_values("datetime", ascending=False)
+        rate = group.iloc[0]["mean_compression_rate"]
+        channels = "Stereo" if "stereo" in dataset else "Mono"
+        result[(int(bit_depth), channels)] = float(rate)
+    return result
+
+
+def _format_blocking_n(value: str) -> str:
+    """Format Blocking-n for display: add thousands separators (e.g., 8192 -> 8,192)."""
+    if not value or value == '--':
+        return '--'
+    try:
+        n = int(value)
+        return f"{n:,}"
+    except (ValueError, TypeError):
+        return str(value)
+
+
+def _identify_best_compression_per_group(df: pd.DataFrame, comp_col: str) -> set:
+    """
+    Identify row indices with best compression rate in each group.
+    Groups: (Bit Depth, Channels) - e.g., (8, Mono), (8, Stereo), (16, Mono), (16, Stereo).
+    Best = highest compression rate.
+    """
+    best_indices = set()
+    for (bits, channels), group in df.groupby(['Bit Depth', 'Channels']):
+        valid = group[comp_col].dropna()
+        if len(valid) == 0:
+            continue
+        best_val = valid.max()
+        best_idx = group[group[comp_col] == best_val].index
+        best_indices.update(best_idx)
+    return best_indices
+
+
+def format_latex_table(df: pd.DataFrame, use_val: bool = False, flac_rates: Optional[Dict[Tuple[int, str], float]] = None) -> str:
+    """
+    Format DataFrame as LaTeX table with booktabs style and multirow.
+    
+    Columns: Bit Depth, Channels, Blocking-$n$, DML, Compression Rate (x)
+    Uses \\multirow for Bit Depth and Channels.
+    Adds FLAC level 5 comparison rows when flac_rates is provided.
     
     Args:
-        df: DataFrame with columns: Stereo, Blocking-N, DML, Bit Depth,
-            Loss, BPB, Compression Rate (x) (either val or test based on use_val)
+        df: DataFrame with columns: Bit Depth, Channels, Blocking-N, DML, Compression Rate (x)
         use_val: If True, use validation metrics; if False, use test metrics
+        flac_rates: Optional dict (bit_depth, channels) -> compression rate for FLAC comparison
         
     Returns:
         LaTeX table as string
     """
-    # Create a copy to avoid modifying original
+    flac_rates = flac_rates or {}
     df_latex = df.copy()
     
-    # Format boolean columns with checkmarks
-    if 'Stereo' in df_latex.columns:
-        df_latex['Stereo'] = df_latex['Stereo'].apply(lambda x: r'\checkmark' if x else '')
-    if 'DML' in df_latex.columns:
-        df_latex['DML'] = df_latex['DML'].apply(lambda x: r'\checkmark' if x else '')
+    # Format DML column with checkmarks
+    df_latex['DML'] = df_latex['DML'].apply(lambda x: r'\checkmark' if x else '')
     
-    # Format bit depth as numeric value (8 or 16)
-    if 'Bit Depth' in df_latex.columns:
-        df_latex['Bit Depth'] = df_latex['Bit Depth'].apply(lambda x: f"{int(x)}" if not pd.isna(x) else "N/A")
+    # Format Blocking-n with thousands separators
+    df_latex['Blocking-N'] = df_latex['Blocking-N'].apply(_format_blocking_n)
     
-    # Blocking-N is already formatted in the DataFrame (handled during DataFrame building)
-    # No additional formatting needed here
-    
-    # Format Loss column (4 decimals) - only one column based on use_val, before BPB
-    loss_col = 'Val Loss' if use_val else 'Test Loss'
-    if loss_col in df_latex.columns:
-        df_latex[loss_col] = df_latex[loss_col].apply(
-            lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A"
-        )
-        df_latex = df_latex.rename(columns={loss_col: 'Loss'})
-    
-    # Format BPB column (2-3 decimals) - only one column based on use_val
-    bpb_col = 'Val BPB' if use_val else 'Test BPB'
-    if bpb_col in df_latex.columns:
-        df_latex[bpb_col] = df_latex[bpb_col].apply(
-            lambda x: f"{x:.3f}" if not pd.isna(x) else "N/A"
-        )
-        # Rename to generic "BPB"
-        df_latex = df_latex.rename(columns={bpb_col: 'BPB'})
-    
-    # Format compression rate column (2 decimals, numeric only) - only one column based on use_val
+    # Format compression rate
     comp_col = 'Val Compression Rate (x)' if use_val else 'Test Compression Rate (x)'
-    if comp_col in df_latex.columns:
-        df_latex[comp_col] = df_latex[comp_col].apply(
-            lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A"
-        )
-        # Rename to generic "Compression Rate (x)"
-        df_latex = df_latex.rename(columns={comp_col: 'Compression Rate (x)'})
+    df_latex['Compression Rate'] = df_latex[comp_col].apply(
+        lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A"
+    )
     
-    # Helper function to escape LaTeX special characters
+    # Identify best compression in each group for bold formatting
+    best_indices = _identify_best_compression_per_group(df_latex, comp_col)
+    
     def escape_latex(text):
         """Escape special LaTeX characters in text."""
         if pd.isna(text):
             return ""
         text = str(text)
-        # Escape special characters
         text = text.replace('&', r'\&')
         text = text.replace('%', r'\%')
         text = text.replace('$', r'\$')
@@ -445,53 +520,90 @@ def format_latex_table(df: pd.DataFrame, use_val: bool = False) -> str:
         text = text.replace('\\', r'\textbackslash{}')
         return text
     
-    # Generate LaTeX table
+    # Build LaTeX with multirow
     latex_lines = []
     latex_lines.append("% Requires \\usepackage{amssymb} for \\checkmark")
     latex_lines.append("% Requires \\usepackage{booktabs} for table formatting")
+    latex_lines.append("% Requires \\usepackage{multirow} for \\multirow")
     latex_lines.append("")
     latex_lines.append("\\begin{table}")
-    latex_lines.append("\\centering")
-    # Use better column alignment: l for text, c for checkmarks, r for numbers
-    col_align = []
-    for col in df_latex.columns:
-        if col in ['Stereo', 'DML']:
-            col_align.append('c')  # Center for checkmarks
-        elif col in ['Loss', 'BPB', 'Compression Rate (x)', 'Bit Depth']:
-            col_align.append('r')  # Right-align for numbers
-        else:
-            col_align.append('c')  # Center for Blocking-N (numbers)
-    latex_lines.append("\\begin{tabular}{" + "".join(col_align) + "}")
-    latex_lines.append("\\toprule")
+    latex_lines.append("    \\centering")
+    latex_lines.append("    \\begin{tabular}{cc|cc|c}")
+    latex_lines.append("        \\toprule")
+    latex_lines.append("        \\textbf{Bit Depth} & \\textbf{Channels} & \\textbf{Blocking-$n$} & \\textbf{DML} & \\textbf{Compression Rate} (x) \\\\")
+    latex_lines.append("        \\midrule")
     
-    # Header row - escape special LaTeX characters
-    headers = [escape_latex(h) for h in df_latex.columns.tolist()]
-    latex_lines.append(" & ".join(headers) + " \\\\")
-    latex_lines.append("\\midrule")
-    
-    # Data rows - escape LaTeX special characters in data
-    # Special values that should not be escaped: checkmark, N/A
-    special_values = {r'\checkmark', 'N/A'}
-    prev_bit_depth = None
-    for idx, (_, row) in enumerate(df_latex.iterrows()):
-        # Check if bit depth changed (and not the first row)
-        current_bit_depth = row.get('Bit Depth', '')
-        if prev_bit_depth is not None and current_bit_depth != prev_bit_depth:
-            latex_lines.append("\\midrule")
-        prev_bit_depth = current_bit_depth
+    # Group by Bit Depth, then Channels (Mono first, Stereo second)
+    for bits in sorted(df_latex['Bit Depth'].unique()):
+        bit_group = df_latex[df_latex['Bit Depth'] == bits]
+        mono_group = bit_group[bit_group['Channels'] == 'Mono']
+        stereo_group = bit_group[bit_group['Channels'] == 'Stereo']
         
-        row_values = []
-        for val in row.values:
-            val_str = str(val)
-            if val_str in special_values:
-                row_values.append(val_str)
-            else:
-                row_values.append(escape_latex(val))
-        row_str = " & ".join(row_values)
-        latex_lines.append(row_str + " \\\\")
+        # Count rows including FLAC rows for multirow span
+        n_flac_mono = 1 if (int(bits), 'Mono') in flac_rates else 0
+        n_flac_stereo = 1 if (int(bits), 'Stereo') in flac_rates else 0
+        n_bit_rows = len(bit_group) + n_flac_mono + n_flac_stereo
+        
+        row_in_bit_block = 0
+        for channels in ['Mono', 'Stereo']:
+            chan_group = mono_group if channels == 'Mono' else stereo_group
+            has_flac = (int(bits), channels) in flac_rates
+            n_chan_rows = len(chan_group) + (1 if has_flac else 0)
+            
+            if len(chan_group) == 0 and not has_flac:
+                continue
+            
+            for i, (idx, row) in enumerate(chan_group.iterrows()):
+                blocking_n = row['Blocking-N']
+                dml = row['DML']
+                comp = row['Compression Rate']
+                if idx in best_indices and comp != 'N/A':
+                    comp = f"\\textbf{{{comp}}}"
+                
+                # Bit Depth: multirow only on first row of this bit-depth block
+                if row_in_bit_block == 0:
+                    bit_cell = f"\\multirow{{{n_bit_rows}}}{{*}}{{{int(bits)}}}"
+                else:
+                    bit_cell = ""
+                
+                # Channels: multirow only on first row of this channel subsection
+                if i == 0:
+                    chan_cell = f"\\multirow{{{n_chan_rows}}}{{*}}{{{channels}}}"
+                else:
+                    chan_cell = ""
+                
+                parts = [bit_cell, chan_cell, blocking_n, dml, comp]
+                row_str = " & ".join(parts)
+                latex_lines.append(f"        {row_str} \\\\")
+                row_in_bit_block += 1
+            
+            # Add FLAC row at end of this channel subsection
+            if has_flac:
+                latex_lines.append("        \\cmidrule(lr){3-5}")
+                flac_comp = f"{flac_rates[(int(bits), channels)]:.2f}"
+                flac_cell = r"\multicolumn{2}{c|}{FLAC}"
+                # First row of subsection (when no Sashimi rows): need bit/chan multirow
+                if row_in_bit_block == 0:
+                    bit_cell = f"\\multirow{{{n_bit_rows}}}{{*}}{{{int(bits)}}}"
+                    chan_cell = f"\\multirow{{{n_chan_rows}}}{{*}}{{{channels}}}"
+                else:
+                    bit_cell = ""
+                    chan_cell = ""
+                parts = [bit_cell, chan_cell, flac_cell, flac_comp]
+                row_str = " & ".join(parts)
+                latex_lines.append(f"        {row_str} \\\\")
+                row_in_bit_block += 1
+            
+            # Add cmidrule between Mono and Stereo
+            if channels == 'Mono' and (len(stereo_group) > 0 or n_flac_stereo):
+                latex_lines.append("        \\cmidrule(lr){2-5}")
+        
+        # Add midrule between bit depth sections
+        if bits != sorted(df_latex['Bit Depth'].unique())[-1]:
+            latex_lines.append("        \\midrule")
     
-    latex_lines.append("\\bottomrule")
-    latex_lines.append("\\end{tabular}")
+    latex_lines.append("        \\bottomrule")
+    latex_lines.append("    \\end{tabular}")
     latex_lines.append("\\end{table}")
     
     return "\n".join(latex_lines)
@@ -637,8 +749,8 @@ def main():
     for run_data in runs_data:
         # Format blocking-N value, inferring from sample_len if needed
         blocking_strategy = run_data.get('interleaving_strategy', '')
-        blocking_n_value = ''
-        if blocking_strategy:
+        blocking_n_value = '--'  # Default for mono
+        if run_data.get('stereo', False) and blocking_strategy:
             strategy_str = str(blocking_strategy).lower()
             if strategy_str == 'temporal':
                 blocking_n_value = '1'
@@ -648,49 +760,54 @@ def main():
                     if len(parts) > 1:
                         blocking_n_value = parts[-1]  # Use the number from blocking-N
                     else:
-                        # Fallback: infer from sample_len
                         sample_len = run_data.get('sample_len', 8192)
                         blocking_n_value = str(sample_len)
                 else:
-                    # Just "blocking" - infer from sample_len
                     sample_len = run_data.get('sample_len', 8192)
                     blocking_n_value = str(sample_len)
             else:
                 blocking_n_value = '1'
         
         row = {
-            'Stereo': run_data['stereo'],
+            'Bit Depth': run_data['bits'],
+            'Channels': 'Stereo' if run_data['stereo'] else 'Mono',
             'Blocking-N': blocking_n_value,
             'DML': run_data['dml'],
-            'Bit Depth': run_data['bits'],
         }
-        # Add only the selected metric (val or test), with loss before BPB
         if use_val:
-            row['Val Loss'] = run_data['val_loss']
-            row['Val BPB'] = run_data['val_bpb']
             row['Val Compression Rate (x)'] = run_data['val_compression']
         else:
-            row['Test Loss'] = run_data['test_loss']
-            row['Test BPB'] = run_data['test_bpb']
             row['Test Compression Rate (x)'] = run_data['test_compression']
         df_data.append(row)
     
     df = pd.DataFrame(df_data)
     
-    # Sort by: bit depth (outermost), then stereo, then dml, then blocking-n
-    # Convert Blocking-N to numeric for proper sorting (empty strings will be sorted last)
+    # Sort by: bit depth, channels (Mono first), dml (categorical first), blocking-n
     df_sorted = df.copy()
-    df_sorted['Blocking-N-sort'] = df_sorted['Blocking-N'].apply(
-        lambda x: float('inf') if pd.isna(x) or x == '' else float(x) if str(x).isdigit() else float('inf')
+    df_sorted['Channels-sort'] = df_sorted['Channels'].map({'Mono': 0, 'Stereo': 1})
+    df_sorted['DML-sort'] = df_sorted['DML'].astype(int)  # False=0, True=1
+    def _blocking_n_sort_key(x):
+        if pd.isna(x) or x == '' or x == '--':
+            return float('inf')
+        s = str(x).replace(',', '')
+        return float(s) if s.isdigit() else float('inf')
+    df_sorted['Blocking-N-sort'] = df_sorted['Blocking-N'].apply(_blocking_n_sort_key)
+    df = df_sorted.sort_values(['Bit Depth', 'Channels-sort', 'DML-sort', 'Blocking-N-sort']).drop(
+        columns=['Channels-sort', 'DML-sort', 'Blocking-N-sort']
     )
-    df = df_sorted.sort_values(['Bit Depth', 'Stereo', 'DML', 'Blocking-N-sort']).drop(columns=['Blocking-N-sort'])
+
+    # Filter blocking-n: keep only 1, 512, and max per (bits, channels, dml)
+    df = _filter_blocking_n_values(df)
+
+    # Load FLAC compression rates for comparison
+    flac_rates = _load_flac_compression_rates()
     
     # Generate and print LaTeX table
     print("\n" + "="*80)
     metric_type = "Validation" if use_val else "Test"
     print(f"LaTeX Table ({metric_type} metrics):")
     print("="*80)
-    latex_table = format_latex_table(df, use_val=use_val)
+    latex_table = format_latex_table(df, use_val=use_val, flac_rates=flac_rates)
     print(latex_table)
     print("="*80)
     

@@ -38,6 +38,9 @@ DATASET_NAME_TO_FANCIER_NAME = {
 # Canonical order for dataset legend (shared with lmic_eval_plot for consistent line colors)
 DATASET_LEGEND_ORDER = sorted(DATASET_NAME_TO_FANCIER_NAME.keys())
 
+# Omit these datasets at 16-bit only (they appear at 8-bit)
+DATASETS_OMIT_AT_16BIT = {"youtube_mix", "sc09", "beethoven"}
+
 if __name__ == "__main__":
     # read in arguments
     def parse_args(args = None, namespace = None):
@@ -144,6 +147,13 @@ if __name__ == "__main__":
             fontsize=8,
             title_fontsize=9)
 
+    # Pre-compute hue_order per column from 8-bit data so colors stay consistent across 8/16-bit
+    df_8bit = df_filtered[df_filtered["bit_depth"] == 8]
+    hue_orders_by_column = [
+        [d for d in DATASET_LEGEND_ORDER if d in df_8bit[gc["mask_func"](df_8bit)]["dataset"].unique()]
+        for gc in dataset_groups
+    ]
+
     # Loop over bit depths (rows 1 and 2) and dataset groups (columns)
     for row_idx, bit_depth in enumerate([8, 16]):
         df_bit = df_filtered[df_filtered["bit_depth"] == bit_depth]
@@ -151,7 +161,9 @@ if __name__ == "__main__":
         for col_idx, group_config in enumerate(dataset_groups):
             ax = axes[row_idx + 1][col_idx]  # +1 because row 0 is for legends
             df_group = df_bit[group_config["mask_func"](df_bit)]
-            hue_order = [d for d in DATASET_LEGEND_ORDER if d in df_group["dataset"].unique()]
+            if bit_depth == 16:
+                df_group = df_group[~df_group["dataset"].isin(DATASETS_OMIT_AT_16BIT)]
+            hue_order = hue_orders_by_column[col_idx]
             sns.lineplot(
                 data=df_group,
                 x="flac_compression_level",
