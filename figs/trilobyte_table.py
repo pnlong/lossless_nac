@@ -219,6 +219,7 @@ def _load_flac_compression_rates(
     Load FLAC compression rates from flac_eval_results.csv.
     Returns dict: (dataset_short_name, bit_depth) -> overall_compression_rate.
     Missing entries (e.g. 24-bit) will show as dash in table.
+    Uses FLAC with constant, fixed, and verbatim subframes disabled.
     """
     csv_path = path or FLAC_EVAL_RESULTS_PATH
     level = flac_level if flac_level is not None else FLAC_COMPRESSION_LEVEL
@@ -228,6 +229,13 @@ def _load_flac_compression_rates(
 
     flac_df = pd.read_csv(csv_path)
     flac_df = flac_df[flac_df["flac_compression_level"] == level]
+    # Normalize boolean columns (CSV may store "True"/"False" as strings)
+    for col in ["disable_constant_subframes", "disable_fixed_subframes", "disable_verbatim_subframes"]:
+        if col in flac_df.columns:
+            flac_df[col] = flac_df[col].astype(str).str.lower().isin(("true", "1"))
+    flac_df = flac_df[flac_df["disable_constant_subframes"] == True]
+    flac_df = flac_df[flac_df["disable_fixed_subframes"] == True]
+    flac_df = flac_df[flac_df["disable_verbatim_subframes"] == True]
     if flac_df.empty:
         return {}
 
