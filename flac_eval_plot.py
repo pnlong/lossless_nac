@@ -145,8 +145,7 @@ if __name__ == "__main__":
             title="Dataset",
             loc="center",
             ncol=ncol,
-            fontsize=8,
-            title_fontsize=9)
+            fontsize=8)
 
     # Pre-compute hue_order per column from 8-bit data so colors stay consistent across 8/16-bit
     df_8bit = df_filtered[df_filtered["bit_depth"] == 8]
@@ -198,9 +197,6 @@ if __name__ == "__main__":
             # Format y-axis ticks to 2 decimal places
             ax.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
 
-    # Overall title
-    # fig.suptitle("Comparing FLAC Compression Levels", fontsize=16, y=1.02)
-
     # Use subplots_adjust instead of tight_layout to avoid warning with GridSpec + shared axes
     fig.subplots_adjust(left=0.08, right=0.98, bottom=0.08, top=0.94, hspace=0.1, wspace=0.15)
 
@@ -212,7 +208,7 @@ if __name__ == "__main__":
         pos = ax_left.get_position()
         # Place text to the left of the subplot, vertically centered
         fig.text(pos.x0 - 0.055, pos.y0 + pos.height / 2, f"{bit_depth}-bit", 
-                rotation=90, ha='center', va='center', fontsize=12)
+                rotation=90, ha='center', va='center', fontsize=14)
 
     # Save the plot
     plt.savefig(args.output_filepath, dpi=300, bbox_inches="tight")
