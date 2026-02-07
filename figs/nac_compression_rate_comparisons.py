@@ -33,7 +33,7 @@ STANDARD_COLUMNS = ["path", "size_original", "size_compressed", "compression_rat
                     "duration_audio", "duration_encoding", "compression_speed"]
 
 FIGURE_DPI = 200
-GRID_ALPHA = 0.3
+GRID_ALPHA = 177/256
 
 FANCIER_COMPRESSOR_NAMES = {
     "flac": "FLAC",
@@ -125,9 +125,9 @@ def create_boxplot(df: pd.DataFrame, output_filepath: str):
     
     # Seaborn style with matplotlib-default border and grid colors
     sns.set_theme(style="whitegrid", rc={
-        "axes.edgecolor": "black",
-        "grid.color": "0.8",
-        "grid.alpha": GRID_ALPHA,
+        "axes.edgecolor": (65/255, 65/255, 65/255),
+        "grid.color": (177/255, 177/255, 177/255),
+        # "grid.alpha": GRID_ALPHA,
     })
     
     # Create boxplot with custom colors using dictionary palette
