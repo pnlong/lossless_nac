@@ -2,6 +2,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
+from matplotlib.ticker import FormatStrFormatter
 import argparse
 
 # Configuration
@@ -85,7 +86,7 @@ if __name__ == "__main__":
 
     # Create figure with nine subplots (3 rows, 3 columns) with height ratios 1:2:2
     fig = plt.figure(figsize=(14, 6))
-    gs = gridspec.GridSpec(3, 3, figure=fig, height_ratios=[1, 2, 2], hspace=0.3, wspace=0.3)
+    gs = gridspec.GridSpec(3, 3, figure=fig, height_ratios=[1, 2, 2], hspace=0.1, wspace=0.15)
     axes = [[fig.add_subplot(gs[i, j]) for j in range(3)] for i in range(3)]
 
     # Share y-axis within each plot row (rows 1 and 2)
@@ -178,6 +179,7 @@ if __name__ == "__main__":
             # Set x-axis label only on the bottom row (16-bit), explicitly remove for 8-bit
             if row_idx == 0:  # 8-bit row
                 ax.set_xlabel("")  # Explicitly remove x-axis label
+                ax.set_xticklabels([])  # Remove x-axis tick labels
             elif row_idx == 1:  # 16-bit row
                 ax.set_xlabel(X_AXIS_LABEL)
             
@@ -193,12 +195,14 @@ if __name__ == "__main__":
             # Remove individual titles - we'll use row titles instead
             ax.set_title("")
             ax.grid(True)
+            # Format y-axis ticks to 2 decimal places
+            ax.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
 
     # Overall title
     # fig.suptitle("Comparing FLAC Compression Levels", fontsize=16, y=1.02)
 
-    # Adjust layout to prevent label cutoff
-    plt.tight_layout()
+    # Use subplots_adjust instead of tight_layout to avoid warning with GridSpec + shared axes
+    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.08, top=0.94, hspace=0.1, wspace=0.15)
 
     # Add vertical row titles on the left side (after tight_layout so positions are final)
     # Get the position of the leftmost subplot in each row to place text
@@ -207,7 +211,7 @@ if __name__ == "__main__":
         # Get the position in figure coordinates
         pos = ax_left.get_position()
         # Place text to the left of the subplot, vertically centered
-        fig.text(pos.x0 - 0.05, pos.y0 + pos.height / 2, f"{bit_depth}-bit", 
+        fig.text(pos.x0 - 0.055, pos.y0 + pos.height / 2, f"{bit_depth}-bit", 
                 rotation=90, ha='center', va='center', fontsize=12)
 
     # Save the plot
