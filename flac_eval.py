@@ -456,6 +456,11 @@ class TorrentDataset(Dataset):
             paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/train/Amateur/{native_bit_depth}b/**/*.flac", recursive = True)
         elif subset == "freeload":
             paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/train/Freeload/{native_bit_depth}b/**/*.flac", recursive = True)
+        elif subset == "amateur_freeload":
+            paths = (
+                glob.glob(f"{TORRENT_DATA_DATA_DIR}/train/Amateur/{native_bit_depth}b/**/*.flac", recursive = True)
+                + glob.glob(f"{TORRENT_DATA_DATA_DIR}/train/Freeload/{native_bit_depth}b/**/*.flac", recursive = True)
+            )
         else:
             paths = glob.glob(f"{TORRENT_DATA_DATA_DIR}/**/{native_bit_depth}b/**/*.flac", recursive = True)
         return paths
@@ -644,8 +649,8 @@ def get_dataset_choices() -> List[str]:
     dataset_choices.append("epidemic") # epidemicsound
     dataset_choices.append("vctk") # vctk
     for bit_depth in (16, 24):
-        for torrent_subset in ("", "_pro", "_amateur", "_freeload"):
-            dataset_choices.append("torrent" + str(bit_depth) + "b" + torrent_subset) # e.g. "torrent16b", "torrent16b_pro", "torrent16b_amateur", "torrent16b_freeload", "torrent24b", "torrent24b_pro", "torrent24b_amateur", "torrent24b_freeload", etc.
+        for torrent_subset in ("", "_pro", "_amateur", "_freeload", "_amateur_freeload"):
+            dataset_choices.append("torrent" + str(bit_depth) + "b" + torrent_subset) # e.g. "torrent16b", "torrent16b_pro", "torrent16b_amateur", "torrent16b_freeload", "torrent16b_amateur_freeload", etc.
     dataset_choices.append("birdvox") # birdvox
     dataset_choices.append("beethoven") # beethoven
     dataset_choices.append("youtube_mix") # youtube_mix
@@ -700,7 +705,9 @@ def get_dataset(
         dataset = VCTKDataset(bit_depth = bit_depth, is_mu_law = is_mu_law)
     elif dataset_name.startswith("torrent"):
         subset = None # default to all
-        if "pro" in dataset_name:
+        if "amateur_freeload" in dataset_name:
+            subset = "amateur_freeload"
+        elif "pro" in dataset_name:
             subset = "pro"
         elif "amateur" in dataset_name:
             subset = "amateur"

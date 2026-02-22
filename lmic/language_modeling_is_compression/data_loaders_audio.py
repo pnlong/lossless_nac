@@ -8,6 +8,7 @@ import numpy as np
 import scipy.io.wavfile
 import functools
 import glob
+import itertools
 from os.path import basename, dirname
 
 from language_modeling_is_compression import constants
@@ -150,7 +151,7 @@ def _get_torrent_dataset(
 ) -> Iterator[np.ndarray]:
   """Returns an iterator that yields numpy arrays, one per song."""
   assert native_bit_depth == 16 or native_bit_depth == 24, f"Invalid native bit depth: {native_bit_depth}. Valid native bit depths for Torrent data are 16 and 24."
-  assert subset is None or subset in ("pro", "amateur", "freeload"), f"Invalid subset: {subset}. Valid subsets are None, 'pro', 'amateur', and 'freeload'."
+  assert subset is None or subset in ("pro", "amateur", "freeload", "amateur_freeload"), f"Invalid subset: {subset}. Valid subsets are None, 'pro', 'amateur', 'freeload', and 'amateur_freeload'."
 
   # get dataset specs
   # native_bit_depth = get_native_bit_depth(dataset=f"torrent{native_bit_depth}b") # don't need because it is already provided
@@ -164,6 +165,11 @@ def _get_torrent_dataset(
     paths = glob.iglob(f"{constants_audio.TORRENT_DATA_DATA_DIR}/train/Amateur/{native_bit_depth}b/**/*.flac", recursive = True)
   elif subset == "freeload":
     paths = glob.iglob(f"{constants_audio.TORRENT_DATA_DATA_DIR}/train/Freeload/{native_bit_depth}b/**/*.flac", recursive = True)
+  elif subset == "amateur_freeload":
+    paths = itertools.chain(
+      glob.iglob(f"{constants_audio.TORRENT_DATA_DATA_DIR}/train/Amateur/{native_bit_depth}b/**/*.flac", recursive=True),
+      glob.iglob(f"{constants_audio.TORRENT_DATA_DATA_DIR}/train/Freeload/{native_bit_depth}b/**/*.flac", recursive=True),
+    )
   else:
     paths = glob.iglob(f"{constants_audio.TORRENT_DATA_DATA_DIR}/**/{native_bit_depth}b/**/*.flac", recursive = True)
 
@@ -541,7 +547,7 @@ def get_audio_data_generator_fn_dict() -> Dict[str, Callable[[], Iterator[bytes]
   audio_data_generator_fn_dict["epidemic"] = get_epidemic_iterator
   audio_data_generator_fn_dict["vctk"] = get_vctk_iterator
   for native_bit_depth in (16, 24):
-    for subset in (None, "pro", "amateur", "freeload"):
+    for subset in (None, "pro", "amateur", "freeload", "amateur_freeload"):
       audio_data_generator_fn_dict[f"torrent{native_bit_depth}b" + (f"_{subset}" if subset is not None else "")] = functools.partial(get_torrent_iterator, native_bit_depth=native_bit_depth, subset=subset)
   audio_data_generator_fn_dict["birdvox"] = get_birdvox_iterator
   audio_data_generator_fn_dict["beethoven"] = get_beethoven_iterator

@@ -76,7 +76,7 @@ dataset_groups = [
     },
     {
         "mask_func": lambda df: df["dataset"].str.startswith("torrent"),
-        "title": "Torrented Data",
+        "title": "Commercial Music",
         "legend_loc": "upper left"
     },
     {

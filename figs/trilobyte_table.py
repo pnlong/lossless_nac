@@ -4,9 +4,10 @@ Generate LaTeX table from WandB runs (t5_lnac) for specified Trilobyte runs.
 
 Uses RUNS_TO_INCLUDE dict (run_name -> dataset_name). For each run, extracts
 val/bpb and max_bit_depth; computes compression rate. Loads FLAC compression
-rates from flac_eval_results.csv. Outputs table with columns: Bit Depth,
-Dataset, Compression Rate (x), FLAC Compression Rate (x). Uses multirow for
-Bit Depth. Missing FLAC data (e.g. 24-bit) shown as dash.
+rates from flac_eval_results.csv and LMIC (Byte-to-ASCII) rates from
+lmic_eval_results.csv. Outputs table with columns: Bit Depth, Dataset,
+\\textbf{FLAC} (x), \\textbf{Byte-to-ASCII} (x), \\textbf{Trilobyte} (x).
+Uses multirow for Bit Depth. Missing data shown as dash.
 """
 
 import argparse
@@ -24,8 +25,8 @@ import wandb
 RUNS_TO_INCLUDE: Dict[str, str] = {
     "musdb18 mono 8-8": "MusDB18 Mono (All)",
     "bilobyte musdb18 (val mixes)": "MusDB18 Stereo (Mixes)",
-    "bilobyte torr (16bit, no pro split)": "Torrent 16-bit (Amateur, Freeload)",
-    "trilobyte torr (24 bit only, no pro split)": "Torrent 24-bit (Amateur, Freeload)",
+    "bilobyte torr (16bit, no pro split)": "Commercial 16-bit (Amateur, Freeload)",
+    "trilobyte torr (24 bit only, no pro split)": "Commercial 24-bit (Amateur, Freeload)",
     "yilobyte beethoven": "Beethoven",
     "bilobyte birdvox": "Birdvox",
     "trilobyte epidemic (24 bit)": "Epidemic Sound",
@@ -39,8 +40,8 @@ RUNS_TO_INCLUDE: Dict[str, str] = {
 DATASET_FANCY_NAME_TO_SHORT_NAME: Dict[str, str] = {
     "MusDB18 Mono (All)": "musdb18mono",
     "MusDB18 Stereo (Mixes)": "musdb18stereo_mixes",
-    "Torrent 16-bit (Amateur, Freeload)": "torrent16b_amateur",
-    "Torrent 24-bit (Amateur, Freeload)": "torrent24b_amateur",
+    "Commercial 16-bit (Amateur, Freeload)": "torrent16b_amateur_freeload",
+    "Commercial 24-bit (Amateur, Freeload)": "torrent24b_amateur_freeload",
     "Beethoven": "beethoven",
     "Birdvox": "birdvox",
     "Epidemic Sound": "epidemic",
@@ -56,7 +57,9 @@ WANDB_PROJECT = "t5_lnac"
 WANDB_ENTITY_DEFAULT = "znovack"
 DEFAULT_EMA_TAU = 0.99
 FLAC_EVAL_RESULTS_PATH = os.path.join(os.path.dirname(__file__), "..", "flac_eval_results.csv")
+LMIC_EVAL_RESULTS_PATH = os.path.join(os.path.dirname(__file__), "..", "lmic", "lmic_eval_results.csv")
 FLAC_COMPRESSION_LEVEL = 5  # Default FLAC level; change if needed for 24-bit experiments
+LMIC_COMPRESSOR_DEFAULT = "llama-2-7b"  # Compressor to use for Byte-to-ASCII (LMIC) column
 
 # Epidemic Sound was run in 24-bit but dataset is likely 16-bit transcoded; use estimated rate.
 # Update this constant when re-running with corrected bit depth.
@@ -247,6 +250,35 @@ def _load_flac_compression_rates(
     return result
 
 
+def _load_lmic_compression_rates(
+    path: Optional[str] = None,
+    compressor: Optional[str] = None,
+) -> Dict[Tuple[str, int], float]:
+    """
+    Load LMIC (Byte-to-ASCII) compression rates from lmic_eval_results.csv.
+    Returns dict: (dataset_short_name, bit_depth) -> compression_rate.
+    Uses the specified compressor (default llama-2-7b); if multiple rows per
+    (dataset, bit_depth), takes the last.
+    """
+    csv_path = path or LMIC_EVAL_RESULTS_PATH
+    comp = compressor if compressor is not None else LMIC_COMPRESSOR_DEFAULT
+    if not os.path.exists(csv_path):
+        print(f"Warning: LMIC results not found at {csv_path}")
+        return {}
+
+    lmic_df = pd.read_csv(csv_path)
+    lmic_df = lmic_df[lmic_df["compressor"] == comp]
+    if lmic_df.empty:
+        return {}
+
+    result = {}
+    for (dataset, bit_depth), group in lmic_df.groupby(["dataset", "bit_depth"]):
+        # Take last row per group (most recent if CSV is append-ordered)
+        rate = group.iloc[-1]["compression_rate"]
+        result[(str(dataset), int(bit_depth))] = float(rate)
+    return result
+
+
 def extract_metric_history(run, metric_name: str) -> Optional[pd.Series]:
     """Extract metric history from a WandB run."""
     try:
@@ -333,29 +365,38 @@ def format_latex_table(df: pd.DataFrame) -> str:
         except (TypeError, ValueError):
             return None
 
-    def fmt_cr_cell(cr_val, flac_val):
-        """Format compression rate cells, bolding the greater of the two."""
-        cr_str = fmt_num(cr_val, 2) if not pd.isna(cr_val) else "—"
+    def fmt_cr_cells(flac_val, lmic_val, trilobyte_val):
+        """Format compression rate cells, bolding the maximum of the three."""
         flac_str = fmt_num(flac_val, 2) if not pd.isna(flac_val) else "—"
-        cr_num = float(cr_val) if not pd.isna(cr_val) else None
+        lmic_str = fmt_num(lmic_val, 2) if not pd.isna(lmic_val) else "—"
+        trilobyte_str = fmt_num(trilobyte_val, 2) if not pd.isna(trilobyte_val) else "—"
         flac_num = float(flac_val) if not pd.isna(flac_val) else None
-        if cr_num is not None and flac_num is not None:
-            if cr_num >= flac_num:
-                cr_str = f"\\textbf{{{cr_str}}}"
-            else:
+        lmic_num = float(lmic_val) if not pd.isna(lmic_val) else None
+        trilobyte_num = float(trilobyte_val) if not pd.isna(trilobyte_val) else None
+        valid = [(flac_num, "flac"), (lmic_num, "lmic"), (trilobyte_num, "trilobyte")]
+        valid = [(v, k) for v, k in valid if v is not None]
+        max_val = max(v for v, _ in valid) if valid else None
+        if max_val is not None:
+            if flac_num is not None and flac_num >= max_val:
                 flac_str = f"\\textbf{{{flac_str}}}"
-        elif cr_num is not None:
-            cr_str = f"\\textbf{{{cr_str}}}"
+            if lmic_num is not None and lmic_num >= max_val:
+                lmic_str = f"\\textbf{{{lmic_str}}}"
+            if trilobyte_num is not None and trilobyte_num >= max_val:
+                trilobyte_str = f"\\textbf{{{trilobyte_str}}}"
+        elif trilobyte_num is not None:
+            trilobyte_str = f"\\textbf{{{trilobyte_str}}}"
+        elif lmic_num is not None:
+            lmic_str = f"\\textbf{{{lmic_str}}}"
         elif flac_num is not None:
             flac_str = f"\\textbf{{{flac_str}}}"
-        return cr_str, flac_str
+        return flac_str, lmic_str, trilobyte_str
 
     latex_lines = [
         "% Requires \\usepackage{booktabs} and \\usepackage{multirow}",
         "",
-        "   \\begin{tabular}{cl|cc}",
+        "   \\begin{tabular}{cl|ccc}",
         "        \\toprule",
-        "        \\textbf{Bit Depth} & \\textbf{Dataset} & \\textbf{Trilobyte Compression Rate} (x) & \\textbf{FLAC Compression Rate} (x) \\\\",
+        "        \\textbf{Bit Depth} & \\textbf{Dataset} & \\textbf{FLAC} (x) & \\textbf{Byte-to-ASCII} (x) & \\textbf{Trilobyte} (x) \\\\",
         "        \\midrule",
     ]
 
@@ -371,15 +412,16 @@ def format_latex_table(df: pd.DataFrame) -> str:
                     "Update ESTIMATED_EPIDEMIC_SOUND_16_BIT_COMPRESSION_RATE in trilobyte_table.py when re-running."
                 )
             dataset = escape_latex(row["Dataset"])
-            cr_str, flac_str = fmt_cr_cell(
-                row["Compression Rate (x)"],
-                row["FLAC Compression Rate (x)"],
+            flac_str, lmic_str, trilobyte_str = fmt_cr_cells(
+                row["FLAC (x)"],
+                row["Byte-to-ASCII (x)"],
+                row["Trilobyte (x)"],
             )
             if i == 0:
                 bit_cell = f"\\multirow{{{n_rows}}}{{*}}{{{bit_str}}}"
             else:
                 bit_cell = ""
-            row_str = f"         {bit_cell} & {dataset} & {cr_str} & {flac_str} \\\\"
+            row_str = f"         {bit_cell} & {dataset} & {flac_str} & {lmic_str} & {trilobyte_str} \\\\"
             latex_lines.append(row_str)
         latex_lines.append("        \\midrule")
 
@@ -418,6 +460,18 @@ def main():
         default=FLAC_COMPRESSION_LEVEL,
         help=f"FLAC compression level to use (default: {FLAC_COMPRESSION_LEVEL})",
     )
+    parser.add_argument(
+        "--lmic-csv",
+        type=str,
+        default=None,
+        help=f"Path to LMIC eval results CSV (default: {LMIC_EVAL_RESULTS_PATH})",
+    )
+    parser.add_argument(
+        "--lmic-compressor",
+        type=str,
+        default=LMIC_COMPRESSOR_DEFAULT,
+        help=f"Compressor to use for Byte-to-ASCII column (default: {LMIC_COMPRESSOR_DEFAULT})",
+    )
     args = parser.parse_args()
 
     if not RUNS_TO_INCLUDE:
@@ -452,6 +506,7 @@ def main():
         path=args.flac_csv,
         flac_level=args.flac_level,
     )
+    lmic_rates = _load_lmic_compression_rates(path=args.lmic_csv, compressor=args.lmic_compressor)
     runs_data = []
     for run_name, dataset_name in RUNS_TO_INCLUDE.items():
         candidates = runs_by_name.get(run_name, [])
@@ -488,27 +543,44 @@ def main():
 
         short_name = DATASET_FANCY_NAME_TO_SHORT_NAME.get(dataset_name)
         flac_rate = None
+        lmic_rate = None
         if short_name and bit_depth is not None:
             flac_rate = flac_rates.get((short_name, bit_depth))
+            lmic_rate = lmic_rates.get((short_name, bit_depth))
 
         runs_data.append({
             "Bit Depth": bit_depth,
             "Dataset": dataset_name,
-            "Compression Rate (x)": compression_rate,
-            "FLAC Compression Rate (x)": flac_rate,
+            "FLAC (x)": flac_rate,
+            "Byte-to-ASCII (x)": lmic_rate,
+            "Trilobyte (x)": compression_rate,
             "is_estimated": dataset_name == "Epidemic Sound",
         })
         flac_str = f"{flac_rate:.2f}" if flac_rate is not None else "—"
+        lmic_str = f"{lmic_rate:.2f}" if lmic_rate is not None else "—"
         est_note = " (estimated)" if dataset_name == "Epidemic Sound" else ""
-        print(f"  Bit Depth: {bit_depth}, CR: {compression_rate:.2f}, FLAC: {flac_str}{est_note}")
+        print(f"  Bit Depth: {bit_depth}, Trilobyte: {compression_rate:.2f}, FLAC: {flac_str}, Byte-to-ASCII: {lmic_str}{est_note}")
 
     if not runs_data:
         print("No runs with valid data found.")
         return
 
     df = pd.DataFrame(runs_data)
-    df = df[["Bit Depth", "Dataset", "Compression Rate (x)", "FLAC Compression Rate (x)", "is_estimated"]]
+    df = df[["Bit Depth", "Dataset", "FLAC (x)", "Byte-to-ASCII (x)", "Trilobyte (x)", "is_estimated"]]
     df = df.sort_values(["Bit Depth", "Dataset"], na_position="last").reset_index(drop=True)
+
+    # Print readable table (no is_estimated column)
+    df_display = df[["Bit Depth", "Dataset", "FLAC (x)", "Byte-to-ASCII (x)", "Trilobyte (x)"]].copy()
+    df_display = df_display.fillna("—")
+    for col in ["FLAC (x)", "Byte-to-ASCII (x)", "Trilobyte (x)"]:
+        df_display[col] = df_display[col].apply(
+            lambda x: f"{x:.2f}" if isinstance(x, (int, float)) and not np.isnan(x) else x
+        )
+    print("\n" + "=" * 80)
+    print("Table (readable):")
+    print("=" * 80)
+    print(df_display.to_string(index=False))
+    print("=" * 80)
 
     print("\n" + "=" * 80)
     print("LaTeX Table:")
@@ -517,7 +589,7 @@ def main():
     print("=" * 80)
 
     if args.csv:
-        df[["Bit Depth", "Dataset", "Compression Rate (x)", "FLAC Compression Rate (x)"]].to_csv(
+        df[["Bit Depth", "Dataset", "FLAC (x)", "Byte-to-ASCII (x)", "Trilobyte (x)"]].to_csv(
             args.csv, index=False
         )
         print(f"\nTable saved to {args.csv}")

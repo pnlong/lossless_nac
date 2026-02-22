@@ -26,14 +26,14 @@ DATASET_NAME_TO_FANCIER_NAME = {
     "sc09": "SC09",
     "vctk": "VCTK",
     "epidemic": "Epidemic Sound",
-    "torrent16b_pro": "Torrent 16-bit (Pro)",
-    "torrent16b_amateur": "Torrent 16-bit (Amateur)",
-    "torrent16b_freeload": "Torrent 16-bit (Freeload)",
-    "torrent24b_pro": "Torrent 24-bit (Pro)",
-    "torrent24b_amateur": "Torrent 24-bit (Amateur)",
-    "torrent24b_freeload": "Torrent 24-bit (Freeload)",
-    "torrent16b": "Torrent 16-bit (All)",
-    "torrent24b": "Torrent 24-bit (All)",
+    "torrent16b_pro": "Commercial 16-bit (Pro)",
+    "torrent16b_amateur": "Commercial 16-bit (Amateur)",
+    "torrent16b_freeload": "Commercial 16-bit (Freeload)",
+    "torrent24b_pro": "Commercial 24-bit (Pro)",
+    "torrent24b_amateur": "Commercial 24-bit (Amateur)",
+    "torrent24b_freeload": "Commercial 24-bit (Freeload)",
+    "torrent16b": "Commercial 16-bit (All)",
+    "torrent24b": "Commercial 24-bit (All)",
 }
 
 # Canonical order for dataset legend (shared with lmic_eval_plot for consistent line colors)
@@ -74,7 +74,7 @@ if __name__ == "__main__":
         },
         {
             "mask_func": lambda df: df["dataset"].str.startswith("torrent"),
-            "title": "Torrented Data",
+            "title": "Commercial Music",
             "legend_loc": "upper left"
         },
         {
