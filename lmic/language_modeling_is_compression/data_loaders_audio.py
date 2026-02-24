@@ -6,6 +6,8 @@ from typing import Callable, Dict
 import pandas as pd
 import numpy as np
 import scipy.io.wavfile
+import torch
+import torchaudio
 import functools
 import glob
 import itertools
@@ -174,8 +176,29 @@ def _get_torrent_dataset(
     paths = glob.iglob(f"{constants_audio.TORRENT_DATA_DATA_DIR}/**/{native_bit_depth}b/**/*.flac", recursive = True)
 
   # Return an iterator that yields one track at a time
+  TORRENT_TARGET_SAMPLE_RATE = 44100  # Resample all Torrent audio to 44.1 kHz
   for path in paths:
     waveform, sample_rate = utils_audio.load_audio(path=path, bit_depth=native_bit_depth, is_mu_law=is_mu_law)
+    if sample_rate != TORRENT_TARGET_SAMPLE_RATE:
+      # Resample to 44.1 kHz using torchaudio (bandlimited interpolation)
+      w_f = waveform.astype(np.float64)
+      w_t = torch.from_numpy(w_f)
+      if w_t.ndim == 1:
+        w_t = w_t.unsqueeze(0)  # (time,) -> (1, time)
+      else:
+        w_t = w_t.T  # (time, channels) -> (channels, time)
+      w_t = torchaudio.functional.resample(
+        w_t,
+        orig_freq=sample_rate,
+        new_freq=TORRENT_TARGET_SAMPLE_RATE,
+      )
+      if waveform.ndim == 1:
+        w_f = w_t.squeeze(0).numpy()
+      else:
+        w_f = w_t.T.numpy()  # (channels, time) -> (time, channels)
+      # Clip to native range before casting back to integer
+      min_val, max_val = -(2 ** (native_bit_depth - 1)), (2 ** (native_bit_depth - 1)) - 1
+      waveform = np.clip(np.round(w_f), min_val, max_val).astype(waveform.dtype)
     yield waveform
 
 
