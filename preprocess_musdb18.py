@@ -19,6 +19,7 @@ from os import makedirs, mkdir, listdir, close
 from os.path import basename, exists, isdir
 from shutil import rmtree
 from glob import iglob
+import os
 import soundfile as sf
 import tempfile
 
@@ -112,55 +113,90 @@ if __name__ == "__main__":
     # PREPROCESSING
     ##################################################
 
+    def _discover_paths():
+        """Discover paths: prefer train/test subdirs that contain WAV files; else fall back to **/*.mp4."""
+        wav_subdirs = []
+        for split in ("train", "test"):
+            split_dir = os.path.join(args.musdb18_dir, split)
+            if not isdir(split_dir):
+                continue
+            for name in sorted(listdir(split_dir)):
+                subdir = os.path.join(split_dir, name)
+                if not isdir(subdir):
+                    continue
+                wavs = list(iglob("*.wav", root_dir=subdir))
+                if wavs:
+                    wav_subdirs.append(subdir)
+        if wav_subdirs:
+            return wav_subdirs
+        # fallback: mp4 files anywhere under musdb18_dir
+        return [os.path.join(args.musdb18_dir, base) for base in iglob("**/*.mp4", root_dir=args.musdb18_dir, recursive=True)]
+
     # preprocessing function
     def preprocess(path: str):
         """
-        Preprocess MusDB18 file given the input Native Instruments stems format (MP4) absolute filepath.
+        Preprocess one MusDB18 track. path is either:
+        - a directory containing WAV files (one per stem), or
+        - an MP4 file (Native Instruments stems format).
         """
 
         # save time by avoiding unnecessary calculations
         if path in already_completed_paths and not args.reset:
-            return # return nothing, stop execution here
+            return
 
-        # load in mp4
-        stems, sample_rate = stempeg.read_stems(filename = path)
+        if isdir(path):
+            # load stems from WAV files in the directory (sorted by filename)
+            wav_files = sorted(iglob("*.wav", root_dir=path))
+            if not wav_files:
+                return
+            stems_list = []
+            sample_rate = None
+            for f in wav_files:
+                fp = os.path.join(path, f)
+                wav, sr = sf.read(fp, dtype=np.float64, always_2d=True)
+                if sample_rate is None:
+                    sample_rate = sr
+                elif sr != sample_rate:
+                    wav = librosa.resample(y=wav.T, orig_sr=sr, target_sr=sample_rate).T
+                # keep (n_samples, n_channels) per stem; stack to (n_stems, n_samples, n_channels) to match stempeg layout
+                stems_list.append(wav)
+            stems = np.stack(stems_list, axis=0)
+            del stems_list
+        else:
+            # load from single MP4
+            stems, sample_rate = stempeg.read_stems(filename=path)
+            n_stems = len(stems)
+
         n_stems = len(stems)
 
         # resample if necessary
         if sample_rate != args.sample_rate:
-            stems = librosa.resample(y = stems, orig_sr = sample_rate, target_sr = args.sample_rate, axis = 1)
+            stems = librosa.resample(y=stems, orig_sr=sample_rate, target_sr=args.sample_rate, axis=1)
             sample_rate = args.sample_rate
 
-        # determine stem output paths
-        stem_prefixes = [output_dir + "/" + basename(path)[:-len("mp4")] + str(i) for i in range(n_stems)]
-        stem_paths = [f"{stem_prefix}.npy" for stem_prefix in stem_prefixes]
+        # determine stem output paths (path id: dir name or mp4 basename without extension)
+        path_id = basename(path.rstrip(os.sep)) if isdir(path) else basename(path)[:-len(".mp4")]
+        stem_prefixes = [f"{output_dir}/{path_id}.{i}" for i in range(n_stems)]
+        stem_paths = [f"{p}.npy" for p in stem_prefixes]
 
         # save stems as pickled numpy arrays
         for i, stem_prefix, stem_path in zip(range(n_stems), stem_prefixes, stem_paths):
+            wav_fd, wav_filepath = tempfile.mkstemp(suffix=".wav", prefix=f"wav_eval_{basename(stem_prefix)}.")
+            close(wav_fd)
+            sf.write(file=wav_filepath, data=stems[i], samplerate=sample_rate, format="WAV", subtype=f"PCM_{args.bit_depth}")
 
-            # write as WAV file
-            wav_fd, wav_filepath = tempfile.mkstemp(suffix = ".wav", prefix = f"wav_eval_{basename(stem_prefix)}.")
-            close(wav_fd) # don't need file descriptor anymore
-            sf.write(file = wav_filepath, data = stems[i], samplerate = sample_rate, format = "WAV", subtype = f"PCM_{args.bit_depth}")
+            waveform, _ = sf.read(file=wav_filepath, dtype=audio_data_type)
+            np.save(file=stem_path, arr=waveform)
+            del waveform
 
-            # load WAV file
-            waveform, _ = sf.read(file = wav_filepath, dtype = audio_data_type)
-
-            # save as NPY
-            np.save(file = stem_path, arr = waveform)
-            del waveform # free up memory
-
-        # append to output file
-        pd.DataFrame(data = dict(zip(
+        pd.DataFrame(data=dict(zip(
             utils.STEMS_TO_AUDIO_COLUMN_NAMES,
-            (stem_paths, utils.rep(x = sample_rate, times = n_stems), utils.rep(x = path, times = n_stems), list(range(n_stems))),
-        ))).to_csv(path_or_buf = output_filepath, sep = ",", na_rep = utils.NA_STRING, header = False, index = False, mode = "a")
-
-        # return nothing
+            (stem_paths, utils.rep(x=sample_rate, times=n_stems), utils.rep(x=path, times=n_stems), list(range(n_stems))),
+        ))).to_csv(path_or_buf=output_filepath, sep=",", na_rep=utils.NA_STRING, header=False, index=False, mode="a")
         return
-    
-    # get musdb18 paths
-    paths = [f"{args.musdb18_dir}/{base}" for base in iglob("**/*.mp4", root_dir = args.musdb18_dir, recursive = True)]
+
+    # get musdb18 paths (WAV subdirs under train/test, or **/*.mp4)
+    paths = _discover_paths()
 
     # use multiprocessing to preprocess musdb18 paths
     with multiprocessing.Pool(processes = args.jobs) as pool:
