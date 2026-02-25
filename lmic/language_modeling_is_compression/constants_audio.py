@@ -56,10 +56,10 @@ LIBRISPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/librispeech/LibriSpeech/{LIBRISPEECH_S
 LJSPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/ljspeech" # yggdrasil
 
 # Epidemic Sound
-EPIDEMIC_SOUND_DATA_DIR = "/graft1/datasets/kechen/epidemic/epidemic_sound" # pando
+EPIDEMIC_SOUND_DATA_DIR = "/mnt/arrakis_data/znovack/epidemic" # pando
 
 # VCTK (speech)
-VCTK_DATA_DIR = "/graft2/datasets/znovack/VCTK-Corpus-0.92/wav48_silence_trimmed" # pando
+VCTK_DATA_DIR = "/mnt/arrakis_data/znovack/vctk" # pando
 
 # Torrent Data 16-bit
 TORRENT_DATA_DATA_DIR = "/graft3/datasets/znovack/trilobyte" # yggdrasil
