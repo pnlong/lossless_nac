@@ -37,6 +37,7 @@ COMPRESSOR_DISPLAY_NAMES = {
 # Load LMIC CSV
 df = pd.read_csv(args.input_filepath)
 df = df[df["matches_native_quantization"]]
+df = df[(df["bit_depth"] / 8) * 1024 == df["chunk_size"]] # ensure constant number of samples per chunk across bit depths
 
 # Load FLAC results (compression level 5, disabled subframes)
 flac_path = join(dirname(realpath(__file__)), "..", "flac_eval_results.csv")

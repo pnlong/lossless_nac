@@ -29,9 +29,11 @@ DATASET_NAME_TO_FANCIER_NAME = {
     "torrent16b_pro": "Commercial 16-bit (Pro)",
     "torrent16b_amateur": "Commercial 16-bit (Amateur)",
     "torrent16b_freeload": "Commercial 16-bit (Freeload)",
+    "torrent16b_amateur_freeload": "Commercial 16-bit (Amateur, Freeload)",
     "torrent24b_pro": "Commercial 24-bit (Pro)",
     "torrent24b_amateur": "Commercial 24-bit (Amateur)",
     "torrent24b_freeload": "Commercial 24-bit (Freeload)",
+    "torrent24b_amateur_freeload": "Commercial 24-bit (Amateur, Freeload)",
     "torrent16b": "Commercial 16-bit (All)",
     "torrent24b": "Commercial 24-bit (All)",
 }
