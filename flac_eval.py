@@ -47,26 +47,26 @@ RAW_SIZE_PERCENT_DIFFERENCE_THRESHOLD = None # if None, no threshold is applied
 ##################################################
 
 # MUSDB18 Mono
-MUSDB18MONO_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data/musdb18mono" # yggdrasil
+MUSDB18MONO_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/musdb18mono" # yggdrasil
 
 # MUSDB18 Stereo
-MUSDB18STEREO_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data/musdb18stereo" # yggdrasil
+MUSDB18STEREO_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/musdb18stereo" # yggdrasil
 
 # LibriSpeech
 LIBRISPEECH_SPLIT = "dev-clean" # "dev-clean" or "train-clean-100"
-LIBRISPEECH_DATA_DIR = f"/graft3/datasets/pnlong/lnac/sashimi/data/librispeech/LibriSpeech/{LIBRISPEECH_SPLIT}" # yggdrasil
+LIBRISPEECH_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/librispeech/LibriSpeech/{LIBRISPEECH_SPLIT}" # yggdrasil
 
 # LJSpeech
-LJSPEECH_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data/ljspeech" # yggdrasil
+LJSPEECH_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/ljspeech" # yggdrasil
 
 # Epidemic Sound
-EPIDEMIC_SOUND_DATA_DIR = "/graft1/datasets/kechen/epidemic/epidemic_sound" # pando
+EPIDEMIC_SOUND_DATA_DIR = "/mnt/arrakis_data/znovack/epidemic" # pando
 
 # VCTK (speech)
-VCTK_DATA_DIR = "/graft2/datasets/znovack/VCTK-Corpus-0.92/wav48_silence_trimmed" # pando
+VCTK_DATA_DIR = "/mnt/arrakis_data/znovack/vctk" # pando
 
 # Torrent Data 16-bit
-TORRENT_DATA_DATA_DIR = "/graft3/datasets/znovack/trilobyte" # yggdrasil
+TORRENT_DATA_DATA_DIR = "/mnt/arrakis_data/znovack/torr" # yggdrasil
 
 # Birdvox bioacoustic data
 BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox/unit06" # yggdrasil

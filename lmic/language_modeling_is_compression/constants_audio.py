@@ -43,17 +43,17 @@ LOSS_BPB_OUTPUT_FILEPATH = "/home/pnlong/lnac/lmic/lmic_eval_loss_bpb_results.cs
 AUDIO_DATA_DIR = "/graft3/datasets/pnlong/lnac/sashimi/data"
 
 # MUSDB18 Mono
-MUSDB18MONO_DATA_DIR = f"{AUDIO_DATA_DIR}/musdb18mono" # yggdrasil
+MUSDB18MONO_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/musdb18mono" # yggdrasil
 
 # MUSDB18 Stereo
-MUSDB18STEREO_DATA_DIR = f"{AUDIO_DATA_DIR}/musdb18stereo" # yggdrasil
+MUSDB18STEREO_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/musdb18stereo" # yggdrasil
 
 # LibriSpeech
 LIBRISPEECH_SPLIT = "dev-clean" # "dev-clean" or "train-clean-100"
-LIBRISPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/librispeech/LibriSpeech/{LIBRISPEECH_SPLIT}" # yggdrasil
+LIBRISPEECH_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/librispeech/LibriSpeech/{LIBRISPEECH_SPLIT}" # yggdrasil
 
 # LJSpeech
-LJSPEECH_DATA_DIR = f"{AUDIO_DATA_DIR}/ljspeech" # yggdrasil
+LJSPEECH_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/ljspeech" # yggdrasil
 
 # Epidemic Sound
 EPIDEMIC_SOUND_DATA_DIR = "/mnt/arrakis_data/znovack/epidemic" # pando
@@ -62,7 +62,7 @@ EPIDEMIC_SOUND_DATA_DIR = "/mnt/arrakis_data/znovack/epidemic" # pando
 VCTK_DATA_DIR = "/mnt/arrakis_data/znovack/vctk" # pando
 
 # Torrent Data 16-bit
-TORRENT_DATA_DATA_DIR = "/graft3/datasets/znovack/trilobyte" # yggdrasil
+TORRENT_DATA_DATA_DIR = "/mnt/arrakis_data/znovack/torr" # yggdrasil
 
 # Birdvox bioacoustic data
 BIRDVOX_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/birdvox/unit06" # yggdrasil
