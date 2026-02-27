@@ -2,7 +2,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
-from matplotlib.ticker import FormatStrFormatter
+from matplotlib.ticker import FormatStrFormatter, FuncFormatter
 import argparse
 
 # Configuration
@@ -29,11 +29,11 @@ DATASET_NAME_TO_FANCIER_NAME = {
     "torrent16b_pro": "Commercial 16-bit (Pro)",
     "torrent16b_amateur": "Commercial 16-bit (Amateur)",
     "torrent16b_freeload": "Commercial 16-bit (Freeload)",
-    "torrent16b_amateur_freeload": "Commercial 16-bit (Amateur, Freeload)",
+    "torrent16b_amateur_freeload": "Commercial 16-bit",
     "torrent24b_pro": "Commercial 24-bit (Pro)",
     "torrent24b_amateur": "Commercial 24-bit (Amateur)",
     "torrent24b_freeload": "Commercial 24-bit (Freeload)",
-    "torrent24b_amateur_freeload": "Commercial 24-bit (Amateur, Freeload)",
+    "torrent24b_amateur_freeload": "Commercial 24-bit",
     "torrent16b": "Commercial 16-bit (All)",
     "torrent24b": "Commercial 24-bit (All)",
 }
@@ -41,8 +41,52 @@ DATASET_NAME_TO_FANCIER_NAME = {
 # Canonical order for dataset legend (shared with lmic_eval_plot for consistent line colors)
 DATASET_LEGEND_ORDER = sorted(DATASET_NAME_TO_FANCIER_NAME.keys())
 
+# Domain -> list of dataset names (column count = len(DOMAINS), column width ∝ len(datasets))
+DOMAINS = ["Music", "Speech", "Bioacoustics", "Sound Effects"]
+domain_to_datasets = {
+    "Music": [
+        "beethoven", 
+        "youtube_mix",
+        "musdb18mono",
+        # "musdb18mono_mixes", 
+        # "musdb18mono_stems",
+        # "musdb18stereo", 
+        "musdb18stereo_mixes", 
+        # "musdb18stereo_stems",
+        # "torrent16b_pro", 
+        # "torrent16b_amateur", 
+        # "torrent16b_freeload", 
+        "torrent16b_amateur_freeload",
+        # "torrent24b_pro", 
+        # "torrent24b_amateur", 
+        # "torrent24b_freeload", 
+        "torrent24b_amateur_freeload",
+        # "torrent16b", 
+        # "torrent24b",
+    ],
+    "Speech": [
+        "sc09",
+        "vctk",
+        "librispeech",
+        "ljspeech",
+    ],
+    "Bioacoustics": [
+        "birdvox",
+    ],
+    "Sound Effects": [
+        "epidemic",
+    ],
+}
+
 # Omit these datasets at 16-bit only (they appear at 8-bit)
 DATASETS_OMIT_AT_16BIT = {"youtube_mix", "sc09", "beethoven"}
+
+# FLAC plot: column (title, list of domain keys). Bioacoustics + Sound Effects combined.
+FLAC_PLOT_COLUMNS = [
+    ("Music", ["Music"]),
+    ("Speech", ["Speech"]),
+    ("Bioacoustics / Sound Effects", ["Bioacoustics", "Sound Effects"]),
+]
 
 if __name__ == "__main__":
     # read in arguments
@@ -54,6 +98,7 @@ if __name__ == "__main__":
         parser.add_argument("--disable_fixed_subframes", action = "store_true", help = "Disable fixed subframes for FLAC.")
         parser.add_argument("--disable_verbatim_subframes", action = "store_true", help = "Disable verbatim subframes for FLAC.")
         parser.add_argument("--output_filepath", type = str, default = "/home/pnlong/lnac/flac_eval_plot.pdf", help = "Absolute filepath to the output PDF file.")
+        parser.add_argument("--skinny", action = "store_true", help = "Square figure, single-column legends, equal row heights, x-axis labels only at 0 and 8.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         return args # return parsed arguments
     args = parse_args()
@@ -67,48 +112,33 @@ if __name__ == "__main__":
     df_filtered = df_filtered[df_filtered["disable_fixed_subframes"] == args.disable_fixed_subframes]
     df_filtered = df_filtered[df_filtered["disable_verbatim_subframes"] == args.disable_verbatim_subframes]
 
-    # Define dataset groups configuration
-    dataset_groups = [
-        {
-            "mask_func": lambda df: df["dataset"].str.startswith("musdb18"),
-            "title": "MusDB18",
-            "legend_loc": "upper right"
-        },
-        {
-            "mask_func": lambda df: df["dataset"].str.startswith("torrent"),
-            "title": "Commercial Music",
-            "legend_loc": "upper left"
-        },
-        {
-            "mask_func": lambda df: ~df["dataset"].str.startswith("musdb18") & ~df["dataset"].str.startswith("torrent"),
-            "title": "More",
-            "legend_loc": "upper left"
-        }
-    ]
+    # One column per FLAC_PLOT_COLUMNS entry, equal widths
+    n_cols = len(FLAC_PLOT_COLUMNS)
+    skinny = getattr(args, "skinny", False)
 
-    # Create figure with nine subplots (3 rows, 3 columns) with height ratios 1:2:2
-    fig = plt.figure(figsize=(14, 6))
-    gs = gridspec.GridSpec(3, 3, figure=fig, height_ratios=[1, 2, 2], hspace=0.1, wspace=0.15)
-    axes = [[fig.add_subplot(gs[i, j]) for j in range(3)] for i in range(3)]
+    # Create figure: 3 rows (legend + 8-bit + 16-bit), n_cols columns (equal width)
+    figsize = (9, 6) if skinny else (14, 6)
+    height_ratios = [0.5, 1, 1] if skinny else [0.5, 2, 2]
+    fig = plt.figure(figsize=figsize)
+    gs = gridspec.GridSpec(3, n_cols, figure=fig, height_ratios=height_ratios, hspace=0.1, wspace=0.05)
+    axes = [[fig.add_subplot(gs[i, j]) for j in range(n_cols)] for i in range(3)]
 
     # Share y-axis within each plot row (rows 1 and 2)
     if PLOTS_SHARE_Y_AXIS:
-        # Share y-axis across columns in row 1 (8-bit)
-        for col_idx in range(1, 3):
+        for col_idx in range(1, n_cols):
             axes[1][col_idx].sharey(axes[1][0])
-        # Share y-axis across columns in row 2 (16-bit)
-        for col_idx in range(1, 3):
             axes[2][col_idx].sharey(axes[2][0])
 
     # First, create the legend row (row 0) for each column
-    for col_idx, group_config in enumerate(dataset_groups):
+    df_8bit = df_filtered[df_filtered["bit_depth"] == 8]
+    hue_orders_by_column = []
+    for col_idx, (col_title, domain_keys) in enumerate(FLAC_PLOT_COLUMNS):
+        datasets = [d for key in domain_keys for d in domain_to_datasets[key]]
         ax_legend = axes[0][col_idx]
-        
-        # Get data from one of the bit depths to create the legend
-        df_bit = df_filtered[df_filtered["bit_depth"] == 8]
-        df_group = df_bit[group_config["mask_func"](df_bit)]
-        hue_order = [d for d in DATASET_LEGEND_ORDER if d in df_group["dataset"].unique()]
-        
+        df_group = df_8bit[df_8bit["dataset"].isin(datasets)]
+        hue_order = [d for d in datasets if d in df_group["dataset"].unique()]
+        hue_orders_by_column.append(hue_order)
+
         # Create a temporary plot just to extract the legend handles and labels
         temp_fig, temp_ax = plt.subplots(figsize=(1, 1))
         sns.lineplot(
@@ -120,49 +150,27 @@ if __name__ == "__main__":
             marker="o",
             ax=temp_ax
         )
-        
-        # Extract handles and labels from the temporary plot's legend
-        # seaborn stores the legend in temp_ax.legend_
         if hasattr(temp_ax, 'legend_') and temp_ax.legend_ is not None:
             legend = temp_ax.legend_
             handles = legend.legend_handles
             labels = [t.get_text() for t in legend.get_texts()]
         else:
-            # Fallback: get handles and labels from the axes
             handles, labels = temp_ax.get_legend_handles_labels()
         plt.close(temp_fig)
-        
-        # Map dataset names to fancier names
         labels = [DATASET_NAME_TO_FANCIER_NAME.get(label, label) for label in labels]
-        
-        # Hide the axes and show only the legend, centered
+
         ax_legend.axis('off')
-        ax_legend.set_title(group_config['title'])
-        # Calculate number of columns for wrapping (aim for 2-3 items per column)
-        n_items = len(handles)
-        ncol = 2 # max(2, (n_items + 2) // 3)  # Aim for roughly 3 items per column, minimum 2 columns
-        ax_legend.legend(
-            handles,
-            labels,
-            title="Dataset",
-            loc="center",
-            ncol=ncol,
-            fontsize=8)
+        ax_legend.set_title(col_title)
+        ncol = 1 if skinny else max(2, (len(handles) + 2) // 3)
+        ax_legend.legend(handles, labels, loc="center", ncol=ncol, fontsize=8)
 
-    # Pre-compute hue_order per column from 8-bit data so colors stay consistent across 8/16-bit
-    df_8bit = df_filtered[df_filtered["bit_depth"] == 8]
-    hue_orders_by_column = [
-        [d for d in DATASET_LEGEND_ORDER if d in df_8bit[gc["mask_func"](df_8bit)]["dataset"].unique()]
-        for gc in dataset_groups
-    ]
-
-    # Loop over bit depths (rows 1 and 2) and dataset groups (columns)
+    # Loop over bit depths (rows 1 and 2) and columns
     for row_idx, bit_depth in enumerate([8, 16]):
         df_bit = df_filtered[df_filtered["bit_depth"] == bit_depth]
-        
-        for col_idx, group_config in enumerate(dataset_groups):
-            ax = axes[row_idx + 1][col_idx]  # +1 because row 0 is for legends
-            df_group = df_bit[group_config["mask_func"](df_bit)]
+        for col_idx, (col_title, domain_keys) in enumerate(FLAC_PLOT_COLUMNS):
+            datasets = [d for key in domain_keys for d in domain_to_datasets[key]]
+            ax = axes[row_idx + 1][col_idx]
+            df_group = df_bit[df_bit["dataset"].isin(datasets)]
             if bit_depth == 16:
                 df_group = df_group[~df_group["dataset"].isin(DATASETS_OMIT_AT_16BIT)]
             hue_order = hue_orders_by_column[col_idx]
@@ -176,40 +184,31 @@ if __name__ == "__main__":
                 ax=ax,
                 legend=False
             )
-            
-            # Set x-axis label only on the bottom row (16-bit), explicitly remove for 8-bit
-            if row_idx == 0:  # 8-bit row
-                ax.set_xlabel("")  # Explicitly remove x-axis label
-                ax.set_xticklabels([])  # Remove x-axis tick labels
-            elif row_idx == 1:  # 16-bit row
-                ax.set_xlabel(X_AXIS_LABEL)
-            
-            # Set y-axis label only on first column when sharing y-axis
+            if row_idx == 0:
+                ax.set_xlabel("")
+                ax.set_xticklabels([])
+            else:
+                x_label = "Compression Level" if skinny else X_AXIS_LABEL
+                ax.set_xlabel(x_label)
+                if skinny:
+                    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: str(int(x)) if x in (0, 2, 4, 6, 8) else ""))
             if PLOTS_SHARE_Y_AXIS:
-                if col_idx == 0:
-                    ax.set_ylabel(Y_AXIS_LABEL)
-                else:
-                    ax.set_ylabel("")  # Hide y-axis label on non-first columns
+                ax.set_ylabel(Y_AXIS_LABEL if col_idx == 0 else "")
             else:
                 ax.set_ylabel(Y_AXIS_LABEL)
-            
-            # Remove individual titles - we'll use row titles instead
+            if col_idx != 0:
+                ax.tick_params(axis="y", labelleft=False)
             ax.set_title("")
             ax.grid(True)
-            # Format y-axis ticks to 2 decimal places
             ax.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
 
-    # Use subplots_adjust instead of tight_layout to avoid warning with GridSpec + shared axes
-    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.08, top=0.94, hspace=0.1, wspace=0.15)
+    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.08, top=0.94, hspace=0.1, wspace=0.05)
 
-    # Add vertical row titles on the left side (after tight_layout so positions are final)
-    # Get the position of the leftmost subplot in each row to place text
+    row_title_x_offset = 0.09 if skinny else 0.055
     for row_idx, bit_depth in enumerate([8, 16]):
-        ax_left = axes[row_idx + 1][0]  # Leftmost subplot in the row
-        # Get the position in figure coordinates
+        ax_left = axes[row_idx + 1][0]
         pos = ax_left.get_position()
-        # Place text to the left of the subplot, vertically centered
-        fig.text(pos.x0 - 0.055, pos.y0 + pos.height / 2, f"{bit_depth}-bit", 
+        fig.text(pos.x0 - row_title_x_offset, pos.y0 + pos.height / 2, f"{bit_depth}-bit",
                 rotation=90, ha='center', va='center', fontsize=14)
 
     # Save the plot

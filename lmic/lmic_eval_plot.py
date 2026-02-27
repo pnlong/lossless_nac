@@ -7,9 +7,14 @@ import argparse
 import sys
 from os.path import dirname, join, realpath
 
-# Import dataset name mapping from flac_eval_plot.py
+# Import dataset name mapping and domain layout from flac_eval_plot.py
 sys.path.insert(0, dirname(dirname(realpath(__file__))))
-from flac_eval_plot import DATASET_NAME_TO_FANCIER_NAME, DATASET_LEGEND_ORDER
+from flac_eval_plot import (
+    DATASET_NAME_TO_FANCIER_NAME,
+    DATASET_LEGEND_ORDER,
+    DOMAINS,
+    domain_to_datasets,
+)
 
 # read in arguments
 def parse_args(args = None, namespace = None):
@@ -44,7 +49,7 @@ flac_path = join(dirname(realpath(__file__)), "..", "flac_eval_results.csv")
 df_flac = pd.read_csv(flac_path)
 df_flac = df_flac[
     (df_flac["matches_native_quantization"])
-    & (df_flac["flac_compression_level"] == 5)
+    & (df_flac["flac_compression_level"] == 8)
     & (df_flac["disable_constant_subframes"] == True)
     & (df_flac["disable_fixed_subframes"] == True)
     & (df_flac["disable_verbatim_subframes"] == True)
@@ -68,55 +73,41 @@ compressor_order = [c for c in compressor_order if c in df["compressor"].unique(
 # 8-bit-only datasets (exclude from 16-bit row)
 DATASETS_8BIT_ONLY = {"sc09", "youtube_mix", "beethoven"}
 
-# Define dataset groups configuration
-dataset_groups = [
-    {
-        "mask_func": lambda df: df["dataset"].str.startswith("musdb18"),
-        "title": "MusDB18",
-        "legend_loc": "upper right"
-    },
-    {
-        "mask_func": lambda df: df["dataset"].str.startswith("torrent"),
-        "title": "Commercial Music",
-        "legend_loc": "upper left"
-    },
-    {
-        "mask_func": lambda df: ~df["dataset"].str.startswith("musdb18") & ~df["dataset"].str.startswith("torrent"),
-        "title": "More",
-        "legend_loc": "upper left"
-    }
+# Precompute dataset order per column from domain_to_datasets order (datasets in 8-bit or 16-bit data)
+datasets_in_data = set(df["dataset"].unique())
+dataset_orders = [
+    [d for d in domain_to_datasets[domain] if d in datasets_in_data]
+    for domain in DOMAINS
 ]
+# Column width proportional to number of datasets actually present (avoid zero width)
+n_cols = len(DOMAINS)
+width_ratios = [max(1, len(order)) for order in dataset_orders]
 
-# Create figure with 6 bar chart subplots (2 rows, 3 columns)
+# Create figure with 2 rows, n_cols columns (width proportional to datasets per subplot)
 fig = plt.figure(figsize=(14, 6))
-gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.08, wspace=0.12,
-                      left=0.12, right=0.96, top=0.92, bottom=0.14)
-axes = [[fig.add_subplot(gs[i, j]) for j in range(3)] for i in range(2)]
+gs = gridspec.GridSpec(2, n_cols, figure=fig, hspace=0.08, wspace=0.12,
+                       left=0.12, right=0.96, top=0.92, bottom=0.14,
+                       width_ratios=width_ratios)
+axes = [[fig.add_subplot(gs[i, j]) for j in range(n_cols)] for i in range(2)]
 
-# Share y-axis across columns within each row (8-bit row shares y, 16-bit row shares y)
+# Share y-axis across columns within each row
 if PLOTS_SHARE_Y_AXIS:
     for row_idx in range(2):
-        for col_idx in range(1, 3):
+        for col_idx in range(1, n_cols):
             axes[row_idx][col_idx].sharey(axes[row_idx][0])
 
-# Precompute dataset order per column from 8-bit data (for consistent x-axis across rows)
-df_8bit = df[df["bit_depth"] == 8]
-dataset_orders = [
-    [d for d in DATASET_LEGEND_ORDER if d in df_8bit[gc["mask_func"](df_8bit)]["dataset"].unique()]
-    for gc in dataset_groups
-]
-
-# Loop over bit depths (rows 0 and 1) and dataset groups (columns)
+# Loop over bit depths (rows 0 and 1) and domains (columns)
 for row_idx, bit_depth in enumerate([8, 16]):
     df_bit = df[df["bit_depth"] == bit_depth].copy()
     df_bit["compressor"] = pd.Categorical(df_bit["compressor"], categories=compressor_order, ordered=True)
 
-    for col_idx, group_config in enumerate(dataset_groups):
+    for col_idx, domain in enumerate(DOMAINS):
+        datasets = domain_to_datasets[domain]
         ax = axes[row_idx][col_idx]
-        df_group = df_bit[group_config["mask_func"](df_bit)].copy()
-        if row_idx == 1:  # 16-bit row: hide bars for 8-bit-only datasets (keep ticks)
+        df_group = df_bit[df_bit["dataset"].isin(datasets)].copy()
+        if row_idx == 1:
             df_group = df_group[~df_group["dataset"].isin(DATASETS_8BIT_ONLY)]
-        dataset_order = dataset_orders[col_idx]  # Same order as 8-bit row
+        dataset_order = dataset_orders[col_idx]
 
         sns.barplot(
             data=df_group,
@@ -129,38 +120,22 @@ for row_idx, bit_depth in enumerate([8, 16]):
             legend=False
         )
 
-        # Set x-tick labels to fancier names with rotation (FixedLocator avoids warning)
         n_datasets = len(dataset_order)
         ax.xaxis.set_major_locator(FixedLocator(range(n_datasets)))
         if row_idx == 0:
-            ax.set_xticklabels([])  # No tick labels on 8-bit row
+            ax.set_xticklabels([])
         else:
             ax.set_xticklabels(
                 [DATASET_NAME_TO_FANCIER_NAME.get(d, d) for d in dataset_order],
                 rotation=X_TICK_ROTATION, ha="right"
             )
 
-        # Y-axis: one decimal place for compression rate
         ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
-
-        # Set x-axis label only on bottom row (16-bit)
-        if row_idx == 0:
-            ax.set_xlabel("")
-        else:
-            ax.set_xlabel(X_AXIS_LABEL)
-
-        # Set y-axis label only on first column
-        if col_idx == 0:
-            ax.set_ylabel(Y_AXIS_LABEL)
-        else:
-            ax.set_ylabel("")
-
-        # Column titles on top row only
-        if row_idx == 0:
-            ax.set_title(group_config["title"])
-        else:
-            ax.set_title("")
-
+        ax.set_xlabel("")
+        ax.set_ylabel(Y_AXIS_LABEL if col_idx == 0 else "")
+        if col_idx != 0:
+            ax.tick_params(axis="y", labelleft=False)
+        ax.set_title(domain if row_idx == 0 else "")
         ax.grid(True, axis="y")
 
 # Create temporary barplot to extract compressor legend handles
@@ -184,8 +159,8 @@ plt.close(temp_fig)
 
 labels = [COMPRESSOR_DISPLAY_NAMES.get(label, label) for label in labels]
 
-fig.legend(handles, labels, title="Compressor", loc="upper center",
-          bbox_to_anchor=(0.5, 1.05), ncol=3)
+fig.legend(handles, labels, loc="upper center", # title="Compressor",
+          bbox_to_anchor=(0.5, 1.03), ncol=3)
 
 # Add vertical row titles on the left side
 for row_idx, bit_depth in enumerate([8, 16]):

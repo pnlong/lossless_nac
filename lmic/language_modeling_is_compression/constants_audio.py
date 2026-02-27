@@ -50,7 +50,7 @@ MUSDB18STEREO_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/musdb18stereo" # yggdras
 
 # LibriSpeech
 LIBRISPEECH_SPLIT = "dev-clean" # "dev-clean" or "train-clean-100"
-LIBRISPEECH_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/librispeech/LibriSpeech/{LIBRISPEECH_SPLIT}" # yggdrasil
+LIBRISPEECH_DATA_DIR = f"/mnt/arrakis_data/pnlong/lnac/librispeech/LibriSpeech/{LIBRISPEECH_SPLIT}" # yggdrasil
 
 # LJSpeech
 LJSPEECH_DATA_DIR = "/mnt/arrakis_data/pnlong/lnac/ljspeech" # yggdrasil
