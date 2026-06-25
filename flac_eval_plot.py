@@ -99,7 +99,7 @@ if __name__ == "__main__":
         parser.add_argument("--disable_verbatim_subframes", action = "store_true", help = "Disable verbatim subframes for FLAC.")
         parser.add_argument("--output_filepath", type = str, default = "/home/pnlong/lnac/flac_eval_plot.pdf", help = "Absolute filepath to the output PDF file.")
         parser.add_argument("--transparent", action = "store_true", help = "Save with a transparent background.")
-        parser.add_argument("--skinny", action = "store_true", help = "Square figure, single-column legends, equal row heights, x-axis labels only at 0 and 8.")
+        parser.add_argument("--wide", action = "store_true", help = "Wide figure (14x6) with multi-column legends and taller plot rows.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         return args # return parsed arguments
     args = parse_args()
@@ -115,11 +115,11 @@ if __name__ == "__main__":
 
     # One column per FLAC_PLOT_COLUMNS entry, equal widths
     n_cols = len(FLAC_PLOT_COLUMNS)
-    skinny = getattr(args, "skinny", False)
+    wide = args.wide
 
     # Create figure: 3 rows (legend + 8-bit + 16-bit), n_cols columns (equal width)
-    figsize = (9, 6) if skinny else (14, 6)
-    height_ratios = [0.5, 1, 1] if skinny else [0.5, 2, 2]
+    figsize = (15, 4) if wide else (9, 6)
+    height_ratios = [0.5, 2, 2] if wide else [0.5, 1, 1]
     fig = plt.figure(figsize=figsize)
     gs = gridspec.GridSpec(3, n_cols, figure=fig, height_ratios=height_ratios, hspace=0.1, wspace=0.05)
     axes = [[fig.add_subplot(gs[i, j]) for j in range(n_cols)] for i in range(3)]
@@ -162,7 +162,7 @@ if __name__ == "__main__":
 
         ax_legend.axis('off')
         ax_legend.set_title(col_title)
-        ncol = 1 if skinny else max(2, (len(handles) + 2) // 3)
+        ncol = max(2, (len(handles) + 2) // 3) if wide else 1
         ax_legend.legend(handles, labels, loc="center", ncol=ncol, fontsize=8)
 
     # Loop over bit depths (rows 1 and 2) and columns
@@ -189,9 +189,9 @@ if __name__ == "__main__":
                 ax.set_xlabel("")
                 ax.set_xticklabels([])
             else:
-                x_label = "Compression Level" if skinny else X_AXIS_LABEL
+                x_label = X_AXIS_LABEL if wide else "Compression Level"
                 ax.set_xlabel(x_label)
-                if skinny:
+                if not wide:
                     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: str(int(x)) if x in (0, 2, 4, 6, 8) else ""))
             if PLOTS_SHARE_Y_AXIS:
                 ax.set_ylabel(Y_AXIS_LABEL if col_idx == 0 else "")
@@ -205,7 +205,7 @@ if __name__ == "__main__":
 
     fig.subplots_adjust(left=0.08, right=0.98, bottom=0.08, top=0.94, hspace=0.1, wspace=0.05)
 
-    row_title_x_offset = 0.09 if skinny else 0.055
+    row_title_x_offset = 0.055 if wide else 0.09
     for row_idx, bit_depth in enumerate([8, 16]):
         ax_left = axes[row_idx + 1][0]
         pos = ax_left.get_position()
