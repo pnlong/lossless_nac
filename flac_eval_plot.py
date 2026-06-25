@@ -98,6 +98,7 @@ if __name__ == "__main__":
         parser.add_argument("--disable_fixed_subframes", action = "store_true", help = "Disable fixed subframes for FLAC.")
         parser.add_argument("--disable_verbatim_subframes", action = "store_true", help = "Disable verbatim subframes for FLAC.")
         parser.add_argument("--output_filepath", type = str, default = "/home/pnlong/lnac/flac_eval_plot.pdf", help = "Absolute filepath to the output PDF file.")
+        parser.add_argument("--transparent", action = "store_true", help = "Save with a transparent background.")
         parser.add_argument("--skinny", action = "store_true", help = "Square figure, single-column legends, equal row heights, x-axis labels only at 0 and 8.")
         args = parser.parse_args(args = args, namespace = namespace) # parse arguments
         return args # return parsed arguments
@@ -212,5 +213,10 @@ if __name__ == "__main__":
                 rotation=90, ha='center', va='center', fontsize=14)
 
     # Save the plot
-    plt.savefig(args.output_filepath, dpi=300, bbox_inches="tight")
+    if args.transparent:
+        fig.patch.set_alpha(0)
+        for row in axes:
+            for ax in row:
+                ax.set_facecolor("none")
+    plt.savefig(args.output_filepath, dpi=300, bbox_inches="tight", transparent=args.transparent)
     print(f"Saved plot to {args.output_filepath}.")
