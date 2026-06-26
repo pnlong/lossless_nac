@@ -26,7 +26,7 @@ DOMAIN_COL = "Domain"
 DATASET_COL = "Dataset"
 
 FIG_WIDTH = 10
-FIGSIZE = (FIG_WIDTH, FIG_WIDTH / 2.3)
+FIGSIZE = (FIG_WIDTH, FIG_WIDTH / 2.2)
 FONT_SIZE = 8
 DOMAIN_EMOJI = {
     "Bioacoustics": "🦤",
