@@ -30,8 +30,8 @@ FIGSIZE = (FIG_WIDTH, FIG_WIDTH / 2.2)
 FONT_SIZE = 8
 DOMAIN_EMOJI = {
     "Bioacoustics": "🦤",
-    "Music": "🎵",
-    "Speech": "🗯️",
+    "Music": "🎶",
+    "Speech": "🗣️",
     "SFX": "🔊",
 }
 # Noto draws the speech bubble with visual weight left of its trimmed bbox center.
@@ -39,6 +39,7 @@ DOMAIN_EMOJI_X_NUDGE_PX = {"Speech": 5}
 GLYPH_PAD_X = 10
 GLYPH_PAD_Y = 4
 GLYPH_CHANNEL_PAD = 4
+CHANNEL_LABEL_INSET_PX = 7
 GLYPH_INNER_GAP = 2
 EMOJI_DATASET_GAP_PX = 4
 EMOJI_VERTICAL_FRACTION = 0.68
@@ -50,6 +51,13 @@ BOTTOM_AXIS_CLEARANCE = 0.12
 TOP_AXIS_CLEARANCE = 0.18
 DOMAIN_LIGHTEN = 0.72
 DOMAIN_DARKEN = 0.35
+# Matplotlib tab10 defaults (C0–C3) — same family as table_poster_plot bar colors.
+DOMAIN_BASE_COLORS = {
+    "Bioacoustics": "#1f77b4",
+    "Music": "#ff7f0e",
+    "SFX": "#2ca02c",
+    "Speech": "#d62728",
+}
 GLYPH_EDGE_WIDTH = 0.9
 # Corner radius in typographic points — equal quarter-circles on screen (not data units).
 VISUAL_CORNER_RADIUS_PT = 5
@@ -483,7 +491,14 @@ def _draw_glyph_content(
 ) -> None:
     emoji = DOMAIN_EMOJI[domain]
     _, pad_y = _pad_data(ax, x, y, GLYPH_PAD_X, GLYPH_PAD_Y)
-    channel_pad = _pad_data(ax, x, y, GLYPH_CHANNEL_PAD, GLYPH_CHANNEL_PAD)
+    layout_channel_pad = _pad_data(ax, x, y, GLYPH_CHANNEL_PAD, GLYPH_CHANNEL_PAD)
+    label_channel_pad = _pad_data(
+        ax,
+        x,
+        y,
+        GLYPH_CHANNEL_PAD + CHANNEL_LABEL_INSET_PX,
+        GLYPH_CHANNEL_PAD + CHANNEL_LABEL_INSET_PX,
+    )
 
     x1 = x + glyph_w / 2
     y0 = y - glyph_h / 2
@@ -495,9 +510,9 @@ def _draw_glyph_content(
     channel_h = _pad_data(ax, x, y, 0, ch_h_px)[1]
     dataset_h = _pad_data(ax, x, y, 0, dataset_h_px)[1]
 
-    ch_x = x1 - channel_pad[0]
-    ch_y = y1 - channel_pad[1]
-    channel_bottom = ch_y - channel_h
+    ch_x = x1 - label_channel_pad[0]
+    ch_y = y1 - label_channel_pad[1]
+    channel_bottom = y1 - layout_channel_pad[1] - channel_h
     dataset_y = y0 + pad_y
     dataset_top = dataset_y + dataset_h
     _, emoji_h_px = _emoji_size_px(ax, renderer, emoji)
@@ -602,14 +617,13 @@ def _darken(rgb: tuple, amount: float) -> tuple:
 def domain_palette(df: pd.DataFrame) -> dict[str, dict[str, tuple]]:
     """Per domain: base color plus light (fill) and dark (text/border) variants."""
     domains = sorted(df[DOMAIN_COL].unique())
-    bases = sns.color_palette("colorblind", n_colors=len(domains))
     return {
         domain: {
-            "base": base,
-            "light": _lighten(base, DOMAIN_LIGHTEN),
-            "dark": _darken(base, DOMAIN_DARKEN),
+            "base": mcolors.to_rgb(DOMAIN_BASE_COLORS[domain]),
+            "light": _lighten(DOMAIN_BASE_COLORS[domain], DOMAIN_LIGHTEN),
+            "dark": _darken(DOMAIN_BASE_COLORS[domain], DOMAIN_DARKEN),
         }
-        for domain, base in zip(domains, bases)
+        for domain in domains
     }
 
 
