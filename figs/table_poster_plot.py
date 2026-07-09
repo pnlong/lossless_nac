@@ -2,7 +2,7 @@
 """Poster-style grouped bar chart from figs/table.csv compression rate comparison."""
 
 import argparse
-from os.path import dirname, join, realpath
+from os.path import dirname, join, realpath, splitext
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -17,9 +17,11 @@ DOMAIN_COL = "Domain"
 DATASET_COL = "Dataset"
 NA_MARKER = "\u2718"  # ✘
 
-FIGSIZE = (20, 4.444)
+FIGSIZE_WIDE = (20, 4.444)
+FIGSIZE_SKINNY = (8, 4.444)
 Y_AXIS_LABEL = "Compression Rate (x)"
-X_TICK_ROTATION = 0
+X_TICK_ROTATION_WIDE = 0
+X_TICK_ROTATION_SKINNY = 90
 WSPACE = 0.1
 BAR_GROUP_WIDTH = 0.8
 BRACKET_HALF_WIDTH = 0.47
@@ -41,12 +43,23 @@ def parse_args(args=None, namespace=None):
         "--output_filepath",
         type=str,
         default=join(default_dir, "table_poster_plot.pdf"),
-        help="Absolute filepath to the output PDF file.",
+        help="Absolute filepath to the unlabeled output PDF file.",
+    )
+    parser.add_argument(
+        "--labeled_output_filepath",
+        type=str,
+        default=None,
+        help="Absolute filepath to the labeled output PDF (default: <output>_labeled.pdf).",
     )
     parser.add_argument(
         "--show_values",
         action="store_true",
-        help="Display compression rate on top of each bar (NA shown as ✘).",
+        help="Only save the labeled version (skip unlabeled output).",
+    )
+    parser.add_argument(
+        "--skinnier",
+        action="store_true",
+        help="Use a narrower figure with vertical dataset labels.",
     )
     parser.add_argument(
         "--independent_y",
@@ -54,6 +67,13 @@ def parse_args(args=None, namespace=None):
         help="Use separate y-axis scales for each bit-depth panel.",
     )
     return parser.parse_args(args=args, namespace=namespace)
+
+
+def labeled_output_path(output_filepath: str) -> str:
+    base, ext = splitext(output_filepath)
+    if base.endswith("_labeled"):
+        return output_filepath
+    return f"{base}_labeled{ext}"
 
 
 def load_and_prepare(input_filepath: str) -> pd.DataFrame:
@@ -96,29 +116,49 @@ def method_colors_from_legend(handles, labels) -> dict[str, tuple]:
     return {label: handle.get_facecolor() for handle, label in zip(handles, labels)}
 
 
+def add_na_markers(
+    ax,
+    panel_df: pd.DataFrame,
+    dataset_order: list[str],
+    method_colors: dict[str, tuple],
+) -> None:
+    """Mark missing (NA) method slots with ✘ at bar positions."""
+    n_hue = len(METHOD_COLS)
+    value_lookup = panel_df.set_index(DATASET_COL)
+    y_lo, y_hi = ax.get_ylim()
+    y_na = y_lo + 0.03 * (y_hi - y_lo)
+
+    for hue_idx, method in enumerate(METHOD_COLS):
+        color = method_colors[method]
+        for dataset_idx, dataset in enumerate(dataset_order):
+            if pd.isna(value_lookup.at[dataset, method]):
+                x = bar_slot_x(dataset_idx, hue_idx, n_hue)
+                ax.text(
+                    x, y_na, NA_MARKER,
+                    ha="center", va="bottom", color=color,
+                    fontsize=8, clip_on=False, zorder=5,
+                )
+
+
 def add_value_labels(
     ax,
     panel_df: pd.DataFrame,
     dataset_order: list[str],
     method_colors: dict[str, tuple],
 ) -> None:
-    """Label bar tops with values (bar color) and NA slots with ✘ (method color)."""
+    """Label bar tops with numeric compression rates (bar color)."""
     n_hue = len(METHOD_COLS)
     value_lookup = panel_df.set_index(DATASET_COL)
-    y_na = ax.get_ylim()[0] + 0.04 * (ax.get_ylim()[1] - ax.get_ylim()[0])
 
     for hue_idx, method in enumerate(METHOD_COLS):
         container = ax.containers[hue_idx]
-        color = method_colors[method]
 
         for dataset_idx, dataset in enumerate(dataset_order):
             raw = value_lookup.at[dataset, method]
-            patch = patch_at_slot(container, dataset_idx, hue_idx, n_hue)
-
             if pd.isna(raw):
-                x = bar_slot_x(dataset_idx, hue_idx, n_hue)
-                ax.text(x, y_na, NA_MARKER, ha="center", va="bottom", color=color, fontsize=7, clip_on=False)
-            elif patch is not None:
+                continue
+            patch = patch_at_slot(container, dataset_idx, hue_idx, n_hue)
+            if patch is not None:
                 ax.text(
                     patch.get_x() + patch.get_width() / 2,
                     patch.get_height(),
@@ -128,10 +168,11 @@ def add_value_labels(
                     color=patch.get_facecolor(),
                     fontsize=6,
                     clip_on=False,
+                    zorder=5,
                 )
 
 
-def bracket_y_positions(ax) -> tuple[float, float, float]:
+def bracket_y_positions(ax, *, label_to_bracket_gap: float) -> tuple[float, float, float]:
     """Return bracket_y, label_y, tick_h in axes-fraction coords below the x-axis."""
     fig = ax.figure
     fig.canvas.draw()
@@ -146,18 +187,20 @@ def bracket_y_positions(ax) -> tuple[float, float, float]:
     if not label_bottoms:
         return -0.14, -0.22, 0.04
     lowest = min(label_bottoms)
-    bracket_y = lowest - 0.05
-    label_y = bracket_y - 0.05
+    bracket_y = lowest - label_to_bracket_gap
+    label_y = bracket_y - 0.03
     tick_h = 0.04
     return bracket_y, label_y, tick_h
 
 
-def add_domain_brackets(ax, panel_df: pd.DataFrame) -> None:
+def add_domain_brackets(
+    ax, panel_df: pd.DataFrame, *, label_to_bracket_gap: float, domain_fontsize: float = 9,
+) -> None:
     """Draw bracket lines and domain labels beneath the x-axis for consecutive domain groups."""
     if panel_df.empty:
         return
 
-    bracket_y, label_y, bracket_tick_h = bracket_y_positions(ax)
+    bracket_y, label_y, bracket_tick_h = bracket_y_positions(ax, label_to_bracket_gap=label_to_bracket_gap)
     transform = ax.get_xaxis_transform()
     bracket_style = dict(color="0.35", linewidth=0.8, transform=transform, clip_on=False)
 
@@ -170,7 +213,7 @@ def add_domain_brackets(ax, panel_df: pd.DataFrame) -> None:
         ax.plot([left, right], [bracket_y, bracket_y], **bracket_style)
         ax.plot([left, left], [bracket_y, bracket_y + bracket_tick_h], **bracket_style)
         ax.plot([right, right], [bracket_y, bracket_y + bracket_tick_h], **bracket_style)
-        ax.text((x0 + x1) / 2, label_y, domain, ha="center", va="top", transform=transform, fontsize=8, clip_on=False)
+        ax.text((x0 + x1) / 2, label_y, domain, ha="center", va="top", transform=transform, fontsize=domain_fontsize, clip_on=False)
 
     for i in range(1, n):
         domain = panel_df.iloc[i][DOMAIN_COL]
@@ -195,20 +238,36 @@ def style_axes(ax, *, is_leftmost: bool, independent_y: bool) -> None:
         ax.tick_params(axis="y", left=True)
 
 
-def main() -> None:
-    args = parse_args()
-    df = load_and_prepare(args.input_filepath)
-
+def save_poster_plot(
+    df: pd.DataFrame,
+    *,
+    output_filepath: str,
+    show_values: bool,
+    skinny: bool,
+    independent_y: bool,
+) -> None:
     panels = {b: df[df[BIT_COL] == b].copy() for b in BIT_DEPTHS}
     width_ratios = [max(1, len(panels[b])) for b in BIT_DEPTHS]
 
-    fig = plt.figure(figsize=FIGSIZE)
+    figsize = FIGSIZE_SKINNY if skinny else FIGSIZE_WIDE
+    tick_rotation = X_TICK_ROTATION_SKINNY if skinny else X_TICK_ROTATION_WIDE
+    tick_ha = "right" if skinny else "center"
+    tick_va = "top"
+    tick_pad = 7 if skinny else 4
+    tick_fontsize = 9 if skinny else None
+    domain_fontsize = 7 if skinny else 9
+    bottom_margin = 0.54 if skinny else 0.26
+    bracket_gap = 0.54 if skinny else 0.07
+    legend_y = 1.04 if skinny else 1.01
+    top_margin = 0.88 if skinny else 0.94
+
+    fig = plt.figure(figsize=figsize)
     fig.patch.set_alpha(0)
 
     gs = gridspec.GridSpec(1, len(BIT_DEPTHS), figure=fig, width_ratios=width_ratios, wspace=WSPACE)
     axes = [fig.add_subplot(gs[0, i]) for i in range(len(BIT_DEPTHS))]
 
-    if not args.independent_y:
+    if not independent_y:
         for i in range(1, len(axes)):
             axes[i].sharey(axes[0])
 
@@ -238,34 +297,70 @@ def main() -> None:
             method_colors = method_colors_from_legend(legend_handles, legend_labels)
             ax.get_legend().remove()
 
-        plt.setp(
-            ax.get_xticklabels(),
-            rotation=X_TICK_ROTATION,
-            ha="center",
-            va="top",
-            rotation_mode="anchor",
-        )
+        ax.tick_params(axis="x", pad=tick_pad)
+        tick_label_kwargs = dict(rotation=tick_rotation, ha=tick_ha, va=tick_va, rotation_mode="anchor")
+        if tick_fontsize is not None:
+            tick_label_kwargs["fontsize"] = tick_fontsize
+        plt.setp(ax.get_xticklabels(), **tick_label_kwargs)
         ax.set_title(f"{bit_depth}-bit")
-        style_axes(ax, is_leftmost=(col_idx == 0), independent_y=args.independent_y)
+        style_axes(ax, is_leftmost=(col_idx == 0), independent_y=independent_y)
 
-        if args.show_values:
+        add_na_markers(ax, panel_df, dataset_order, method_colors)
+        if show_values:
             add_value_labels(ax, panel_df, dataset_order, method_colors)
 
-        add_domain_brackets(ax, panel_df)
+        add_domain_brackets(ax, panel_df, label_to_bracket_gap=bracket_gap, domain_fontsize=domain_fontsize)
 
     if legend_handles is not None:
         fig.legend(
             legend_handles,
             legend_labels,
             loc="upper center",
-            bbox_to_anchor=(0.5, 1.05),
+            bbox_to_anchor=(0.5, legend_y),
             ncol=len(METHOD_COLS),
         )
 
-    fig.subplots_adjust(left=0.05, right=0.99, bottom=0.26, top=0.88)
+    fig.subplots_adjust(
+        left=0.08 if skinny else 0.05,
+        right=0.99,
+        bottom=bottom_margin,
+        top=top_margin,
+    )
 
-    plt.savefig(args.output_filepath, dpi=300, bbox_inches="tight", transparent=True)
-    print(f"Saved plot to {args.output_filepath}.")
+    plt.savefig(output_filepath, dpi=300, bbox_inches="tight", transparent=True)
+    plt.close(fig)
+    print(f"Saved plot to {output_filepath}.")
+
+
+def main() -> None:
+    args = parse_args()
+    df = load_and_prepare(args.input_filepath)
+
+    labeled_path = args.labeled_output_filepath or labeled_output_path(args.output_filepath)
+
+    if args.show_values:
+        save_poster_plot(
+            df,
+            output_filepath=labeled_path,
+            show_values=True,
+            skinny=args.skinnier,
+            independent_y=args.independent_y,
+        )
+    else:
+        save_poster_plot(
+            df,
+            output_filepath=args.output_filepath,
+            show_values=False,
+            skinny=args.skinnier,
+            independent_y=args.independent_y,
+        )
+        save_poster_plot(
+            df,
+            output_filepath=labeled_path,
+            show_values=True,
+            skinny=args.skinnier,
+            independent_y=args.independent_y,
+        )
 
 
 if __name__ == "__main__":
